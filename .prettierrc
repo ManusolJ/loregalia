@@ -1,0 +1,20 @@
+{
+  "printWidth": 100,
+  "quoteProps": "consistent",
+  "objectWrap": "preserve",
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": "*.html",
+      "options": {
+        "parser": "angular"
+      }
+    },
+    {
+      "files": "*.md",
+      "options": {
+        "embeddedLanguageFormatting": "off"
+      }
+    }
+  ]
+}

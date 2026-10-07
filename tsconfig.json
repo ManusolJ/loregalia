@@ -1,0 +1,34 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "preserve",
+    "skipLibCheck": true,
+    "importHelpers": true,
+    "isolatedModules": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "experimentalDecorators": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "paths": {
+      "@core/*": ["./src/app/core/*"],
+      "@env/*": ["./src/environments/*"],
+      "@shared/*": ["./src/app/shared/*"],
+      "@layout/*": ["./src/app/layout/*"],
+      "@features/*": ["./src/app/features/*"],
+      "@models/*": ["./src/app/shared/models/*"],
+      "@constants/*": ["./src/app/shared/constants/*"]
+    }
+  },
+  "angularCompilerOptions": {
+    "strictTemplates": true,
+    "typeCheckHostBindings": true,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "enableI18nLegacyMessageIdFormat": false
+  },
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.spec.json" }]
+}
