@@ -5,10 +5,10 @@ import { signal, Component } from "@angular/core";
 @Component({
   imports: [RouterOutlet],
   selector: "app-root",
-  styleUrl: "./app.component.css",
-  templateUrl: "./app.component.html",
+  templateUrl: "./app.html",
 })
-export class AppComponent {
+export class App {
+  // * Placeholder code from project init
   greetingMessage = signal("");
 
   greet(event: SubmitEvent, name: string): void {
