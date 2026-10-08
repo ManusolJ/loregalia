@@ -3,10 +3,10 @@ import { RouterOutlet } from "@angular/router";
 import { signal, Component } from "@angular/core";
 
 @Component({
-  selector: "app-root",
   imports: [RouterOutlet],
-  templateUrl: "./app.component.html",
+  selector: "app-root",
   styleUrl: "./app.component.css",
+  templateUrl: "./app.component.html",
 })
 export class AppComponent {
   greetingMessage = signal("");
