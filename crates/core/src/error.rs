@@ -4,7 +4,9 @@ pub enum Error {
     Sqlite(rusqlite::Error),
     SchemaTooNew { found: i64, supported: u32 },
     DataDirectoryUnavailable,
-    Network(String),
+    ConnectionFailed,
+    RateLimited,
+    HttpStatus { code: u16 },
     Json(serde_json::Error),
 }
 
@@ -22,7 +24,15 @@ impl std::fmt::Display for Error {
             Self::DataDirectoryUnavailable => formatter.write_str(
                 "no application data folder is available; set APPDATA, XDG_DATA_HOME or HOME",
             ),
-            Self::Network(message) => write!(formatter, "network error: {message}"),
+            Self::ConnectionFailed => {
+                formatter.write_str("could not connect to the metadata server or it timed out")
+            }
+            Self::RateLimited => formatter.write_str(
+                "the metadata server is rate limiting requests (HTTP 429); try again later",
+            ),
+            Self::HttpStatus { code } => {
+                write!(formatter, "the metadata server returned HTTP {code}")
+            }
             Self::Json(error) => write!(formatter, "invalid response: {error}"),
         }
     }
@@ -34,7 +44,11 @@ impl std::error::Error for Error {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             Self::Json(error) => Some(error),
-            Self::SchemaTooNew { .. } | Self::DataDirectoryUnavailable | Self::Network(_) => None,
+            Self::SchemaTooNew { .. }
+            | Self::DataDirectoryUnavailable
+            | Self::ConnectionFailed
+            | Self::RateLimited
+            | Self::HttpStatus { .. } => None,
         }
     }
 }
