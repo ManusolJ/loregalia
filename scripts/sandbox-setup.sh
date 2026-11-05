@@ -3,7 +3,13 @@ set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-sudo sh "$project_root/scripts/linux-packages.sh"
+startup_apt_checks=0
+while pgrep -x apt-get >/dev/null && [ "$startup_apt_checks" -lt 36 ]; do
+  startup_apt_checks=$((startup_apt_checks + 1))
+  sleep 5
+done
+
+sudo sh "$project_root/scripts/linux-packages.sh" sandbox
 
 if ! command -v rustup >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
