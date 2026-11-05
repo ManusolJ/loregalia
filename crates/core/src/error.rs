@@ -3,6 +3,7 @@ pub enum Error {
     Io(std::io::Error),
     Sqlite(rusqlite::Error),
     SchemaTooNew { found: i64, supported: u32 },
+    DataDirectoryUnavailable,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -16,6 +17,9 @@ impl std::fmt::Display for Error {
                 formatter,
                 "database schema version {found} is newer than supported {supported}"
             ),
+            Self::DataDirectoryUnavailable => formatter.write_str(
+                "no application data folder is available; set APPDATA, XDG_DATA_HOME or HOME",
+            ),
         }
     }
 }
@@ -25,7 +29,7 @@ impl std::error::Error for Error {
         match self {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
-            Self::SchemaTooNew { .. } => None,
+            Self::SchemaTooNew { .. } | Self::DataDirectoryUnavailable => None,
         }
     }
 }

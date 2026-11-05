@@ -1,4 +1,5 @@
 pub mod shell;
+pub mod startup;
 pub mod theme;
 
 use gpui_kit::component::ThemeMode;
