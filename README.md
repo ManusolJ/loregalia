@@ -91,12 +91,19 @@ Agents follow [AGENTS.md](AGENTS.md), and these limits are enforced rather than 
 - **A commit hook** blocks commits to `main` and runs the fast gate.
 - **Agent permissions** in [opencode.json](opencode.json) deny pushing, merging, deleting files,
   touching secrets, and editing the docs or the rules themselves.
-- **A sandbox** keeps agents away from the rest of the computer. Create one with
-  `sbx create --name <name> opencode .`, run `sbx exec <name> sh scripts/sandbox-setup.sh`, then start
-  the agent with `sbx run --name <name> -- --auto`.
+- **A sandbox** keeps agents away from the rest of the computer. Its script also mounts the docs and
+  the rules as read-only, and covers secret files such as `.env` with an empty file.
 
-These rules match text, so they can be worked around. Keep real secrets out of the project folder,
-because the sandbox can see everything in it.
+Create a sandbox with the script, then start the agent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\new-sandbox.ps1 -Name <name>
+sbx run --name <name> -- --auto
+```
+
+Permission rules match text, so they can be worked around. The read-only mounts can't be, but they are
+set when a sandbox is created, so create a new sandbox after adding a secret file. Agents can still
+change `.git`, which is why GitHub's rules on `main` and your review remain necessary.
 
 To review an agent's work, check it locally, then merge it through a pull request:
 
@@ -118,7 +125,8 @@ git pull
 ```
 
 If creating a sandbox fails with `erofs` and `No space left on device` even with free disk space, run
-`sbx daemon restart` and try again.
+`sbx daemon restart` and try again. Keep any file you mount into a sandbox out of `%LOCALAPPDATA%`,
+because creating the sandbox failed with mask files stored there.
 
 ## Documentation
 

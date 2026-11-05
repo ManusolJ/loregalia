@@ -15,7 +15,8 @@ platform; Linux only has to build and pass tests, because agents work in a Linux
 | `cargo fmt --all`                           | Fix formatting                                    |
 | `cargo run`                                 | Opens the app window; only works on a real desktop |
 
-In the Linux sandbox, run `sh scripts/sandbox-setup.sh` once first.
+Humans create sandboxes with `scripts/new-sandbox.ps1`, which runs setup. There, `docs/`, the rules
+and the gate are mounted read-only, and secret files read as empty.
 
 ## Workflow
 
