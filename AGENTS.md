@@ -15,7 +15,8 @@ platform; Linux only has to build and pass tests, because agents work in a Linux
 | `cargo fmt --all`                           | Fix formatting                                    |
 | `cargo run`                                 | Opens the app window; only works on a real desktop |
 
-In the Linux sandbox, run `sh scripts/sandbox-setup.sh` once first.
+Humans create sandboxes with `scripts/new-sandbox.ps1`, which runs setup. There, `docs/`, the rules
+and the gate are mounted read-only, and secret files read as empty.
 
 ## Workflow
 
@@ -31,13 +32,15 @@ In the Linux sandbox, run `sh scripts/sandbox-setup.sh` once first.
 
 - The task depends on a decision marked **Open** in `docs/DECISIONS.md`. Do not choose for them.
 - You want to add a dependency, change `gpui-kit`'s version, or change the toolchain.
-- You want to change the gate, CI, `.githooks/`, `opencode.json` or this file.
+- You want to change a read-only file: `docs/`, `README.md`, this file, the gate, CI, `scripts/`,
+  `.githooks/` or `opencode.json`. These edits are denied, so propose the change in your report.
 - The same failure survives three different attempts. Report what you tried.
 - You would need to delete user data, or weaken or remove a test.
 
 ## Never
 
 - Push, merge, rebase, or rewrite history. A human reviews and merges `agent/*` branches.
+- Read, write or print `.env` files or other secrets by any method, including the shell.
 - Commit secrets, or add real API keys to the repo. Tests never use real keys or the network.
 - Claim something works without running it. Name anything you could not verify.
 - Pass the gate by adding `#[allow]`, skipping a test, or relaxing an assertion.
@@ -102,7 +105,8 @@ The gate enforces the rules marked (gate).
 
 ## Traps
 
-Add a line when something costs real time: the surprising fact, its symptom, the fix.
+When something costs real time, propose a line in your report: the surprising fact, its symptom,
+the fix.
 
 - **`gpui-kit` ships no working HTTP client on native.** Remote `img()` URLs fail until the app
   installs one with `cx.set_http_client(...)`.

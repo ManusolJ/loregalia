@@ -82,16 +82,28 @@ AGENTS.md     Instructions for coding agents
 
 | Who         | Does what                                                                       |
 | ----------- | ------------------------------------------------------------------------------- |
-| AI agents   | Write code, tests and docs on `agent/*` branches, and run the gate              |
+| AI agents   | Write code and tests on `agent/*` branches, run the gate, and propose doc changes |
 | The human   | Sets direction, makes [product decisions](docs/DECISIONS.md), reviews and merges |
 
 Agents follow [AGENTS.md](AGENTS.md), and these limits are enforced rather than requested:
 
 - **The gate** must pass, and it also runs in CI.
 - **A commit hook** blocks commits to `main` and runs the fast gate.
-- **Agent permissions** in [opencode.json](opencode.json) deny pushing, merging and deleting files.
-- **A sandbox** keeps agents away from the rest of the computer. Run one with `sbx run opencode`,
-  then `sh scripts/sandbox-setup.sh` inside it.
+- **Agent permissions** in [opencode.json](opencode.json) deny pushing, merging, deleting files,
+  touching secrets, and editing the docs or the rules themselves.
+- **A sandbox** keeps agents away from the rest of the computer. Its script also mounts the docs and
+  the rules as read-only, and covers secret files such as `.env` with an empty file.
+
+Create a sandbox with the script, then start the agent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\new-sandbox.ps1 -Name <name>
+sbx run --name <name> -- --auto
+```
+
+Permission rules match text, so they can be worked around. The read-only mounts can't be, but they are
+set when a sandbox is created, so create a new sandbox after adding a secret file. Agents can still
+change `.git`, which is why GitHub's rules on `main` and your review remain necessary.
 
 To review an agent's work, check it locally, then merge it through a pull request:
 
@@ -113,7 +125,8 @@ git pull
 ```
 
 If creating a sandbox fails with `erofs` and `No space left on device` even with free disk space, run
-`sbx daemon restart` and try again.
+`sbx daemon restart` and try again. Keep any file you mount into a sandbox out of `%LOCALAPPDATA%`,
+because creating the sandbox failed with mask files stored there.
 
 ## Documentation
 
