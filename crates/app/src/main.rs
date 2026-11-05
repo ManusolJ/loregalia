@@ -23,7 +23,7 @@ fn main() {
 
         let options = loregalia_app::window_options(cx);
         if let Err(error) =
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| Shell::new(storage)))
+            gpui_kit::open_window(options, cx, |_, cx| cx.new(|cx| Shell::new(storage, cx)))
         {
             eprintln!("Failed to open the Loregalia window: {error}");
             cx.quit();
