@@ -1,0 +1,143 @@
+use gpui_kit::assets::Assets;
+use gpui_kit::component::ThemeMode;
+use gpui_kit::test::TestWindowExt;
+use gpui_kit::{
+    AppContext, Bounds, HeadlessAppContext, Pixels, Point, Result, Size, WindowBounds,
+    WindowOptions, px, size,
+};
+use loregalia_app::shell::Shell;
+use loregalia_app::startup::StorageState;
+use loregalia_app::theme;
+use loregalia_core::{Database, lists};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+struct Shot {
+    name: &'static str,
+    size: Size<Pixels>,
+    mode: ThemeMode,
+    storage: StorageState,
+}
+
+fn main() -> Result<()> {
+    let output = output_directory()?;
+    std::fs::create_dir_all(&output)?;
+    let output = output.canonicalize()?;
+
+    let populated = populated_database(&output)?;
+    let empty = empty_database(&output)?;
+    let failure = StorageState::Failed("Could not open the database: the disk is full".to_owned());
+
+    let shots = [
+        Shot {
+            name: "wide-lists-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: populated.clone(),
+        },
+        Shot {
+            name: "wide-empty-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: empty,
+        },
+        Shot {
+            name: "wide-lists-light",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Light,
+            storage: populated.clone(),
+        },
+        Shot {
+            name: "narrow-rail-dark",
+            size: size(px(960.0), px(600.0)),
+            mode: ThemeMode::Dark,
+            storage: populated,
+        },
+        Shot {
+            name: "storage-failure-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: failure,
+        },
+    ];
+
+    for shot in shots {
+        let path = output.join(format!("{}.png", shot.name));
+        capture(&shot, &path)?;
+        println!("wrote {}", path.display());
+    }
+
+    Ok(())
+}
+
+fn output_directory() -> Result<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("target/ui-snapshots"))
+}
+
+fn populated_database(output: &Path) -> Result<StorageState> {
+    let state = database_at(output, "fixture-db")?;
+    if let StorageState::Ready(path) = &state {
+        let database = Database::open(path)?;
+        lists::create(&database, "Watch later")?;
+        lists::create(&database, "Reading")?;
+        lists::create(&database, "Games")?;
+    }
+    Ok(state)
+}
+
+fn empty_database(output: &Path) -> Result<StorageState> {
+    database_at(output, "empty-db")
+}
+
+fn database_at(output: &Path, name: &str) -> Result<StorageState> {
+    let directory = output.join(name);
+    if directory.exists() {
+        std::fs::remove_dir_all(&directory)?;
+    }
+    let path = directory.join("loregalia.db");
+    Database::open(&path)?;
+    Ok(StorageState::Ready(path))
+}
+
+fn capture(shot: &Shot, path: &Path) -> Result<()> {
+    let mut cx = HeadlessAppContext::with_platform(
+        gpui_kit::platform::current_platform(true).text_system(),
+        Arc::new(Assets),
+        gpui_kit::platform::current_headless_renderer,
+    );
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::apply(shot.mode, cx);
+    });
+
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds {
+            origin: Point::default(),
+            size: shot.size,
+        })),
+        focus: false,
+        show: false,
+        ..Default::default()
+    };
+    let (handle, _) = cx.update(|cx| {
+        gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| Shell::new(shot.storage.clone(), None, cx))
+        })
+    })?;
+
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
+
+    let image = cx.capture_screenshot(handle)?;
+    let first = image.pixels().next().copied();
+    if image.pixels().all(|pixel| Some(*pixel) == first) {
+        return Err(std::io::Error::other("the screenshot is blank").into());
+    }
+    image.save(path)?;
+
+    Ok(())
+}
