@@ -4044,6 +4044,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "loregalia-core",
+ "tempfile",
 ]
 
 [[package]]
@@ -4053,6 +4054,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "ureq",
  "uuid",
 ]

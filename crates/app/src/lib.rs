@@ -4,8 +4,8 @@ pub mod theme;
 
 use gpui_kit::component::ThemeMode;
 use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use loregalia_core::storage::APP_FOLDER;
 
-const APP_ID: &str = "com.manu.loregalia";
 const APP_TITLE: &str = "Loregalia";
 
 pub fn init(cx: &mut App) {
@@ -25,7 +25,7 @@ pub fn window_options(cx: &App) -> WindowOptions {
             title: Some(APP_TITLE.into()),
             ..Default::default()
         }),
-        app_id: Some(APP_ID.to_owned()),
+        app_id: Some(APP_FOLDER.to_owned()),
         ..Default::default()
     }
 }

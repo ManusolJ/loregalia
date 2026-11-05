@@ -94,35 +94,8 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::{MAX_LOG_BYTES, append, path_in, timestamp};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl TempDir {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default();
-            let path = std::env::temp_dir().join(format!(
-                "loregalia-log-{}-{nanos}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
+    use std::time::{Duration, UNIX_EPOCH};
+    use tempfile::TempDir;
 
     #[test]
     fn the_epoch_is_iso_8601_utc() {
@@ -146,8 +119,8 @@ mod tests {
 
     #[test]
     fn appending_creates_folders_and_keeps_previous_lines() {
-        let temporary = TempDir::new();
-        let path = path_in(&temporary.path.join("nested"));
+        let temporary = TempDir::new().unwrap();
+        let path = path_in(&temporary.path().join("nested"));
 
         append(&path, "first").unwrap();
         append(&path, "second").unwrap();
@@ -162,13 +135,13 @@ mod tests {
 
     #[test]
     fn a_full_log_is_rotated_once() {
-        let temporary = TempDir::new();
-        let path = path_in(&temporary.path);
+        let temporary = TempDir::new().unwrap();
+        let path = path_in(temporary.path());
         std::fs::write(&path, vec![b'x'; MAX_LOG_BYTES as usize + 1]).unwrap();
 
         append(&path, "after rotation").unwrap();
 
-        let rotated = temporary.path.join("loregalia.log.1");
+        let rotated = temporary.path().join("loregalia.log.1");
         assert_eq!(std::fs::metadata(rotated).unwrap().len(), MAX_LOG_BYTES + 1);
         let contents = std::fs::read_to_string(&path).unwrap();
         assert_eq!(contents.lines().count(), 1);
