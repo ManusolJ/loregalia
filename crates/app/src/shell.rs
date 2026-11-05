@@ -1,11 +1,12 @@
 use std::future::Future;
+use std::path::PathBuf;
 
 use gpui_kit::component::{Disableable, button::Button};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AppContext, Context, FontWeight, Pixels, Role, TestSupportExt, Window, div, px, rgb,
 };
-use loregalia_core::{Database, Result as CoreResult, lists};
+use loregalia_core::{Database, Result as CoreResult, lists, log};
 
 use crate::startup::StorageState;
 use crate::theme::Palette;
@@ -26,21 +27,29 @@ pub fn sidebar_width(window_width: Pixels) -> Pixels {
 
 pub struct Shell {
     storage: StorageState,
+    log_path: Option<PathBuf>,
     lists: Vec<lists::List>,
     error: Option<String>,
     loading: bool,
 }
 
 impl Shell {
-    pub fn new(storage: StorageState, cx: &mut Context<Self>) -> Self {
+    pub fn new(storage: StorageState, log_path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let mut shell = Self {
             storage,
+            log_path,
             lists: Vec::new(),
             error: None,
             loading: true,
         };
         shell.reload_lists(cx);
         shell
+    }
+
+    fn record(&self, message: &str) {
+        if let Some(path) = &self.log_path {
+            let _ = log::append(path, message);
+        }
     }
 
     fn reload_lists(&mut self, cx: &mut Context<Self>) {
@@ -83,7 +92,9 @@ impl Shell {
                         this.error = None;
                     }
                     Err(error) => {
-                        this.error = Some(format!("Could not update lists: {error}"));
+                        let message = format!("Could not update lists: {error}");
+                        this.record(&message);
+                        this.error = Some(message);
                     }
                 }
                 cx.notify();

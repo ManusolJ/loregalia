@@ -47,6 +47,7 @@ fn open_shell(
     cx: &mut TestAppContext,
     window_size: Size<Pixels>,
     storage: StorageState,
+    log_path: Option<PathBuf>,
 ) -> Result<AnyWindowHandle> {
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -59,8 +60,9 @@ fn open_shell(
             })),
             ..Default::default()
         };
-        let (window, _) =
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|cx| Shell::new(storage, cx)))?;
+        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| Shell::new(storage, log_path, cx))
+        })?;
 
         Ok(window)
     })
@@ -73,7 +75,7 @@ fn ready(temporary: &TempDir) -> StorageState {
 #[gpui_kit::test]
 fn wide_window_shows_the_full_sidebar_and_empty_state(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
-    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary)).unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -91,7 +93,7 @@ fn wide_window_shows_the_full_sidebar_and_empty_state(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn narrow_window_collapses_the_sidebar_to_a_rail(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
-    let handle = open_shell(cx, size(px(960.0), px(600.0)), ready(&temporary)).unwrap();
+    let handle = open_shell(cx, size(px(960.0), px(600.0)), ready(&temporary), None).unwrap();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -109,6 +111,7 @@ fn storage_failure_is_shown_as_an_alert(cx: &mut TestAppContext) {
         cx,
         size(px(1280.0), px(800.0)),
         StorageState::Failed(message.to_owned()),
+        None,
     )
     .unwrap();
 
@@ -137,6 +140,7 @@ fn creating_a_list_writes_and_reads_it_back(cx: &mut TestAppContext) {
         cx,
         size(px(1280.0), px(800.0)),
         StorageState::Ready(path.clone()),
+        None,
     )
     .unwrap();
 
@@ -166,4 +170,33 @@ fn creating_a_list_writes_and_reads_it_back(cx: &mut TestAppContext) {
         .map(|list| list.name)
         .collect();
     assert_eq!(names, ["Existing list", "New list"]);
+}
+
+#[gpui_kit::test]
+fn list_failures_are_shown_and_logged(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let database_path = temporary.path().join("loregalia.db");
+    std::fs::create_dir_all(&database_path).unwrap();
+    let log_path = temporary.path().join("loregalia.log");
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(database_path),
+        Some(log_path.clone()),
+    )
+    .unwrap();
+
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let alert = window.find("lists-error");
+        assert!(alert.visible());
+        assert_eq!(alert.role(), Some(Role::Alert));
+    })
+    .unwrap();
+
+    let contents = std::fs::read_to_string(&log_path).unwrap();
+    assert!(contents.contains("Could not update lists"));
 }

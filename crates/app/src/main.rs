@@ -3,10 +3,10 @@
 use gpui_kit::AppContext;
 use gpui_kit::assets::Assets;
 use loregalia_app::shell::Shell;
-use loregalia_app::startup::{StorageState, prepare};
+use loregalia_app::startup::{Startup, StorageState, prepare};
 
 fn main() {
-    let storage = prepare();
+    let Startup { storage, log_path } = prepare();
     if let StorageState::Failed(message) = &storage {
         eprintln!("{message}");
     }
@@ -22,9 +22,9 @@ fn main() {
         .detach();
 
         let options = loregalia_app::window_options(cx);
-        if let Err(error) =
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|cx| Shell::new(storage, cx)))
-        {
+        if let Err(error) = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| Shell::new(storage, log_path, cx))
+        }) {
             eprintln!("Failed to open the Loregalia window: {error}");
             cx.quit();
         }
