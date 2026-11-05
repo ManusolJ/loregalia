@@ -10,10 +10,12 @@ if ! command -v rustup >/dev/null 2>&1; then
 fi
 
 persistent=/etc/sandbox-persistent.sh
-sudo tee -a "$persistent" >/dev/null <<'EOF'
+if ! grep -q 'loregalia-target' "$persistent" 2>/dev/null; then
+  sudo tee -a "$persistent" >/dev/null <<'EOF'
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="$HOME/loregalia-target"
 EOF
+fi
 
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="$HOME/loregalia-target"
@@ -21,5 +23,7 @@ export CARGO_TARGET_DIR="$HOME/loregalia-target"
 cd "$project_root"
 rustup toolchain install
 git config core.hooksPath .githooks
+git config --global user.name "Loregalia Agent"
+git config --global user.email "agent@loregalia.invalid"
 
 echo "Sandbox ready. Open a new shell, then run: cargo xtask gate"

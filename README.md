@@ -93,7 +93,7 @@ Agents follow [AGENTS.md](AGENTS.md), and these limits are enforced rather than 
 - **A sandbox** keeps agents away from the rest of the computer. Run one with `sbx run opencode`,
   then `sh scripts/sandbox-setup.sh` inside it.
 
-To review an agent's work:
+To review an agent's work, check it locally, then merge it through a pull request:
 
 ```powershell
 git log main..agent/<task> --oneline
@@ -101,6 +101,15 @@ git diff main...agent/<task>
 git switch agent/<task>
 cargo xtask gate
 cargo run
+git push -u origin agent/<task>
+```
+
+Agents never push, so this last step is always done by the human. After merging the pull request on
+GitHub, update your local copy:
+
+```powershell
+git switch main
+git pull
 ```
 
 If creating a sandbox fails with `erofs` and `No space left on device` even with free disk space, run
@@ -122,4 +131,4 @@ Anyone using an agent on this code should point it at [AGENTS.md](AGENTS.md) fir
 
 ## License
 
-No license has been chosen yet, so all rights are reserved for now.
+[MIT](LICENSE).
