@@ -3,8 +3,6 @@ use rusqlite::Connection;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-const LATEST_VERSION: u32 = 1;
-
 pub const APP_FOLDER: &str = "com.manu.loregalia";
 pub const DATABASE_FILE: &str = "loregalia.db";
 
@@ -13,6 +11,10 @@ const MIGRATIONS: &[&str] = &["CREATE TABLE lists (
         name TEXT NOT NULL,
         created_at TEXT NOT NULL
     ) STRICT;"];
+
+fn latest_version() -> u32 {
+    MIGRATIONS.len() as u32
+}
 
 pub fn data_directory(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let base = non_empty(env("APPDATA"))
@@ -28,16 +30,6 @@ pub fn default_data_directory() -> Result<PathBuf> {
 
 pub fn database_in(directory: &Path) -> PathBuf {
     directory.join(DATABASE_FILE)
-}
-
-pub fn database_path(env: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
-    data_directory(env)
-        .map(|directory| database_in(&directory))
-        .ok_or(Error::DataDirectoryUnavailable)
-}
-
-pub fn default_database_path() -> Result<PathBuf> {
-    default_data_directory().map(|directory| database_in(&directory))
 }
 
 fn non_empty(value: Option<OsString>) -> Option<PathBuf> {
@@ -65,7 +57,7 @@ impl Database {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    pub fn connection(&self) -> &Connection {
+    pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
 
@@ -79,11 +71,12 @@ impl Database {
 
 fn migrate(connection: &mut Connection) -> Result<()> {
     let current: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let latest = latest_version();
 
-    if current > i64::from(LATEST_VERSION) {
+    if current > i64::from(latest) {
         return Err(Error::SchemaTooNew {
             found: current,
-            supported: LATEST_VERSION,
+            supported: latest,
         });
     }
 
@@ -106,14 +99,14 @@ fn migrate(connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        APP_FOLDER, DATABASE_FILE, Database, LATEST_VERSION, data_directory, database_path,
+        APP_FOLDER, DATABASE_FILE, Database, MIGRATIONS, data_directory, database_in,
+        latest_version,
     };
     use crate::Error;
     use rusqlite::Connection;
     use std::ffi::OsString;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let values: Vec<(String, OsString)> = values
@@ -126,37 +119,6 @@ mod tests {
                 .iter()
                 .find(|(key, _)| key == name)
                 .map(|(_, value)| value.clone())
-        }
-    }
-
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl TempDir {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default();
-            let path = std::env::temp_dir().join(format!(
-                "loregalia-core-{}-{nanos}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
         }
     }
 
@@ -213,25 +175,32 @@ mod tests {
     #[test]
     fn missing_environment_has_no_data_folder() {
         assert!(data_directory(environment(&[])).is_none());
-        assert!(matches!(
-            database_path(|_| None),
-            Err(Error::DataDirectoryUnavailable)
-        ));
     }
 
     #[test]
-    fn database_path_appends_the_file_name() {
-        let path = database_path(environment(&[("XDG_DATA_HOME", "/data")])).unwrap();
+    fn database_in_appends_the_file_name() {
+        let directory = data_directory(environment(&[("XDG_DATA_HOME", "/data")])).unwrap();
 
         assert_eq!(
-            path,
+            database_in(&directory),
             PathBuf::from("/data").join(APP_FOLDER).join(DATABASE_FILE)
         );
     }
 
     #[test]
+    fn latest_version_equals_the_number_of_migrations() {
+        let database = Database::open_in_memory().unwrap();
+
+        assert_eq!(
+            schema_version(database.connection()),
+            MIGRATIONS.len() as i64
+        );
+        assert_eq!(latest_version() as usize, MIGRATIONS.len());
+    }
+
+    #[test]
     fn migrates_a_database_written_before_version_one() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let path = temporary.path().join("legacy.db");
 
         {
@@ -249,7 +218,7 @@ mod tests {
 
         assert_eq!(
             schema_version(database.connection()),
-            i64::from(LATEST_VERSION)
+            i64::from(latest_version())
         );
         let legacy: String = database
             .connection()
@@ -273,7 +242,7 @@ mod tests {
 
         assert_eq!(
             schema_version(database.connection()),
-            i64::from(LATEST_VERSION)
+            i64::from(latest_version())
         );
 
         let foreign_keys: i64 = database
@@ -295,7 +264,7 @@ mod tests {
 
     #[test]
     fn reopening_keeps_rows_and_does_not_rerun_migrations() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let path = temporary.path().join("nested").join("loregalia.db");
 
         {
@@ -309,14 +278,14 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 schema_version(database.connection()),
-                i64::from(LATEST_VERSION)
+                i64::from(latest_version())
             );
         }
 
         let database = Database::open(&path).unwrap();
         assert_eq!(
             schema_version(database.connection()),
-            i64::from(LATEST_VERSION)
+            i64::from(latest_version())
         );
 
         let (name, created_at): (String, String) = database
@@ -333,7 +302,7 @@ mod tests {
 
     #[test]
     fn open_creates_missing_parent_folders() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let path = temporary
             .path()
             .join("com.manu.loregalia")
@@ -345,13 +314,13 @@ mod tests {
         assert!(path.is_file());
         assert_eq!(
             schema_version(database.connection()),
-            i64::from(LATEST_VERSION)
+            i64::from(latest_version())
         );
     }
 
     #[test]
     fn newer_database_is_rejected_without_changes() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let path = temporary.path().join("newer.db");
 
         {
@@ -383,7 +352,7 @@ mod tests {
 
     #[test]
     fn unusable_path_returns_error_without_panicking() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let blocker = temporary.path().join("blocker");
         std::fs::write(&blocker, "not a directory").unwrap();
 

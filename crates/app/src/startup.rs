@@ -98,44 +98,11 @@ mod tests {
         window_open_failure,
     };
     use loregalia_core::Error;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl TempDir {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default();
-            let path = std::env::temp_dir().join(format!(
-                "loregalia-app-{}-{nanos}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn missing_folders_are_created_before_migrating() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let path = temporary
             .path()
             .join("com.manu.loregalia")
@@ -147,7 +114,7 @@ mod tests {
 
     #[test]
     fn an_unusable_database_path_becomes_a_visible_failure() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let blocker = temporary.path().join("blocker");
         std::fs::write(&blocker, "not a directory").unwrap();
 
@@ -162,7 +129,7 @@ mod tests {
 
     #[test]
     fn startup_logs_the_version_and_database_path() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
 
         let startup = prepare_with(Ok(temporary.path().to_path_buf()));
 
@@ -185,7 +152,7 @@ mod tests {
 
     #[test]
     fn startup_failures_are_written_to_the_log() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         std::fs::create_dir_all(temporary.path().join("loregalia.db")).unwrap();
 
         let startup = prepare_with(Ok(temporary.path().to_path_buf()));
@@ -198,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_window_open_failure_is_written_to_the_log() {
-        let temporary = TempDir::new();
+        let temporary = TempDir::new().unwrap();
         let path = temporary.path().join("loregalia.log");
         let error = std::io::Error::other("no display");
 
