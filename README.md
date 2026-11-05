@@ -82,16 +82,21 @@ AGENTS.md     Instructions for coding agents
 
 | Who         | Does what                                                                       |
 | ----------- | ------------------------------------------------------------------------------- |
-| AI agents   | Write code, tests and docs on `agent/*` branches, and run the gate              |
+| AI agents   | Write code and tests on `agent/*` branches, run the gate, and propose doc changes |
 | The human   | Sets direction, makes [product decisions](docs/DECISIONS.md), reviews and merges |
 
 Agents follow [AGENTS.md](AGENTS.md), and these limits are enforced rather than requested:
 
 - **The gate** must pass, and it also runs in CI.
 - **A commit hook** blocks commits to `main` and runs the fast gate.
-- **Agent permissions** in [opencode.json](opencode.json) deny pushing, merging and deleting files.
-- **A sandbox** keeps agents away from the rest of the computer. Run one with `sbx run opencode`,
-  then `sh scripts/sandbox-setup.sh` inside it.
+- **Agent permissions** in [opencode.json](opencode.json) deny pushing, merging, deleting files,
+  touching secrets, and editing the docs or the rules themselves.
+- **A sandbox** keeps agents away from the rest of the computer. Create one with
+  `sbx create --name <name> opencode .`, run `sbx exec <name> sh scripts/sandbox-setup.sh`, then start
+  the agent with `sbx run --name <name> -- --auto`.
+
+These rules match text, so they can be worked around. Keep real secrets out of the project folder,
+because the sandbox can see everything in it.
 
 To review an agent's work, check it locally, then merge it through a pull request:
 
