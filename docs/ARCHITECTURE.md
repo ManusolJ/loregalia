@@ -116,4 +116,4 @@ them.
 branch, because releases can include breaking changes.
 
 `crates/core` may also use `rusqlite` (D-01), `uuid`, and `ureq`, `serde` and `serde_json` (D-22).
-Any other dependency needs a human's approval first.
+Tests may use `tempfile` (D-23). Any other dependency needs a human's approval first.

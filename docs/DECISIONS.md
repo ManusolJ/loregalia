@@ -25,6 +25,7 @@ one, move it to Decided, with the date.
 | D-19 | A show's status is set separately from its seasons                       | A show works before its seasons are known                                               | 2026-11-05 |
 | D-20 | TVmaze for shows, not TMDB                                               | Seasons, no key, and images may be cached indefinitely                                  | 2026-11-05 |
 | D-22 | Approve `ureq`, `serde` and `serde_json` in `crates/core`                | Blocking HTTP with timeouts for providers, and JSON mapping at the provider edge         | 2026-11-05 |
+| D-23 | Approve `tempfile` as a dev-dependency only                            | Replaces four copies of a test helper across two crates; never ships in the app          | 2026-11-05 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 
