@@ -5,9 +5,15 @@ use gpui_kit::{
     WindowBounds, WindowOptions, px, size,
 };
 use loregalia_app::shell::Shell;
+use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
+use std::path::PathBuf;
 
-fn open_shell(cx: &mut TestAppContext, window_size: Size<Pixels>) -> Result<AnyWindowHandle> {
+fn open_shell(
+    cx: &mut TestAppContext,
+    window_size: Size<Pixels>,
+    storage: StorageState,
+) -> Result<AnyWindowHandle> {
     cx.update(|cx| {
         gpui_kit::init(cx);
         theme::apply(ThemeMode::Dark, cx);
@@ -19,15 +25,20 @@ fn open_shell(cx: &mut TestAppContext, window_size: Size<Pixels>) -> Result<AnyW
             })),
             ..Default::default()
         };
-        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| Shell))?;
+        let (window, _) =
+            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| Shell::new(storage)))?;
 
         Ok(window)
     })
 }
 
+fn ready() -> StorageState {
+    StorageState::Ready(PathBuf::from("loregalia.db"))
+}
+
 #[gpui_kit::test]
 fn wide_window_shows_the_full_sidebar_and_empty_state(cx: &mut TestAppContext) {
-    let handle = open_shell(cx, size(px(1280.0), px(800.0))).unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready()).unwrap();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -44,13 +55,35 @@ fn wide_window_shows_the_full_sidebar_and_empty_state(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn narrow_window_collapses_the_sidebar_to_a_rail(cx: &mut TestAppContext) {
-    let handle = open_shell(cx, size(px(960.0), px(600.0))).unwrap();
+    let handle = open_shell(cx, size(px(960.0), px(600.0)), ready()).unwrap();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
 
         assert_eq!(window.find("sidebar").bounds().size.width, px(56.0));
         assert!(window.find("empty-state").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn storage_failure_is_shown_as_an_alert(cx: &mut TestAppContext) {
+    let message = "Could not open the database: the disk is full";
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Failed(message.to_owned()),
+    )
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let alert = window.find("storage-error");
+        assert!(alert.visible());
+        assert_eq!(alert.role(), Some(Role::Alert));
+        assert_eq!(alert.label(), Some(message));
+        assert!(window.try_find("empty-state").is_none());
     })
     .unwrap();
 }

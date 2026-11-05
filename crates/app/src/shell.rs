@@ -1,6 +1,9 @@
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, FontWeight, Pixels, Role, TestSupportExt, Window, div, px, rgb};
+use gpui_kit::{
+    AnyElement, Context, FontWeight, Pixels, Role, TestSupportExt, Window, div, px, rgb,
+};
 
+use crate::startup::StorageState;
 use crate::theme::Palette;
 
 const RAIL_WIDTH: f32 = 56.0;
@@ -16,13 +19,41 @@ pub fn sidebar_width(window_width: Pixels) -> Pixels {
     }
 }
 
-pub struct Shell;
+pub struct Shell {
+    storage: StorageState,
+}
+
+impl Shell {
+    pub fn new(storage: StorageState) -> Self {
+        Self { storage }
+    }
+}
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let width = sidebar_width(window.viewport_size().width);
         let shows_labels = width > px(RAIL_WIDTH);
+
+        let main: AnyElement = match &self.storage {
+            StorageState::Ready(_) => div()
+                .id("empty-state")
+                .role(Role::Status)
+                .test_support()
+                .aria_label(EMPTY_MESSAGE)
+                .text_color(rgb(palette.muted))
+                .child(EMPTY_MESSAGE)
+                .into_any_element(),
+            StorageState::Failed(message) => div()
+                .id("storage-error")
+                .role(Role::Alert)
+                .test_support()
+                .aria_label(message.clone())
+                .text_color(rgb(palette.danger))
+                .text_xs()
+                .child(message.clone())
+                .into_any_element(),
+        };
 
         div()
             .size_full()
@@ -57,15 +88,7 @@ impl Render for Shell {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(
-                        div()
-                            .id("empty-state")
-                            .role(Role::Status)
-                            .test_support()
-                            .aria_label(EMPTY_MESSAGE)
-                            .text_color(rgb(palette.muted))
-                            .child(EMPTY_MESSAGE),
-                    ),
+                    .child(main),
             )
     }
 }

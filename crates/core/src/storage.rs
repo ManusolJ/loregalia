@@ -1,14 +1,48 @@
 use crate::{Error, Result};
 use rusqlite::Connection;
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 const LATEST_VERSION: u32 = 1;
+
+pub const APP_FOLDER: &str = "com.manu.loregalia";
+pub const DATABASE_FILE: &str = "loregalia.db";
 
 const MIGRATIONS: &[&str] = &["CREATE TABLE lists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         created_at TEXT NOT NULL
     ) STRICT;"];
+
+pub fn data_directory(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let base = non_empty(env("APPDATA"))
+        .or_else(|| non_empty(env("XDG_DATA_HOME")))
+        .or_else(|| non_empty(env("HOME")).map(|home| home.join(".local").join("share")));
+
+    base.map(|base| base.join(APP_FOLDER))
+}
+
+pub fn default_data_directory() -> Result<PathBuf> {
+    data_directory(|name| std::env::var_os(name)).ok_or(Error::DataDirectoryUnavailable)
+}
+
+pub fn database_in(directory: &Path) -> PathBuf {
+    directory.join(DATABASE_FILE)
+}
+
+pub fn database_path(env: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+    data_directory(env)
+        .map(|directory| database_in(&directory))
+        .ok_or(Error::DataDirectoryUnavailable)
+}
+
+pub fn default_database_path() -> Result<PathBuf> {
+    default_data_directory().map(|directory| database_in(&directory))
+}
+
+fn non_empty(value: Option<OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
+}
 
 pub struct Database {
     connection: Connection,
@@ -71,12 +105,29 @@ fn migrate(connection: &mut Connection) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Database, LATEST_VERSION};
+    use super::{
+        APP_FOLDER, DATABASE_FILE, Database, LATEST_VERSION, data_directory, database_path,
+    };
     use crate::Error;
     use rusqlite::Connection;
+    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let values: Vec<(String, OsString)> = values
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), OsString::from(value)))
+            .collect();
+
+        move |name| {
+            values
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
 
     struct TempDir {
         path: PathBuf,
@@ -113,6 +164,107 @@ mod tests {
         connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap()
+    }
+
+    #[test]
+    fn windows_data_folder_uses_appdata() {
+        let directory = data_directory(environment(&[
+            ("APPDATA", r"C:\Users\me\AppData\Roaming"),
+            ("HOME", "/home/me"),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            directory,
+            PathBuf::from(r"C:\Users\me\AppData\Roaming").join(APP_FOLDER)
+        );
+    }
+
+    #[test]
+    fn linux_data_folder_prefers_xdg_then_home() {
+        let xdg = data_directory(environment(&[
+            ("XDG_DATA_HOME", "/home/me/.local/share"),
+            ("HOME", "/home/me"),
+        ]))
+        .unwrap();
+        assert_eq!(xdg, PathBuf::from("/home/me/.local/share").join(APP_FOLDER));
+
+        let home = data_directory(environment(&[("HOME", "/home/me")])).unwrap();
+        assert_eq!(
+            home,
+            PathBuf::from("/home/me/.local/share").join(APP_FOLDER)
+        );
+    }
+
+    #[test]
+    fn empty_environment_values_are_ignored() {
+        let directory = data_directory(environment(&[
+            ("APPDATA", ""),
+            ("XDG_DATA_HOME", "/home/me/.local/share"),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            directory,
+            PathBuf::from("/home/me/.local/share").join(APP_FOLDER)
+        );
+    }
+
+    #[test]
+    fn missing_environment_has_no_data_folder() {
+        assert!(data_directory(environment(&[])).is_none());
+        assert!(matches!(
+            database_path(|_| None),
+            Err(Error::DataDirectoryUnavailable)
+        ));
+    }
+
+    #[test]
+    fn database_path_appends_the_file_name() {
+        let path = database_path(environment(&[("XDG_DATA_HOME", "/data")])).unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from("/data").join(APP_FOLDER).join(DATABASE_FILE)
+        );
+    }
+
+    #[test]
+    fn migrates_a_database_written_before_version_one() {
+        let temporary = TempDir::new();
+        let path = temporary.path().join("legacy.db");
+
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE legacy (id TEXT PRIMARY KEY) STRICT;
+                     INSERT INTO legacy (id) VALUES ('keep-me');
+                     PRAGMA user_version = 0;",
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+
+        assert_eq!(
+            schema_version(database.connection()),
+            i64::from(LATEST_VERSION)
+        );
+        let legacy: String = database
+            .connection()
+            .query_row("SELECT id FROM legacy", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(legacy, "keep-me");
+        let lists: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(lists, 1);
     }
 
     #[test]
