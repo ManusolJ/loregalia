@@ -23,6 +23,9 @@ one, move it to Decided, with the date.
 
 | D-17 | Use `ManusolJ/loregalia` as `origin`, starting from an empty remote      | The repo was prepared for this project                                                  | 2026-11-05 |
 | D-19 | A show's status is set separately from its seasons                       | A show works before its seasons are known                                               | 2026-11-05 |
+| D-20 | TVmaze for shows, not TMDB                                               | Seasons, no key, and images may be cached indefinitely                                  | 2026-11-05 |
+| D-22 | Approve `ureq`, `serde` and `serde_json` in `crates/core`                | Blocking HTTP with timeouts for providers, and JSON mapping at the provider edge         | 2026-11-05 |
+| D-23 | Approve `tempfile` as a dev-dependency only                            | Replaces four copies of a test helper across two crates; never ships in the app          | 2026-11-05 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 
@@ -36,7 +39,6 @@ The findings behind these are in `METADATA.md`. Recommendations are suggestions,
 | D-10 | Which source for games?                                           | IGDB: RAWG timed out when checked, and Giant Bomb's API is unavailable        |
 | D-11 | Do credentials ship in the build, or does each user bring their own? | Users bring TMDB and IGDB credentials in Settings; shows and books need none |
 | D-12 | How long may covers and details be stored?                        | Follow each source's limit: refresh TMDB within 6 months; resolve IGDB's conflict before release |
-| D-20 | TVmaze or TMDB for shows?                                         | TVmaze: seasons, no key, and images may be cached indefinitely                |
 | D-21 | What contact goes in the User-Agent for Open Library's higher limit? | A project address, never a user's personal one                             |
 
 ## Open: can wait

@@ -114,3 +114,6 @@ them.
 
 `gpui-kit` is pre-1.0 and changes often, so it is pinned to an exact version. Upgrade it on its own
 branch, because releases can include breaking changes.
+
+`crates/core` may also use `rusqlite` (D-01), `uuid`, and `ureq`, `serde` and `serde_json` (D-22).
+Tests may use `tempfile` (D-23). Any other dependency needs a human's approval first.
