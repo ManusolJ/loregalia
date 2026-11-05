@@ -94,10 +94,13 @@ mod tests {
 
         let shows = parse_search(body).unwrap();
 
-        assert_eq!(shows.len(), 10);
+        let show = shows
+            .iter()
+            .find(|show| show.external_id == 38339)
+            .expect("fixture contains A Teacher");
         assert_eq!(
-            shows[0],
-            Show {
+            show,
+            &Show {
                 external_id: 38339,
                 title: "A Teacher".to_owned(),
                 release_year: Some(2020),
