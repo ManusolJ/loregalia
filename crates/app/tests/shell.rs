@@ -76,6 +76,7 @@ fn ready(temporary: &TempDir) -> StorageState {
 fn wide_window_shows_the_full_sidebar_and_empty_state(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -94,6 +95,7 @@ fn wide_window_shows_the_full_sidebar_and_empty_state(cx: &mut TestAppContext) {
 fn narrow_window_collapses_the_sidebar_to_a_rail(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let handle = open_shell(cx, size(px(960.0), px(600.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -123,6 +125,39 @@ fn storage_failure_is_shown_as_an_alert(cx: &mut TestAppContext) {
         assert_eq!(alert.role(), Some(Role::Alert));
         assert_eq!(alert.label(), Some(message));
         assert!(window.try_find("empty-state").is_none());
+        assert!(window.try_find("loading-state").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn loading_shows_before_the_list_load_finishes(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let loading = window.find("loading-state");
+        assert!(loading.visible());
+        assert_eq!(loading.role(), Some(Role::Status));
+        assert_eq!(loading.label(), Some("Loading lists"));
+        assert!(window.try_find("empty-state").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn empty_state_shows_after_the_load_finishes_empty(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.find("empty-state").visible());
+        assert!(window.try_find("loading-state").is_none());
     })
     .unwrap();
 }
@@ -199,4 +234,34 @@ fn list_failures_are_shown_and_logged(cx: &mut TestAppContext) {
 
     let contents = std::fs::read_to_string(&log_path).unwrap();
     assert!(contents.contains("Could not update lists"));
+}
+
+#[gpui_kit::test]
+fn a_failed_log_write_does_not_change_the_ui(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let database_path = temporary.path().join("loregalia.db");
+    std::fs::create_dir_all(&database_path).unwrap();
+    let log_path = temporary.path().join("loregalia.log");
+    std::fs::create_dir_all(&log_path).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(database_path),
+        Some(log_path.clone()),
+    )
+    .unwrap();
+
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let alert = window.find("lists-error");
+        assert!(alert.visible());
+        assert_eq!(alert.role(), Some(Role::Alert));
+        assert!(window.try_find("loading-state").is_none());
+    })
+    .unwrap();
+
+    assert!(log_path.is_dir());
 }

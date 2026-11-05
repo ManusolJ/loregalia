@@ -15,6 +15,8 @@ const RAIL_WIDTH: f32 = 56.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
 const SIDEBAR_LABELS_FROM: f32 = 1024.0;
 const EMPTY_MESSAGE: &str = "Nothing planned yet";
+const LOADING_MESSAGE: &str = "Loading lists";
+const LOADING_BLOCK_WIDTH: f32 = 320.0;
 const NEW_LIST_NAME: &str = "New list";
 
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
@@ -35,21 +37,28 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(storage: StorageState, log_path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let loading = matches!(&storage, StorageState::Ready(_));
         let mut shell = Self {
             storage,
             log_path,
             lists: Vec::new(),
             error: None,
-            loading: true,
+            loading,
         };
         shell.reload_lists(cx);
         shell
     }
 
-    fn record(&self, message: &str) {
-        if let Some(path) = &self.log_path {
-            let _ = log::append(path, message);
-        }
+    fn record(&self, message: &str, cx: &mut Context<Self>) {
+        let Some(path) = self.log_path.clone() else {
+            return;
+        };
+        let message = message.to_owned();
+
+        cx.background_spawn(async move {
+            let _ = log::append(&path, &message);
+        })
+        .detach();
     }
 
     fn reload_lists(&mut self, cx: &mut Context<Self>) {
@@ -93,7 +102,7 @@ impl Shell {
                     }
                     Err(error) => {
                         let message = format!("Could not update lists: {error}");
-                        this.record(&message);
+                        this.record(&message, cx);
                         this.error = Some(message);
                     }
                 }
@@ -114,6 +123,7 @@ impl Shell {
                 .text_xs()
                 .child(message.clone())
                 .into_any_element(),
+            (StorageState::Ready(_), _) if self.loading => Self::loading_element(palette),
             (StorageState::Ready(_), Some(message)) => div()
                 .id("lists-error")
                 .role(Role::Alert)
@@ -132,6 +142,27 @@ impl Shell {
                 .child(EMPTY_MESSAGE)
                 .into_any_element(),
         }
+    }
+
+    fn loading_element(palette: &Palette) -> AnyElement {
+        div()
+            .id("loading-state")
+            .role(Role::Status)
+            .test_support()
+            .aria_label(LOADING_MESSAGE)
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w(px(LOADING_BLOCK_WIDTH))
+            .children([1.0_f32, 0.85, 0.6].map(|scale| {
+                div()
+                    .h(px(16.0))
+                    .w(px(LOADING_BLOCK_WIDTH * scale))
+                    .rounded(px(6.0))
+                    .bg(rgb(palette.content))
+                    .opacity(0.05)
+            }))
+            .into_any_element()
     }
 
     fn list_rows(&self) -> impl IntoElement {
