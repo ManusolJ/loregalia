@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/app", "crates/core", "xtask"]
+default-members = ["crates/app"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.dependencies]
+gpui-kit = "=0.9.0"
+loregalia-core = { path = "crates/core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+panic = "abort"
+strip = true

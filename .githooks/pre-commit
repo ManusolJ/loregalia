@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+branch=$(git symbolic-ref --quiet --short HEAD || echo detached)
+
+if [ "$branch" = "main" ] && [ "${LOREGALIA_ALLOW_MAIN:-}" != "1" ]; then
+  echo "Commits to main are blocked. Create a branch: git switch -c agent/<task>"
+  echo "Humans can override this for one commit with LOREGALIA_ALLOW_MAIN=1."
+  exit 1
+fi
+
+cargo xtask gate --fast
