@@ -6,13 +6,13 @@ platform; Linux only has to build and pass tests, because agents work in a Linux
 
 ## Commands
 
-| Command                                     | Use                                               |
-| ------------------------------------------- | ------------------------------------------------- |
-| `cargo xtask gate`                          | Required before you finish or commit              |
-| `cargo xtask gate --fast`                   | While iterating; also runs on every commit        |
-| `cargo test -p loregalia --test shell NAME` | One UI test                                       |
-| `cargo test -p loregalia-core NAME`         | One domain test, compiles in seconds              |
-| `cargo fmt --all`                           | Fix formatting                                    |
+| Command                                     | Use                                                |
+| ------------------------------------------- | -------------------------------------------------- |
+| `cargo xtask gate`                          | Required before you finish or commit               |
+| `cargo xtask gate --fast`                   | While iterating; also runs on every commit         |
+| `cargo test -p loregalia --test shell NAME` | One UI test                                        |
+| `cargo test -p loregalia-core NAME`         | One domain test, compiles in seconds               |
+| `cargo fmt --all`                           | Fix formatting                                     |
 | `cargo run`                                 | Opens the app window; only works on a real desktop |
 
 Humans create sandboxes with `scripts/new-sandbox.ps1`, which runs setup. There, `docs/`, the rules
@@ -110,3 +110,7 @@ the fix.
 
 - **`gpui-kit` ships no working HTTP client on native.** Remote `img()` URLs fail until the app
   installs one with `cx.set_http_client(...)`.
+- clippy.toml allows unwrap in test functions, but not in helper functions inside integration tests. A TempDir::new helper with unwrap() fails the gate; helpers must return Option/Result and only test bodies may unwrap.
+- gpui-kit exposes the button at gpui_kit::component::button::Button, not gpui_kit::component::Button.
+- ElementId does not implement From<(&str, String)>; use format!("row-{}", id) or ElementId::Name.
+- One intermediate test run created a gitignored crates/app/loregalia.db. It is not in any commit; it is safe to delete.

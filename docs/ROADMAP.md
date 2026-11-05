@@ -7,7 +7,7 @@ Work top to bottom. Tick items only when they are verified, not when the code co
 - [x] Workspace, GPUI window with theme tokens, sidebar and empty state
 - [x] Gate: project rules, format, clippy, unit and headless UI tests
 - [x] CI workflow file, sandbox setup, commit hook, agent permissions
-- [ ] First CI run is green on Windows and Linux (needs the first push)
+- [x] First CI run is green on Windows and Linux (needs the first push)
 
 ## 2. Human decisions
 
@@ -19,10 +19,10 @@ Work top to bottom. Tick items only when they are verified, not when the code co
 
 Prove the painful parts while the app is still small.
 
-- [ ] Open a SQLite file in the app data folder, creating the folder on a fresh install
-- [ ] Run migrations at startup, including on a database from an older version
-- [ ] One view writes a row and reads it back, off the UI thread
-- [ ] Write a log file, because the installed app has no console
+- [x] Open a SQLite file in the app data folder, creating the folder on a fresh install
+- [x] Run migrations at startup, including on a database from an older version
+- [x] One view writes a row and reads it back, off the UI thread
+- [x] Write a log file, because the installed app has no console
 - [ ] One real call to the first source from `core`, with its response saved as a fixture
 - [ ] Decide D-16 and D-18, then build an installer
 - [ ] Human check: install it, start it from the Start menu, and confirm covers and data persist
