@@ -1,4 +1,4 @@
-use loregalia_core::{Database, storage};
+use loregalia_core::{Database, Result as CoreResult, log, storage};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7,11 +7,39 @@ pub enum StorageState {
     Failed(String),
 }
 
-pub fn prepare() -> StorageState {
-    match storage::default_database_path() {
-        Ok(path) => open_at(path),
+pub struct Startup {
+    pub storage: StorageState,
+    pub log_path: Option<PathBuf>,
+}
+
+pub fn prepare() -> Startup {
+    prepare_with(storage::default_data_directory())
+}
+
+fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
+    let log_path = directory
+        .as_ref()
+        .ok()
+        .map(|directory| log::path_in(directory));
+
+    record(
+        &log_path,
+        &format!("Loregalia {} starting", env!("CARGO_PKG_VERSION")),
+    );
+
+    let storage = match directory {
+        Ok(directory) => open_at(storage::database_in(&directory)),
         Err(error) => StorageState::Failed(format!("Could not find the app data folder: {error}")),
+    };
+
+    match &storage {
+        StorageState::Ready(path) => {
+            record(&log_path, &format!("database ready at {}", path.display()));
+        }
+        StorageState::Failed(message) => record(&log_path, message),
     }
+
+    Startup { storage, log_path }
 }
 
 fn open_at(path: PathBuf) -> StorageState {
@@ -21,9 +49,16 @@ fn open_at(path: PathBuf) -> StorageState {
     }
 }
 
+fn record(log_path: &Option<PathBuf>, message: &str) {
+    if let Some(path) = log_path {
+        let _ = log::append(path, message);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{StorageState, open_at};
+    use super::{StorageState, open_at, prepare_with};
+    use loregalia_core::Error;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,5 +119,41 @@ mod tests {
             StorageState::Ready(path) => format!("unexpected ready state at {}", path.display()),
         };
         assert!(message.starts_with("Could not open the database:"));
+    }
+
+    #[test]
+    fn startup_logs_the_version_and_database_path() {
+        let temporary = TempDir::new();
+
+        let startup = prepare_with(Ok(temporary.path().to_path_buf()));
+
+        assert!(matches!(&startup.storage, StorageState::Ready(_)));
+        let log_path = startup.log_path.clone().unwrap();
+        let contents = std::fs::read_to_string(log_path).unwrap();
+        assert!(contents.contains(env!("CARGO_PKG_VERSION")));
+        assert!(contents.contains("starting"));
+        assert!(contents.contains("database ready at"));
+        assert!(contents.contains("loregalia.db"));
+    }
+
+    #[test]
+    fn a_missing_data_folder_has_no_log() {
+        let startup = prepare_with(Err(Error::DataDirectoryUnavailable));
+
+        assert!(matches!(&startup.storage, StorageState::Failed(_)));
+        assert!(startup.log_path.is_none());
+    }
+
+    #[test]
+    fn startup_failures_are_written_to_the_log() {
+        let temporary = TempDir::new();
+        std::fs::create_dir_all(temporary.path().join("loregalia.db")).unwrap();
+
+        let startup = prepare_with(Ok(temporary.path().to_path_buf()));
+
+        assert!(matches!(&startup.storage, StorageState::Failed(_)));
+        let log_path = startup.log_path.clone().unwrap();
+        let contents = std::fs::read_to_string(log_path).unwrap();
+        assert!(contents.contains("Could not open the database"));
     }
 }
