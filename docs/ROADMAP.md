@@ -13,7 +13,7 @@ Work top to bottom. Tick items only when they are verified, not when the code co
 
 - [x] Data model decisions D-02 to D-08 and D-19
 - [x] Check API terms (`METADATA.md`)
-- [ ] Choose sources and credential handling: D-09 to D-12, D-20 and D-21
+- [ ] Choose sources and credential handling: D-09 to D-12 and D-21
 
 ## 3. Walking skeleton
 
