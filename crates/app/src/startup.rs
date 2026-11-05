@@ -1,4 +1,6 @@
 use loregalia_core::{Database, Result as CoreResult, log, storage};
+use std::any::Any;
+use std::fmt::Display;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,15 +51,52 @@ fn open_at(path: PathBuf) -> StorageState {
     }
 }
 
-fn record(log_path: &Option<PathBuf>, message: &str) {
+pub fn record(log_path: &Option<PathBuf>, message: &str) {
     if let Some(path) = log_path {
         let _ = log::append(path, message);
     }
 }
 
+pub fn window_open_failure(error: &impl Display) -> String {
+    format!("Failed to open the Loregalia window: {error}")
+}
+
+pub fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("panic with a non-text message")
+}
+
+pub fn panic_line(message: &str, location: Option<&str>) -> String {
+    format!(
+        "panic at {}: {message}",
+        location.unwrap_or("an unknown location")
+    )
+}
+
+pub fn install_panic_hook(log_path: &Option<PathBuf>) {
+    let Some(path) = log_path.clone() else {
+        return;
+    };
+
+    std::panic::set_hook(Box::new(move |info| {
+        let message = panic_message(info.payload());
+        let location = info.location().map(|location| location.to_string());
+        record(
+            &Some(path.clone()),
+            &panic_line(message, location.as_deref()),
+        );
+    }));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{StorageState, open_at, prepare_with};
+    use super::{
+        StorageState, install_panic_hook, open_at, panic_line, panic_message, prepare_with, record,
+        window_open_failure,
+    };
     use loregalia_core::Error;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -155,5 +194,38 @@ mod tests {
         let log_path = startup.log_path.clone().unwrap();
         let contents = std::fs::read_to_string(log_path).unwrap();
         assert!(contents.contains("Could not open the database"));
+    }
+
+    #[test]
+    fn a_window_open_failure_is_written_to_the_log() {
+        let temporary = TempDir::new();
+        let path = temporary.path().join("loregalia.log");
+        let error = std::io::Error::other("no display");
+
+        record(&Some(path.clone()), &window_open_failure(&error));
+
+        let contents = std::fs::read_to_string(path).unwrap();
+        assert!(contents.ends_with("Failed to open the Loregalia window: no display\n"));
+    }
+
+    #[test]
+    fn a_panic_is_one_line_with_its_location() {
+        let line = panic_line("boom", Some("crates/app/src/main.rs:42:9"));
+
+        assert_eq!(line, "panic at crates/app/src/main.rs:42:9: boom");
+        assert!(!line.contains('\n'));
+        assert_eq!(
+            panic_line("boom", None),
+            "panic at an unknown location: boom"
+        );
+        assert_eq!(panic_message(&"boom"), "boom");
+        assert_eq!(panic_message(&String::from("boom")), "boom");
+        assert_eq!(panic_message(&42_u32), "panic with a non-text message");
+    }
+
+    #[test]
+    fn recording_without_a_log_path_does_nothing() {
+        record(&None, "ignored");
+        install_panic_hook(&None);
     }
 }

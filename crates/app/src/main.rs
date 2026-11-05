@@ -3,7 +3,9 @@
 use gpui_kit::AppContext;
 use gpui_kit::assets::Assets;
 use loregalia_app::shell::Shell;
-use loregalia_app::startup::{Startup, StorageState, prepare};
+use loregalia_app::startup::{
+    Startup, StorageState, install_panic_hook, prepare, record, window_open_failure,
+};
 
 fn main() {
     let Startup { storage, log_path } = prepare();
@@ -11,7 +13,10 @@ fn main() {
         eprintln!("{message}");
     }
 
-    gpui_kit::application().with_assets(Assets).run(|cx| {
+    install_panic_hook(&log_path);
+    let error_log_path = log_path.clone();
+
+    gpui_kit::application().with_assets(Assets).run(move |cx| {
         loregalia_app::init(cx);
 
         cx.on_window_closed(|cx, _| {
@@ -25,7 +30,9 @@ fn main() {
         if let Err(error) = gpui_kit::open_window(options, cx, |_, cx| {
             cx.new(|cx| Shell::new(storage, log_path, cx))
         }) {
-            eprintln!("Failed to open the Loregalia window: {error}");
+            let message = window_open_failure(&error);
+            eprintln!("{message}");
+            record(&error_log_path, &message);
             cx.quit();
         }
     });
