@@ -4,6 +4,8 @@ pub enum Error {
     Sqlite(rusqlite::Error),
     SchemaTooNew { found: i64, supported: u32 },
     DataDirectoryUnavailable,
+    Network(String),
+    Json(serde_json::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -20,6 +22,8 @@ impl std::fmt::Display for Error {
             Self::DataDirectoryUnavailable => formatter.write_str(
                 "no application data folder is available; set APPDATA, XDG_DATA_HOME or HOME",
             ),
+            Self::Network(message) => write!(formatter, "network error: {message}"),
+            Self::Json(error) => write!(formatter, "invalid response: {error}"),
         }
     }
 }
@@ -29,7 +33,8 @@ impl std::error::Error for Error {
         match self {
             Self::Io(error) => Some(error),
             Self::Sqlite(error) => Some(error),
-            Self::SchemaTooNew { .. } | Self::DataDirectoryUnavailable => None,
+            Self::Json(error) => Some(error),
+            Self::SchemaTooNew { .. } | Self::DataDirectoryUnavailable | Self::Network(_) => None,
         }
     }
 }
@@ -43,5 +48,11 @@ impl From<std::io::Error> for Error {
 impl From<rusqlite::Error> for Error {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
     }
 }
