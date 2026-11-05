@@ -1,7 +1,7 @@
 # TVmaze fixtures
 
-`search-a.json` is a recorded response from `GET https://api.tvmaze.com/search/shows?q=a`,
-captured before 2022-03-19. Tests use it to check mapping and never call the network.
+`search-a.json` is a live response from `GET https://api.tvmaze.com/search/shows?q=a`, captured
+on 2026-11-05. Tests use it to check mapping and never call the network.
 
 Refresh it with:
 

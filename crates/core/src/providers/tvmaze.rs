@@ -96,20 +96,35 @@ mod tests {
 
         let show = shows
             .iter()
-            .find(|show| show.external_id == 38339)
-            .expect("fixture contains A Teacher");
+            .find(|show| show.external_id == 39235)
+            .expect("fixture contains A Confession");
         assert_eq!(
             show,
             &Show {
-                external_id: 38339,
-                title: "A Teacher".to_owned(),
-                release_year: Some(2020),
+                external_id: 39235,
+                title: "A Confession".to_owned(),
+                release_year: Some(2019),
                 cover_url: Some(
-                    "https://static.tvmaze.com/uploads/images/original_untouched/272/681431.jpg"
+                    "https://static.tvmaze.com/uploads/images/original_untouched/210/525047.jpg"
                         .to_owned()
                 ),
             }
         );
+    }
+
+    #[test]
+    fn the_saved_response_keeps_shows_without_details() {
+        let body = include_str!("../../tests/fixtures/tvmaze/search-a.json");
+
+        let shows = parse_search(body).unwrap();
+
+        let show = shows
+            .iter()
+            .find(|show| show.external_id == 67073)
+            .expect("fixture contains A Lot");
+        assert_eq!(show.title, "A Lot");
+        assert_eq!(show.release_year, None);
+        assert_eq!(show.cover_url, None);
     }
 
     #[test]
