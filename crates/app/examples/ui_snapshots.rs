@@ -26,6 +26,7 @@ enum Step {
     ItemTags,
     Seasons,
     SortTitle,
+    About,
 }
 
 struct Shot {
@@ -164,7 +165,7 @@ fn main() -> Result<()> {
             name: "list-create-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
-            storage: empty,
+            storage: empty.clone(),
             step: Step::Create,
         },
         Shot {
@@ -180,6 +181,20 @@ fn main() -> Result<()> {
             mode: ThemeMode::Dark,
             storage: populated,
             step: Step::Delete,
+        },
+        Shot {
+            name: "about-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: empty.clone(),
+            step: Step::About,
+        },
+        Shot {
+            name: "about-light",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Light,
+            storage: empty.clone(),
+            step: Step::About,
         },
         Shot {
             name: "storage-failure-dark",
@@ -405,6 +420,12 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
                     window.render_frame(cx);
                 })?;
             }
+        }
+        Step::About => {
+            cx.update_window(handle, |_, window, cx| {
+                window.click("about-button", cx);
+                window.render_frame(cx);
+            })?;
         }
         Step::ItemTags => {
             if let Some(id) = first_item {

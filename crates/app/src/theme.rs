@@ -76,6 +76,7 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
         theme.ring = rgb(palette.accent).into();
         theme.danger = rgb(palette.danger).into();
         theme.sidebar = rgb(palette.surface).into();
+        theme.link = rgb(palette.accent).into();
     });
 }
 
