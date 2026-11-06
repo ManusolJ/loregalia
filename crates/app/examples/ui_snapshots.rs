@@ -8,7 +8,7 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, items, list_items, lists, media::MediaKind};
+use loregalia_core::{Database, items, list_items, lists, media::MediaKind, tags};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,6 +22,8 @@ enum Step {
     Delete,
     StatusPicker,
     AddPicker,
+    ListTags,
+    ItemTags,
 }
 
 struct Shot {
@@ -94,6 +96,13 @@ fn main() -> Result<()> {
             step: Step::None,
         },
         Shot {
+            name: "item-tags-picker-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_items.clone(),
+            step: Step::ItemTags,
+        },
+        Shot {
             name: "item-create-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
@@ -125,8 +134,15 @@ fn main() -> Result<()> {
             name: "list-membership-light",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Light,
-            storage: with_membership,
+            storage: with_membership.clone(),
             step: Step::Select,
+        },
+        Shot {
+            name: "list-tags-picker-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_membership,
+            step: Step::ListTags,
         },
         Shot {
             name: "list-create-dark",
@@ -199,6 +215,11 @@ fn membership_database(output: &Path) -> Result<StorageState> {
         list_items::add(&database, &watch.id, &dune.id)?;
         list_items::add(&database, &watch.id, &arrival.id)?;
         list_items::add(&database, &watch.id, &wilds.id)?;
+        let science_fiction = tags::create(&database, "Sci-Fi")?;
+        let weekend = tags::create(&database, "Weekend")?;
+        tags::attach_to_item(&database, &dune.id, &science_fiction.id)?;
+        tags::attach_to_list(&database, &watch.id, &science_fiction.id)?;
+        tags::attach_to_list(&database, &watch.id, &weekend.id)?;
     }
     Ok(state)
 }
@@ -216,6 +237,10 @@ fn items_database(output: &Path) -> Result<StorageState> {
         let book = items::create(&database, MediaKind::Book, "Piranesi", Some(2020))?;
         items::set_status(&database, &book.id, "book-done")?;
         items::create(&database, MediaKind::Game, "Outer Wilds", None)?;
+        let science_fiction = tags::create(&database, "Sci-Fi")?;
+        let favourite = tags::create(&database, "Favourite")?;
+        tags::attach_to_item(&database, &book.id, &science_fiction.id)?;
+        tags::attach_to_item(&database, &book.id, &favourite.id)?;
     }
     Ok(state)
 }
@@ -266,7 +291,7 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
     let first_id = match (&shot.storage, shot.step) {
         (
             StorageState::Ready(path),
-            Step::Select | Step::Rename | Step::Delete | Step::AddPicker,
+            Step::Select | Step::Rename | Step::Delete | Step::AddPicker | Step::ListTags,
         ) => {
             let database = Database::open(path)?;
             lists::all(&database)?
@@ -278,7 +303,7 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
     };
 
     let first_item = match (&shot.storage, shot.step) {
-        (StorageState::Ready(path), Step::StatusPicker) => {
+        (StorageState::Ready(path), Step::StatusPicker | Step::ItemTags) => {
             let database = Database::open(path)?;
             items::all(&database)?
                 .into_iter()
@@ -324,6 +349,24 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
                     window.click(format!("list-row-{id}"), cx);
                     window.render_frame(cx);
                     window.click("add-existing-item", cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
+        Step::ListTags => {
+            if let Some(id) = first_id {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("list-row-{id}"), cx);
+                    window.render_frame(cx);
+                    window.click("list-tags", cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
+        Step::ItemTags => {
+            if let Some(id) = first_item {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("item-tags-{id}"), cx);
                     window.render_frame(cx);
                 })?;
             }
