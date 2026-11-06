@@ -65,6 +65,30 @@ const MIGRATIONS: &[&str] = &[
         WHERE statuses.media_kind = items.media_kind
           AND statuses.category = 'planned'
     );",
+    "PRAGMA defer_foreign_keys = ON;
+    CREATE TABLE item_statuses_backup (
+        id TEXT PRIMARY KEY,
+        status_id TEXT
+    ) STRICT;
+    INSERT INTO item_statuses_backup (id, status_id) SELECT id, status_id FROM items;
+    UPDATE items SET status_id = NULL;
+    CREATE TABLE statuses_new (
+        id TEXT PRIMARY KEY,
+        media_kind TEXT NOT NULL,
+        category TEXT NOT NULL,
+        label TEXT NOT NULL,
+        position INTEGER NOT NULL
+    ) STRICT;
+    INSERT INTO statuses_new (id, media_kind, category, label, position)
+        SELECT id, media_kind, category, label, position FROM statuses;
+    DROP TABLE statuses;
+    ALTER TABLE statuses_new RENAME TO statuses;
+    UPDATE items SET status_id = (
+        SELECT item_statuses_backup.status_id
+        FROM item_statuses_backup
+        WHERE item_statuses_backup.id = items.id
+    );
+    DROP TABLE item_statuses_backup;",
 ];
 
 fn latest_version() -> u32 {
@@ -164,6 +188,44 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn a_kind_can_gain_a_second_status_in_the_same_category() {
+        let database = Database::open_in_memory().unwrap();
+
+        database
+            .connection()
+            .execute(
+                "INSERT INTO statuses (id, media_kind, category, label, position)
+                 VALUES ('movie-someday', 'movie', 'planned', 'Someday', 5)",
+                [],
+            )
+            .unwrap();
+
+        let planned: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM statuses
+                 WHERE media_kind = 'movie' AND category = 'planned'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(planned, 2);
+    }
+
+    #[test]
+    fn items_still_reject_a_status_that_does_not_exist() {
+        let database = Database::open_in_memory().unwrap();
+
+        let error = database.connection().execute(
+            "INSERT INTO items (id, media_kind, title, created_at, status_id)
+             VALUES ('item-1', 'movie', 'Dune', '2026-11-05T00:00:00Z', 'missing')",
+            [],
+        );
+
+        assert!(error.is_err());
+    }
+
+    #[test]
     fn a_database_from_before_statuses_gets_a_planned_status_for_each_item() {
         let temporary = TempDir::new().unwrap();
         let path = temporary.path().join("before-statuses.db");
@@ -202,7 +264,7 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 4);
+        assert_eq!(schema_version(database.connection()), 5);
     }
 
     fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -423,20 +485,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 5;")
+                .execute_batch("PRAGMA user_version = 6;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 5,
-                supported: 4
+                found: 6,
+                supported: 5
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 5);
+        assert_eq!(schema_version(&connection), 6);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",
