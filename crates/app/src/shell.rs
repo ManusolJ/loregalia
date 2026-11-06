@@ -65,6 +65,8 @@ pub struct Shell {
     status_picker: Option<String>,
     add_picker: Option<String>,
     tag_editor: Option<TagEditor>,
+    renaming_tag: Option<TagRename>,
+    confirm_delete_tag: Option<String>,
     season_editor: Option<SeasonEditor>,
     season_status_picker: Option<String>,
     confirm_delete_season: Option<String>,
@@ -92,6 +94,11 @@ enum TagTarget {
 
 struct TagEditor {
     target: TagTarget,
+    input: Entity<InputState>,
+}
+
+struct TagRename {
+    id: String,
     input: Entity<InputState>,
 }
 
@@ -158,6 +165,8 @@ impl Shell {
             status_picker: None,
             add_picker: None,
             tag_editor: None,
+            renaming_tag: None,
+            confirm_delete_tag: None,
             season_editor: None,
             season_status_picker: None,
             confirm_delete_season: None,
@@ -202,6 +211,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.editor = Some(Editor::Create(input));
         cx.notify();
@@ -222,6 +232,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         cx.notify();
     }
@@ -237,6 +248,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         cx.notify();
     }
@@ -263,6 +275,7 @@ impl Shell {
 
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.editor = Some(Editor::Rename { id, input });
         cx.notify();
@@ -314,6 +327,7 @@ impl Shell {
 
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.confirm_delete = Some(id);
         cx.notify();
@@ -353,6 +367,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.item_editor = Some(ItemEditor {
             id: None,
@@ -397,6 +412,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         cx.notify();
     }
@@ -459,6 +475,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         cx.notify();
     }
@@ -470,6 +487,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         cx.notify();
     }
@@ -496,6 +514,7 @@ impl Shell {
 
     fn toggle_status_picker(&mut self, id: String, cx: &mut Context<Self>) {
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.status_picker = if self.status_picker.as_deref() == Some(id.as_str()) {
             None
@@ -521,6 +540,7 @@ impl Shell {
     fn toggle_add_picker(&mut self, list_id: String, cx: &mut Context<Self>) {
         self.status_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.add_picker = if self.add_picker.as_deref() == Some(list_id.as_str()) {
             None
@@ -536,6 +556,7 @@ impl Shell {
         };
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.close_season_panels();
 
         self.run(cx, async move {
@@ -593,6 +614,7 @@ impl Shell {
             .is_some_and(|editor| editor.target == target);
         if same {
             self.tag_editor = None;
+            self.close_tag_panels();
             self.close_season_panels();
             cx.notify();
             return;
@@ -604,6 +626,7 @@ impl Shell {
 
         self.status_picker = None;
         self.add_picker = None;
+        self.close_tag_panels();
         self.close_season_panels();
         self.tag_editor = Some(TagEditor { target, input });
         cx.notify();
@@ -666,6 +689,75 @@ impl Shell {
         });
     }
 
+    fn begin_rename_tag(&mut self, tag: &tags::Tag, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| {
+            let mut input = InputState::new(window, cx).default_value(tag.name.clone());
+            input.select_all(window, cx);
+            input
+        });
+        let focus = input.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
+
+        self.confirm_delete_tag = None;
+        self.renaming_tag = Some(TagRename {
+            id: tag.id.clone(),
+            input,
+        });
+        cx.notify();
+    }
+
+    fn save_tag_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(rename) = self.renaming_tag.take() else {
+            return;
+        };
+        let name = rename.input.read(cx).value().trim().to_owned();
+        if name.is_empty() {
+            self.renaming_tag = Some(rename);
+            return;
+        }
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        let id = rename.id;
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            tags::rename(&database, &id, &name)?;
+            load(&database)
+        });
+    }
+
+    fn cancel_tag_rename(&mut self, cx: &mut Context<Self>) {
+        self.renaming_tag = None;
+        cx.notify();
+    }
+
+    fn begin_delete_tag(&mut self, tag_id: String, cx: &mut Context<Self>) {
+        self.renaming_tag = None;
+        self.confirm_delete_tag = Some(tag_id);
+        cx.notify();
+    }
+
+    fn cancel_delete_tag(&mut self, cx: &mut Context<Self>) {
+        self.confirm_delete_tag = None;
+        cx.notify();
+    }
+
+    fn delete_tag(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.confirm_delete_tag.take() else {
+            return;
+        };
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            tags::delete(&database, &id)?;
+            load(&database)
+        });
+    }
+
     fn tag_is_attached(&self, target: &TagTarget, tag_id: &str) -> bool {
         match target {
             TagTarget::Item(id) => self
@@ -677,6 +769,11 @@ impl Shell {
                 .iter()
                 .any(|link| &link.owner_id == id && link.tag_id == tag_id),
         }
+    }
+
+    fn close_tag_panels(&mut self) {
+        self.renaming_tag = None;
+        self.confirm_delete_tag = None;
     }
 
     fn close_season_panels(&mut self) {
@@ -703,6 +800,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_tag_panels();
         self.season_status_picker = None;
         self.confirm_delete_season = None;
         self.season_editor = Some(SeasonEditor { show_id, number });
@@ -1495,6 +1593,110 @@ impl Shell {
             }))
     }
 
+    fn tag_row(&self, tag: &tags::Tag, target: &TagTarget, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(rename) = &self.renaming_tag
+            && rename.id == tag.id
+        {
+            let can_save = !rename.input.read(cx).value().trim().is_empty();
+
+            return div()
+                .id(format!("tag-row-{}", tag.id))
+                .test_support()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Input::new(&rename.input)
+                        .id("tag-rename-input")
+                        .aria_label("Tag name"),
+                )
+                .child(
+                    Button::new("save-tag-rename")
+                        .label("Save")
+                        .disabled(!can_save)
+                        .on_click(cx.listener(|this, _, _, cx| this.save_tag_rename(cx))),
+                )
+                .child(
+                    Button::new("cancel-tag-rename")
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_tag_rename(cx))),
+                )
+                .into_any_element();
+        }
+
+        if self.confirm_delete_tag.as_deref() == Some(tag.id.as_str()) {
+            let message = format!("Delete tag \"{}\"?", tag.name);
+
+            return div()
+                .id("tag-delete-confirmation")
+                .role(Role::Alert)
+                .test_support()
+                .aria_label(message.clone())
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(message)
+                .child(
+                    Button::new("cancel-tag-delete")
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_delete_tag(cx))),
+                )
+                .child(
+                    Button::new("confirm-tag-delete")
+                        .label("Delete")
+                        .danger()
+                        .on_click(cx.listener(|this, _, _, cx| this.delete_tag(cx))),
+                )
+                .into_any_element();
+        }
+
+        let target = target.clone();
+        let tag_id = tag.id.clone();
+        let attached = self.tag_is_attached(&target, &tag.id);
+        let rename_target = tag.clone();
+        let delete_id = tag.id.clone();
+
+        div()
+            .id(format!("tag-row-{}", tag.id))
+            .test_support()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div().flex_1().child(
+                    Button::new(format!("tag-toggle-{}", tag.id))
+                        .w_full()
+                        .justify_start()
+                        .accessibility_label(tag.name.clone())
+                        .selected(attached)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_tag(target.clone(), tag_id.clone(), cx)
+                        }))
+                        .child(div().w_full().child(tag.name.clone())),
+                ),
+            )
+            .child(
+                Button::new(format!("rename-tag-{}", tag.id))
+                    .icon(IconName::Pencil)
+                    .tooltip("Rename tag")
+                    .accessibility_label("Rename tag")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.begin_rename_tag(&rename_target, window, cx)
+                    })),
+            )
+            .child(
+                Button::new(format!("delete-tag-{}", tag.id))
+                    .icon(IconName::Trash)
+                    .tooltip("Delete tag")
+                    .accessibility_label("Delete tag")
+                    .danger()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.begin_delete_tag(delete_id.clone(), cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn tag_picker_element(&self, editor: &TagEditor, cx: &mut Context<Self>) -> AnyElement {
         let target = editor.target.clone();
         let can_save = !editor.input.read(cx).value().trim().is_empty();
@@ -1505,24 +1707,7 @@ impl Shell {
             .flex()
             .flex_col()
             .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(self.tags.iter().map(|tag| {
-                        let target = target.clone();
-                        let tag_id = tag.id.clone();
-                        let attached = self.tag_is_attached(&target, &tag.id);
-
-                        Button::new(format!("tag-toggle-{}", tag.id))
-                            .label(tag.name.clone())
-                            .selected(attached)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle_tag(target.clone(), tag_id.clone(), cx)
-                            }))
-                    })),
-            )
+            .children(self.tags.iter().map(|tag| self.tag_row(tag, &target, cx)))
             .child(
                 div()
                     .flex()
