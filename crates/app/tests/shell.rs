@@ -7,8 +7,8 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, lists};
-use std::path::PathBuf;
+use loregalia_core::{Database, Result as CoreResult, lists};
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn open_shell(
@@ -38,6 +38,14 @@ fn open_shell(
 
 fn ready(temporary: &TempDir) -> StorageState {
     StorageState::Ready(temporary.path().join("loregalia.db"))
+}
+
+fn seed_lists(path: &Path, names: &[&str]) -> CoreResult<Vec<lists::List>> {
+    let database = Database::open(path)?;
+    for name in names {
+        lists::create(&database, name)?;
+    }
+    lists::all(&database)
 }
 
 #[gpui_kit::test]
@@ -232,4 +240,141 @@ fn a_failed_log_write_does_not_change_the_ui(cx: &mut TestAppContext) {
     .unwrap();
 
     assert!(log_path.is_dir());
+}
+
+#[gpui_kit::test]
+fn rail_shows_every_list_and_create_with_labels(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Watch later", "Reading", "Games"]).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(960.0), px(600.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert_eq!(window.find("sidebar").bounds().size.width, px(56.0));
+        assert_eq!(window.find("lists").role(), Some(Role::List));
+
+        for list in &seeded {
+            let row = window.find(format!("list-row-{}", list.id));
+            assert!(row.visible());
+            assert_eq!(row.role(), Some(Role::ListItem));
+            assert_eq!(row.label(), Some(list.name.as_str()));
+
+            let button = window.find(format!("list-button-{}", list.id));
+            assert!(button.visible());
+            assert_eq!(button.label(), Some(list.name.as_str()));
+            assert_eq!(button.bounds().size, size(px(32.0), px(32.0)));
+        }
+
+        let create = window.find("create-list");
+        assert!(create.visible());
+        assert_eq!(create.label(), Some("Create list"));
+        assert_eq!(create.bounds().size, size(px(32.0), px(32.0)));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn creating_a_list_works_in_the_rail(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+
+    let handle = open_shell(
+        cx,
+        size(px(960.0), px(600.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("create-list", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let created = lists::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].name, "New list");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(format!("list-row-{}", created[0].id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn create_stays_reachable_with_fifty_lists(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let names: Vec<String> = (0..50).map(|index| format!("List {index}")).collect();
+    let seeded: Vec<&str> = names.iter().map(String::as_str).collect();
+    seed_lists(&path, &seeded).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(960.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let create = window.find("create-list");
+        assert!(create.visible());
+        assert_eq!(create.bounds().size, size(px(32.0), px(32.0)));
+
+        window.click("create-list", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let names: Vec<String> = lists::all(&Database::open(&path).unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|list| list.name)
+        .collect();
+    assert_eq!(names.len(), 51);
+    assert_eq!(names.last().map(String::as_str), Some("New list"));
+}
+
+#[gpui_kit::test]
+fn row_ids_come_from_the_list_id(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Watch later", "Reading", "Games"]).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(960.0), px(600.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        for list in &seeded {
+            assert!(window.find(format!("list-row-{}", list.id)).visible());
+        }
+        assert!(window.try_find("list-row-0").is_none());
+    })
+    .unwrap();
 }
