@@ -1,4 +1,4 @@
-use gpui_kit::assets::Assets;
+use gpui_kit::assets::AllAssets;
 use gpui_kit::component::ThemeMode;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
@@ -176,7 +176,7 @@ fn database_at(_output: &Path, name: &str) -> Result<StorageState> {
 fn capture(shot: &Shot, path: &Path) -> Result<()> {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
-        Arc::new(Assets),
+        Arc::new(AllAssets),
         gpui_kit::platform::current_headless_renderer,
     );
     cx.update(|cx| {
