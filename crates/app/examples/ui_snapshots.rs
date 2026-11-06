@@ -8,7 +8,7 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, items, list_items, lists, media::MediaKind, tags};
+use loregalia_core::{Database, items, list_items, lists, media::MediaKind, seasons, tags};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,6 +24,7 @@ enum Step {
     AddPicker,
     ListTags,
     ItemTags,
+    Seasons,
 }
 
 struct Shot {
@@ -101,6 +102,13 @@ fn main() -> Result<()> {
             mode: ThemeMode::Dark,
             storage: with_items.clone(),
             step: Step::ItemTags,
+        },
+        Shot {
+            name: "show-seasons-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_items.clone(),
+            step: Step::Seasons,
         },
         Shot {
             name: "item-create-dark",
@@ -241,6 +249,11 @@ fn items_database(output: &Path) -> Result<StorageState> {
         let favourite = tags::create(&database, "Favourite")?;
         tags::attach_to_item(&database, &book.id, &science_fiction.id)?;
         tags::attach_to_item(&database, &book.id, &favourite.id)?;
+        let show = items::create(&database, MediaKind::Show, "Dark", Some(2017))?;
+        items::set_status(&database, &show.id, "show-active")?;
+        let first = seasons::create(&database, &show.id, 1)?;
+        seasons::set_status(&database, &first.id, "show-done")?;
+        seasons::create(&database, &show.id, 2)?;
     }
     Ok(state)
 }
@@ -310,6 +323,13 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
                 .next()
                 .map(|item| item.id)
         }
+        (StorageState::Ready(path), Step::Seasons) => {
+            let database = Database::open(path)?;
+            items::all(&database)?
+                .into_iter()
+                .find(|item| item.media_kind == MediaKind::Show)
+                .map(|item| item.id)
+        }
         _ => None,
     };
 
@@ -367,6 +387,14 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
             if let Some(id) = first_item {
                 cx.update_window(handle, |_, window, cx| {
                     window.click(format!("item-tags-{id}"), cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
+        Step::Seasons => {
+            if let Some(id) = first_item {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("item-seasons-{id}"), cx);
                     window.render_frame(cx);
                 })?;
             }

@@ -104,6 +104,14 @@ const MIGRATIONS: &[&str] = &[
         tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
         PRIMARY KEY (list_id, tag_id)
     ) STRICT;",
+    "CREATE TABLE seasons (
+        id TEXT PRIMARY KEY,
+        show_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        season_number INTEGER NOT NULL,
+        status_id TEXT NOT NULL REFERENCES statuses(id),
+        finished_at TEXT,
+        UNIQUE (show_id, season_number)
+    ) STRICT;",
 ];
 
 fn latest_version() -> u32 {
@@ -279,7 +287,7 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 6);
+        assert_eq!(schema_version(database.connection()), 7);
     }
 
     fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -500,20 +508,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 7;")
+                .execute_batch("PRAGMA user_version = 8;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 7,
-                supported: 6
+                found: 8,
+                supported: 7
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 7);
+        assert_eq!(schema_version(&connection), 8);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",
