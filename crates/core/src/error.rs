@@ -7,6 +7,10 @@ pub enum Error {
     UnknownStatus,
     StatusKindMismatch,
     EmptyTagName,
+    UnknownShow,
+    SeasonsOnlyForShows,
+    DuplicateSeason,
+    InvalidSeasonNumber,
     ConnectionFailed,
     RateLimited,
     HttpStatus { code: u16 },
@@ -32,6 +36,10 @@ impl std::fmt::Display for Error {
                 formatter.write_str("the status belongs to another media kind")
             }
             Self::EmptyTagName => formatter.write_str("a tag needs a name"),
+            Self::UnknownShow => formatter.write_str("the show does not exist"),
+            Self::SeasonsOnlyForShows => formatter.write_str("seasons belong only to shows"),
+            Self::DuplicateSeason => formatter.write_str("the show already has that season"),
+            Self::InvalidSeasonNumber => formatter.write_str("a season number cannot be negative"),
             Self::ConnectionFailed => {
                 formatter.write_str("could not connect to the metadata server or it timed out")
             }
@@ -57,6 +65,10 @@ impl std::error::Error for Error {
             | Self::UnknownStatus
             | Self::StatusKindMismatch
             | Self::EmptyTagName
+            | Self::UnknownShow
+            | Self::SeasonsOnlyForShows
+            | Self::DuplicateSeason
+            | Self::InvalidSeasonNumber
             | Self::ConnectionFailed
             | Self::RateLimited
             | Self::HttpStatus { .. } => None,

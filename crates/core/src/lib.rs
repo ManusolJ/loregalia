@@ -5,6 +5,7 @@ pub mod lists;
 pub mod log;
 pub mod media;
 pub mod providers;
+pub mod seasons;
 pub mod statuses;
 pub mod storage;
 pub mod tags;
