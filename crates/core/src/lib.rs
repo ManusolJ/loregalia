@@ -7,6 +7,7 @@ pub mod media;
 pub mod providers;
 pub mod statuses;
 pub mod storage;
+pub mod tags;
 
 pub use error::{Error, Result};
 pub use storage::Database;

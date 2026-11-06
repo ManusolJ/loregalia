@@ -89,6 +89,21 @@ const MIGRATIONS: &[&str] = &[
         WHERE item_statuses_backup.id = items.id
     );
     DROP TABLE item_statuses_backup;",
+    "CREATE TABLE tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE item_tags (
+        item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (item_id, tag_id)
+    ) STRICT;
+    CREATE TABLE list_tags (
+        list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (list_id, tag_id)
+    ) STRICT;",
 ];
 
 fn latest_version() -> u32 {
@@ -264,7 +279,7 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 5);
+        assert_eq!(schema_version(database.connection()), 6);
     }
 
     fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -485,20 +500,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 6;")
+                .execute_batch("PRAGMA user_version = 7;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 6,
-                supported: 5
+                found: 7,
+                supported: 6
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 6);
+        assert_eq!(schema_version(&connection), 7);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",
