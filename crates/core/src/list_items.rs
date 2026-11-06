@@ -24,7 +24,7 @@ pub fn remove(database: &Database, list_id: &str, item_id: &str) -> Result<bool>
 
 pub fn all(database: &Database, list_id: &str) -> Result<Vec<Item>> {
     let mut statement = database.connection().prepare(
-        "SELECT i.id, i.title, i.media_kind, i.release_year, i.release_date, i.finished_at
+        "SELECT i.id, i.title, i.media_kind, i.release_year, i.release_date, i.finished_at, i.status_id
          FROM list_items li
          JOIN items i ON i.id = li.item_id
          WHERE li.list_id = ?1
