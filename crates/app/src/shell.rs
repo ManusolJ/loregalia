@@ -12,7 +12,7 @@ use gpui_kit::{
     Window, div, px, rgb,
 };
 use loregalia_core::{
-    Database, Result as CoreResult, items, lists, log, media::MediaKind, statuses,
+    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, statuses,
 };
 
 use crate::startup::StorageState;
@@ -39,6 +39,7 @@ pub struct Shell {
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
+    memberships: Vec<list_items::Membership>,
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
@@ -47,6 +48,7 @@ pub struct Shell {
     item_editor: Option<ItemEditor>,
     confirm_delete_item: Option<String>,
     status_picker: Option<String>,
+    add_picker: Option<String>,
 }
 
 struct ItemEditor {
@@ -60,6 +62,7 @@ struct Loaded {
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
+    memberships: Vec<list_items::Membership>,
 }
 
 fn load(database: &Database) -> CoreResult<Loaded> {
@@ -67,6 +70,7 @@ fn load(database: &Database) -> CoreResult<Loaded> {
         lists: lists::all(database)?,
         items: items::all(database)?,
         statuses: statuses::all(database)?,
+        memberships: list_items::memberships(database)?,
     })
 }
 
@@ -87,6 +91,7 @@ impl Shell {
             lists: Vec::new(),
             items: Vec::new(),
             statuses: Vec::new(),
+            memberships: Vec::new(),
             error: None,
             loading,
             selected: None,
@@ -95,6 +100,7 @@ impl Shell {
             item_editor: None,
             confirm_delete_item: None,
             status_picker: None,
+            add_picker: None,
         };
         shell.reload_lists(cx);
         shell
@@ -133,6 +139,7 @@ impl Shell {
         self.item_editor = None;
         self.confirm_delete_item = None;
         self.status_picker = None;
+        self.add_picker = None;
         self.editor = Some(Editor::Create(input));
         cx.notify();
     }
@@ -144,6 +151,7 @@ impl Shell {
         self.item_editor = None;
         self.confirm_delete_item = None;
         self.status_picker = None;
+        self.add_picker = None;
         cx.notify();
     }
 
@@ -167,6 +175,7 @@ impl Shell {
         let focus = input.read(cx).focus_handle(cx);
         focus.focus(window, cx);
 
+        self.add_picker = None;
         self.editor = Some(Editor::Rename { id, input });
         cx.notify();
     }
@@ -215,6 +224,7 @@ impl Shell {
             return;
         };
 
+        self.add_picker = None;
         self.confirm_delete = Some(id);
         cx.notify();
     }
@@ -246,11 +256,11 @@ impl Shell {
         let focus = title.read(cx).focus_handle(cx);
         focus.focus(window, cx);
 
-        self.selected = None;
         self.editor = None;
         self.confirm_delete = None;
         self.confirm_delete_item = None;
         self.status_picker = None;
+        self.add_picker = None;
         self.item_editor = Some(ItemEditor {
             id: None,
             kind: MediaKind::Movie,
@@ -292,6 +302,7 @@ impl Shell {
         });
         self.confirm_delete_item = None;
         self.status_picker = None;
+        self.add_picker = None;
         cx.notify();
     }
 
@@ -328,6 +339,7 @@ impl Shell {
         };
         let id = editor.id;
         let kind = editor.kind;
+        let list_id = self.selected.clone();
 
         self.run(cx, async move {
             let database = Database::open(path)?;
@@ -336,7 +348,10 @@ impl Shell {
                     items::update(&database, &id, kind, &title, year)?;
                 }
                 None => {
-                    items::create(&database, kind, &title, year)?;
+                    let created = items::create(&database, kind, &title, year)?;
+                    if let Some(list_id) = &list_id {
+                        list_items::add(&database, list_id, &created.id)?;
+                    }
                 }
             }
             load(&database)
@@ -346,6 +361,7 @@ impl Shell {
     fn cancel_item(&mut self, cx: &mut Context<Self>) {
         self.item_editor = None;
         self.status_picker = None;
+        self.add_picker = None;
         cx.notify();
     }
 
@@ -354,6 +370,7 @@ impl Shell {
         self.item_editor = None;
         self.selected = None;
         self.status_picker = None;
+        self.add_picker = None;
         cx.notify();
     }
 
@@ -399,6 +416,41 @@ impl Shell {
         });
     }
 
+    fn toggle_add_picker(&mut self, list_id: String, cx: &mut Context<Self>) {
+        self.status_picker = None;
+        self.add_picker = if self.add_picker.as_deref() == Some(list_id.as_str()) {
+            None
+        } else {
+            Some(list_id)
+        };
+        cx.notify();
+    }
+
+    fn add_to_list(&mut self, list_id: String, item_id: String, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        self.add_picker = None;
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            list_items::add(&database, &list_id, &item_id)?;
+            load(&database)
+        });
+    }
+
+    fn remove_from_list(&mut self, list_id: String, item_id: String, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            list_items::remove(&database, &list_id, &item_id)?;
+            load(&database)
+        });
+    }
+
     fn run<F>(&mut self, cx: &mut Context<Self>, work: F)
     where
         F: Future<Output = CoreResult<Loaded>> + Send + 'static,
@@ -418,10 +470,12 @@ impl Shell {
                             this.selected = None;
                             this.editor = None;
                             this.confirm_delete = None;
+                            this.add_picker = None;
                         }
                         this.lists = loaded.lists;
                         this.items = loaded.items;
                         this.statuses = loaded.statuses;
+                        this.memberships = loaded.memberships;
                         this.error = None;
                     }
                     Err(error) => {
@@ -468,11 +522,6 @@ impl Shell {
                         .map(|list| list.name.as_str())
                         .unwrap_or("this list");
                     self.delete_element(name, cx)
-                } else if let Some(id) = &self.selected {
-                    match self.lists.iter().find(|list| &list.id == id) {
-                        Some(list) => self.list_panel(&list.name, cx),
-                        None => Self::empty_element(palette),
-                    }
                 } else if self.item_editor.is_some() {
                     self.item_editor_element(palette, cx)
                 } else if let Some(id) = &self.confirm_delete_item {
@@ -483,10 +532,16 @@ impl Shell {
                         .map(|item| item.title.as_str())
                         .unwrap_or("this item");
                     self.delete_item_element(title, cx)
+                } else if let Some(id) = &self.selected {
+                    match self.lists.iter().find(|list| &list.id == id) {
+                        Some(list) => self.list_panel(list, palette, cx),
+                        None => Self::empty_element(palette),
+                    }
                 } else if self.items.is_empty() {
                     Self::empty_element(palette)
                 } else {
-                    self.items_element(palette, cx)
+                    let items: Vec<&items::Item> = self.items.iter().collect();
+                    self.items_element(&items, None, palette, cx)
                 }
             }
         }
@@ -545,38 +600,145 @@ impl Shell {
             .into_any_element()
     }
 
-    fn list_panel(&self, name: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn items_in_list(&self, list_id: &str) -> Vec<&items::Item> {
+        self.memberships
+            .iter()
+            .filter(|membership| membership.list_id == list_id)
+            .filter_map(|membership| self.items.iter().find(|item| item.id == membership.item_id))
+            .collect()
+    }
+
+    fn list_empty_element(palette: &Palette) -> AnyElement {
         div()
-            .id("list-panel")
+            .id("list-empty")
             .role(Role::Status)
             .test_support()
-            .aria_label(name.to_owned())
+            .aria_label("No items in this list yet")
+            .text_color(rgb(palette.muted))
+            .child("No items in this list yet")
+            .into_any_element()
+    }
+
+    fn add_picker_element(
+        &self,
+        list_id: &str,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let available: Vec<&items::Item> = self
+            .items
+            .iter()
+            .filter(|item| {
+                !self.memberships.iter().any(|membership| {
+                    membership.list_id == list_id && membership.item_id == item.id
+                })
+            })
+            .collect();
+
+        if available.is_empty() {
+            let message = if self.items.is_empty() {
+                "Add an item first"
+            } else {
+                "Every item is already in this list"
+            };
+
+            return div()
+                .id("add-picker-empty")
+                .role(Role::Status)
+                .test_support()
+                .aria_label(message)
+                .text_color(rgb(palette.muted))
+                .text_xs()
+                .child(message)
+                .into_any_element();
+        }
+
+        let list_id = list_id.to_owned();
+
+        div()
+            .id("add-picker")
+            .test_support()
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .children(available.iter().map(|item| {
+                let list_id = list_id.clone();
+                let item_id = item.id.clone();
+
+                Button::new(format!("add-to-list-{}", item.id))
+                    .label(item.title.clone())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.add_to_list(list_id.clone(), item_id.clone(), cx)
+                    }))
+            }))
+            .into_any_element()
+    }
+
+    fn list_panel(
+        &self,
+        list: &lists::List,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let members = self.items_in_list(&list.id);
+        let adding = self.add_picker.as_deref() == Some(list.id.as_str());
+        let list_id = list.id.clone();
+
+        div()
+            .id("list-panel")
+            .role(Role::Region)
+            .test_support()
+            .aria_label(list.name.clone())
             .flex()
             .flex_col()
-            .items_center()
             .gap_3()
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(name.to_owned()),
-            )
+            .w_full()
+            .h_full()
+            .max_w(px(640.0))
             .child(
                 div()
                     .flex()
-                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
                     .child(
-                        Button::new("rename-list").label("Rename").on_click(
-                            cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
-                        ),
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(list.name.clone()),
                     )
                     .child(
-                        Button::new("delete-list")
-                            .label("Delete")
-                            .danger()
-                            .on_click(cx.listener(|this, _, _, cx| this.begin_delete(cx))),
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(Button::new("rename-list").label("Rename").on_click(
+                                cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
+                            ))
+                            .child(
+                                Button::new("delete-list")
+                                    .label("Delete")
+                                    .danger()
+                                    .on_click(cx.listener(|this, _, _, cx| this.begin_delete(cx))),
+                            ),
                     ),
             )
+            .child(
+                div().flex().gap_2().child(
+                    Button::new("add-existing-item")
+                        .label("Add existing item")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_add_picker(list_id.clone(), cx)
+                        })),
+                ),
+            )
+            .when(adding, |panel| {
+                panel.child(self.add_picker_element(&list.id, palette, cx))
+            })
+            .child(if members.is_empty() {
+                Self::list_empty_element(palette)
+            } else {
+                self.items_element(&members, Some(&list.id), palette, cx)
+            })
             .into_any_element()
     }
 
@@ -763,7 +925,125 @@ impl Shell {
             .into_any_element()
     }
 
-    fn items_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    fn item_row(
+        &self,
+        item: &items::Item,
+        remove_from: Option<&str>,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let metadata = match item.release_year {
+            Some(year) => format!("{} · {year}", item.media_kind.label()),
+            None => item.media_kind.label().to_owned(),
+        };
+        let id = item.id.clone();
+        let chip = self.status_chip(item, palette, cx);
+        let picker = (self.status_picker.as_deref() == Some(item.id.as_str()))
+            .then(|| self.status_picker_element(item, cx));
+
+        let actions = match remove_from {
+            Some(list_id) => {
+                let list_id = list_id.to_owned();
+
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new(format!("item-edit-{}", item.id))
+                            .label("Edit")
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |this, _, window, cx| {
+                                    this.begin_edit_item(id.clone(), window, cx)
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new(format!("remove-from-list-{}", item.id))
+                            .label("Remove")
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |this, _, _, cx| {
+                                    this.remove_from_list(list_id.clone(), id.clone(), cx)
+                                }
+                            })),
+                    )
+            }
+            None => div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new(format!("item-edit-{}", item.id))
+                        .label("Edit")
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, window, cx| this.begin_edit_item(id.clone(), window, cx)
+                        })),
+                )
+                .child(
+                    Button::new(format!("item-delete-{}", item.id))
+                        .label("Delete")
+                        .danger()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.begin_delete_item(id.clone(), cx)
+                        })),
+                ),
+        };
+
+        div()
+            .id(format!("item-row-{}", item.id))
+            .role(Role::ListItem)
+            .test_support()
+            .aria_label(item.title.clone())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .bg(rgb(palette.surface))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(palette.line))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(item.title.clone())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.muted))
+                                    .child(metadata),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(chip)
+                            .child(actions),
+                    ),
+            )
+            .children(picker)
+            .into_any_element()
+    }
+
+    fn items_element(
+        &self,
+        items: &[&items::Item],
+        remove_from: Option<&str>,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         div()
             .id("items")
             .role(Role::List)
@@ -773,76 +1053,11 @@ impl Shell {
             .gap_3()
             .w_full()
             .max_w(px(640.0))
-            .children(self.items.iter().map(|item| {
-                let metadata = match item.release_year {
-                    Some(year) => format!("{} · {year}", item.media_kind.label()),
-                    None => item.media_kind.label().to_owned(),
-                };
-                let id = item.id.clone();
-                let chip = self.status_chip(item, palette, cx);
-                let picker = (self.status_picker.as_deref() == Some(item.id.as_str()))
-                    .then(|| self.status_picker_element(item, cx));
-
-                div()
-                    .id(format!("item-row-{}", item.id))
-                    .role(Role::ListItem)
-                    .test_support()
-                    .aria_label(item.title.clone())
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_4()
-                    .bg(rgb(palette.surface))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(rgb(palette.line))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(item.title.clone())
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(rgb(palette.muted))
-                                            .child(metadata),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(chip)
-                                    .child(
-                                        Button::new(format!("item-edit-{}", item.id))
-                                            .label("Edit")
-                                            .on_click(cx.listener({
-                                                let id = id.clone();
-                                                move |this, _, window, cx| {
-                                                    this.begin_edit_item(id.clone(), window, cx)
-                                                }
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(format!("item-delete-{}", item.id))
-                                            .label("Delete")
-                                            .danger()
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.begin_delete_item(id.clone(), cx)
-                                            })),
-                                    ),
-                            ),
-                    )
-                    .children(picker)
-            }))
+            .children(
+                items
+                    .iter()
+                    .map(|item| self.item_row(item, remove_from, palette, cx)),
+            )
             .into_any_element()
     }
 
