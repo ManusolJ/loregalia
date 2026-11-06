@@ -763,31 +763,41 @@ impl Shell {
             .flex_col()
             .when(!shows_labels, |lists| lists.gap_1())
             .children(self.lists.iter().map(|list| {
-                let row = div()
-                    .id(format!("list-row-{}", list.id))
-                    .role(Role::ListItem)
-                    .test_support()
-                    .aria_label(list.name.clone());
+                let selected = self.selected.as_deref() == Some(list.id.as_str());
                 let id = list.id.clone();
 
                 if shows_labels {
-                    row.px_3()
-                        .py_2()
-                        .cursor_pointer()
-                        .child(list.name.clone())
+                    Button::new(format!("list-row-{}", list.id))
+                        .ghost()
+                        .w_full()
+                        .h(px(36.0))
+                        .px_3()
+                        .justify_start()
+                        .role(Role::ListItem)
+                        .accessibility_label(list.name.clone())
+                        .selected(selected)
+                        .child(div().w_full().child(list.name.clone()))
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
                         )
+                        .into_any_element()
                 } else {
-                    row.child(
-                        Button::new(format!("list-button-{}", list.id))
-                            .icon(IconName::Inbox)
-                            .tooltip(list.name.clone())
-                            .accessibility_label(list.name.clone())
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
-                            ),
-                    )
+                    div()
+                        .id(format!("list-row-{}", list.id))
+                        .role(Role::ListItem)
+                        .test_support()
+                        .aria_label(list.name.clone())
+                        .child(
+                            Button::new(format!("list-button-{}", list.id))
+                                .icon(IconName::Inbox)
+                                .tooltip(list.name.clone())
+                                .accessibility_label(list.name.clone())
+                                .selected(selected)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.select_list(id.clone(), cx)
+                                })),
+                        )
+                        .into_any_element()
                 }
             }))
     }
