@@ -6,11 +6,25 @@ use std::path::{Path, PathBuf};
 pub const APP_FOLDER: &str = "com.manu.loregalia";
 pub const DATABASE_FILE: &str = "loregalia.db";
 
-const MIGRATIONS: &[&str] = &["CREATE TABLE lists (
+const MIGRATIONS: &[&str] = &[
+    "CREATE TABLE lists (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         created_at TEXT NOT NULL
-    ) STRICT;"];
+    ) STRICT;",
+    "CREATE TABLE items (
+        id TEXT PRIMARY KEY,
+        media_kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        release_year INTEGER,
+        release_date TEXT,
+        finished_at TEXT,
+        source TEXT,
+        external_id TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (source, external_id)
+    ) STRICT;",
+];
 
 fn latest_version() -> u32 {
     MIGRATIONS.len() as u32
@@ -326,20 +340,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 2;")
+                .execute_batch("PRAGMA user_version = 3;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 2,
-                supported: 1
+                found: 3,
+                supported: 2
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 2);
+        assert_eq!(schema_version(&connection), 3);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",
