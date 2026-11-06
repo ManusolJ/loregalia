@@ -32,7 +32,7 @@ Prove the painful parts while the app is still small.
 Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch.
 
 - [x] Items: add by hand, view, edit, delete
-- [ ] Statuses: statuses as data, categories, status chips
+- [x] Statuses: statuses as data, categories, status chips
 - [ ] Lists: create, rename, delete, membership
 - [ ] Tags: on lists and items
 - [ ] Shows and seasons
