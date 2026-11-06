@@ -12,11 +12,20 @@ use loregalia_core::{Database, lists};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[derive(Clone, Copy)]
+enum Step {
+    None,
+    Create,
+    Rename,
+    Delete,
+}
+
 struct Shot {
     name: &'static str,
     size: Size<Pixels>,
     mode: ThemeMode,
     storage: StorageState,
+    step: Step,
 }
 
 fn main() -> Result<()> {
@@ -34,30 +43,56 @@ fn main() -> Result<()> {
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
             storage: populated.clone(),
+            step: Step::None,
         },
         Shot {
             name: "wide-empty-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
-            storage: empty,
+            storage: empty.clone(),
+            step: Step::None,
         },
         Shot {
             name: "wide-lists-light",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Light,
             storage: populated.clone(),
+            step: Step::None,
         },
         Shot {
             name: "narrow-rail-dark",
             size: size(px(960.0), px(600.0)),
             mode: ThemeMode::Dark,
+            storage: populated.clone(),
+            step: Step::None,
+        },
+        Shot {
+            name: "list-create-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: empty,
+            step: Step::Create,
+        },
+        Shot {
+            name: "list-rename-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: populated.clone(),
+            step: Step::Rename,
+        },
+        Shot {
+            name: "list-delete-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
             storage: populated,
+            step: Step::Delete,
         },
         Shot {
             name: "storage-failure-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
             storage: failure,
+            step: Step::None,
         },
     ];
 
@@ -130,6 +165,44 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
     cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
+
+    let first_id = match (&shot.storage, shot.step) {
+        (StorageState::Ready(path), Step::Rename | Step::Delete) => {
+            let database = Database::open(path)?;
+            lists::all(&database)?
+                .into_iter()
+                .next()
+                .map(|list| list.id)
+        }
+        _ => None,
+    };
+
+    match shot.step {
+        Step::None => {}
+        Step::Create => {
+            cx.update_window(handle, |_, window, cx| {
+                window.click("create-list", cx);
+                window.render_frame(cx);
+            })?;
+        }
+        Step::Rename | Step::Delete => {
+            if let Some(id) = first_id {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("list-row-{id}"), cx);
+                    window.render_frame(cx);
+                })?;
+                let action = match shot.step {
+                    Step::Rename => "rename-list",
+                    _ => "delete-list",
+                };
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(action, cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
+    }
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
 
     let image = cx.capture_screenshot(handle)?;

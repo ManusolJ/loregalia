@@ -426,6 +426,42 @@ fn row_ids_come_from_the_list_id(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn rail_list_selection_opens_the_list_actions(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Watchlist"]).unwrap();
+    let list = &seeded[0];
+
+    let handle = open_shell(
+        cx,
+        size(px(960.0), px(600.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-button-{}", list.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-panel").visible());
+        window.click("delete-list", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("delete-confirmation").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn renaming_a_list_updates_the_sidebar_and_database(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
