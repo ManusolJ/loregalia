@@ -23,7 +23,7 @@ Prove the painful parts while the app is still small.
 - [x] Run migrations at startup, including on a database from an older version
 - [x] One view writes a row and reads it back, off the UI thread
 - [x] Write a log file, because the installed app has no console
-- [ ] One real call to the first source from `core`, with its response saved as a fixture
+- [x] One real call to the first source from `core`, with its response saved as a fixture
 - [ ] Decide D-16 and D-18, then build an installer
 - [ ] Human check: install it, start it from the Start menu, and confirm covers and data persist
 
@@ -31,7 +31,7 @@ Prove the painful parts while the app is still small.
 
 Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch.
 
-- [ ] Items: add by hand, view, edit, delete
+- [x] Items: add by hand, view, edit, delete
 - [ ] Statuses: statuses as data, categories, status chips
 - [ ] Lists: create, rename, delete, membership
 - [ ] Tags: on lists and items
