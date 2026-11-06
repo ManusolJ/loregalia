@@ -1657,6 +1657,93 @@ fn a_tag_can_be_shared_by_an_item_and_a_list(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn clicking_about_shows_the_credits(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("about-button", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let screen = window.find("about-screen");
+        assert!(screen.visible());
+        assert_eq!(screen.label(), Some("About Loregalia"));
+
+        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(window.find("about-version").label(), Some(version.as_str()));
+        assert!(window.find("about-tvmaze").visible());
+        assert!(window.find("tvmaze-link").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selecting_a_list_leaves_the_about_screen(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("about-button", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("about-screen").visible());
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.try_find("about-screen").is_none());
+        assert!(window.find("list-panel").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_about_button_is_reachable_in_the_rail(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(960.0), px(600.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let button = window.find("about-button");
+        assert!(button.visible());
+        assert_eq!(button.label(), Some("About"));
+        window.click("about-button", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("about-screen").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_show_row_offers_seasons_and_other_kinds_do_not(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
