@@ -1,5 +1,32 @@
 use crate::{Database, Error, Result, items::Item};
-use rusqlite::params;
+use rusqlite::{Row, params};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Membership {
+    pub list_id: String,
+    pub item_id: String,
+    pub position: i32,
+}
+
+impl Membership {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            list_id: row.get(0)?,
+            item_id: row.get(1)?,
+            position: row.get(2)?,
+        })
+    }
+}
+
+pub fn memberships(database: &Database) -> Result<Vec<Membership>> {
+    let mut statement = database
+        .connection()
+        .prepare("SELECT list_id, item_id, position FROM list_items ORDER BY list_id, position")?;
+    let rows = statement.query_map([], Membership::from_row)?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Error::from)
+}
 
 pub fn add(database: &Database, list_id: &str, item_id: &str) -> Result<bool> {
     let changed = database.connection().execute(
@@ -38,12 +65,69 @@ pub fn all(database: &Database, list_id: &str) -> Result<Vec<Item>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{add, all, remove};
+    use super::{Membership, add, all, memberships, remove};
     use crate::media::MediaKind;
     use crate::{Database, items, lists};
 
     fn database() -> Database {
         Database::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn a_fresh_database_has_no_memberships() {
+        let database = database();
+
+        assert_eq!(memberships(&database).unwrap(), Vec::<Membership>::new());
+    }
+
+    #[test]
+    fn memberships_list_every_pair_with_its_position() {
+        let database = database();
+        let first_list = lists::create(&database, "First list").unwrap();
+        let second_list = lists::create(&database, "Second list").unwrap();
+        let first = items::create(&database, MediaKind::Movie, "First", None).unwrap();
+        let second = items::create(&database, MediaKind::Book, "Second", None).unwrap();
+
+        add(&database, &first_list.id, &first.id).unwrap();
+        add(&database, &first_list.id, &second.id).unwrap();
+        add(&database, &second_list.id, &second.id).unwrap();
+
+        let stored = memberships(&database).unwrap();
+        assert_eq!(stored.len(), 3);
+
+        let first_list_items: Vec<&Membership> = stored
+            .iter()
+            .filter(|membership| membership.list_id == first_list.id)
+            .collect();
+        assert_eq!(first_list_items.len(), 2);
+        assert_eq!(first_list_items[0].item_id, first.id);
+        assert_eq!(first_list_items[0].position, 0);
+        assert_eq!(first_list_items[1].item_id, second.id);
+        assert_eq!(first_list_items[1].position, 1);
+
+        let second_list_items: Vec<&Membership> = stored
+            .iter()
+            .filter(|membership| membership.list_id == second_list.id)
+            .collect();
+        assert_eq!(second_list_items.len(), 1);
+        assert_eq!(second_list_items[0].item_id, second.id);
+        assert_eq!(second_list_items[0].position, 0);
+    }
+
+    #[test]
+    fn removing_a_membership_drops_only_that_pair() {
+        let database = database();
+        let list = lists::create(&database, "Queue").unwrap();
+        let keep = items::create(&database, MediaKind::Game, "Keep", None).unwrap();
+        let drop = items::create(&database, MediaKind::Show, "Drop", None).unwrap();
+        add(&database, &list.id, &keep.id).unwrap();
+        add(&database, &list.id, &drop.id).unwrap();
+
+        remove(&database, &list.id, &drop.id).unwrap();
+
+        let stored = memberships(&database).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].item_id, keep.id);
     }
 
     fn membership_count(database: &Database) -> i64 {
