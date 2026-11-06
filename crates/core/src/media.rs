@@ -18,6 +18,19 @@ impl MediaKind {
         }
     }
 
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Movie => "movie",
+            Self::Show => "show",
+            Self::Book => "book",
+            Self::Game => "game",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.key() == key)
+    }
+
     pub const fn tracks_seasons(self) -> bool {
         matches!(self, Self::Show)
     }
@@ -42,5 +55,13 @@ mod tests {
         for kind in MediaKind::ALL {
             assert!(!kind.label().is_empty());
         }
+    }
+
+    #[test]
+    fn every_kind_has_a_stable_key() {
+        for kind in MediaKind::ALL {
+            assert_eq!(MediaKind::from_key(kind.key()), Some(kind));
+        }
+        assert_eq!(MediaKind::from_key("unknown"), None);
     }
 }

@@ -2,13 +2,15 @@ use std::future::Future;
 use std::path::PathBuf;
 
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Disableable, IconName, button::Button, button::ButtonVariants};
+use gpui_kit::component::{
+    Disableable, IconName, Selectable, button::Button, button::ButtonVariants,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Pixels, Role, TestSupportExt,
     Window, div, px, rgb,
 };
-use loregalia_core::{Database, Result as CoreResult, lists, log};
+use loregalia_core::{Database, Result as CoreResult, items, lists, log, media::MediaKind};
 
 use crate::startup::StorageState;
 use crate::theme::Palette;
@@ -32,11 +34,33 @@ pub struct Shell {
     storage: StorageState,
     log_path: Option<PathBuf>,
     lists: Vec<lists::List>,
+    items: Vec<items::Item>,
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
     editor: Option<Editor>,
     confirm_delete: Option<String>,
+    item_editor: Option<ItemEditor>,
+    confirm_delete_item: Option<String>,
+}
+
+struct ItemEditor {
+    id: Option<String>,
+    kind: MediaKind,
+    title: Entity<InputState>,
+    year: Entity<InputState>,
+}
+
+struct Loaded {
+    lists: Vec<lists::List>,
+    items: Vec<items::Item>,
+}
+
+fn load(database: &Database) -> CoreResult<Loaded> {
+    Ok(Loaded {
+        lists: lists::all(database)?,
+        items: items::all(database)?,
+    })
 }
 
 enum Editor {
@@ -54,11 +78,14 @@ impl Shell {
             storage,
             log_path,
             lists: Vec::new(),
+            items: Vec::new(),
             error: None,
             loading,
             selected: None,
             editor: None,
             confirm_delete: None,
+            item_editor: None,
+            confirm_delete_item: None,
         };
         shell.reload_lists(cx);
         shell
@@ -83,7 +110,7 @@ impl Shell {
 
         self.run(cx, async move {
             let database = Database::open(path)?;
-            lists::all(&database)
+            load(&database)
         });
     }
 
@@ -94,6 +121,8 @@ impl Shell {
 
         self.selected = None;
         self.confirm_delete = None;
+        self.item_editor = None;
+        self.confirm_delete_item = None;
         self.editor = Some(Editor::Create(input));
         cx.notify();
     }
@@ -102,6 +131,8 @@ impl Shell {
         self.selected = Some(id);
         self.editor = None;
         self.confirm_delete = None;
+        self.item_editor = None;
+        self.confirm_delete_item = None;
         cx.notify();
     }
 
@@ -159,7 +190,7 @@ impl Shell {
                     lists::create(&database, &name)?;
                 }
             }
-            lists::all(&database)
+            load(&database)
         });
     }
 
@@ -194,13 +225,146 @@ impl Shell {
         self.run(cx, async move {
             let database = Database::open(path)?;
             lists::delete(&database, &id)?;
-            lists::all(&database)
+            load(&database)
+        });
+    }
+
+    fn begin_create_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
+        let year = cx.new(|cx| InputState::new(window, cx).placeholder("Year"));
+        let focus = title.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
+
+        self.selected = None;
+        self.editor = None;
+        self.confirm_delete = None;
+        self.confirm_delete_item = None;
+        self.item_editor = Some(ItemEditor {
+            id: None,
+            kind: MediaKind::Movie,
+            title,
+            year,
+        });
+        cx.notify();
+    }
+
+    fn begin_edit_item(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.items.iter().find(|item| item.id == id) else {
+            return;
+        };
+        let (kind, title_value, year_value) = (
+            item.media_kind,
+            item.title.clone(),
+            item.release_year.map(|year| year.to_string()),
+        );
+        let title = cx.new(|cx| {
+            let mut input = InputState::new(window, cx)
+                .placeholder("Title")
+                .default_value(title_value);
+            input.select_all(window, cx);
+            input
+        });
+        let year = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Year")
+                .default_value(year_value.unwrap_or_default())
+        });
+        let focus = title.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
+
+        self.item_editor = Some(ItemEditor {
+            id: Some(id),
+            kind,
+            title,
+            year,
+        });
+        self.confirm_delete_item = None;
+        cx.notify();
+    }
+
+    fn select_item_kind(&mut self, kind: MediaKind, cx: &mut Context<Self>) {
+        if let Some(editor) = &mut self.item_editor {
+            editor.kind = kind;
+            cx.notify();
+        }
+    }
+
+    fn save_item(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.item_editor.take() else {
+            return;
+        };
+        let title = editor.title.read(cx).value().trim().to_owned();
+        let year_text = editor.year.read(cx).value().trim().to_owned();
+        let year = if year_text.is_empty() {
+            None
+        } else {
+            match year_text.parse::<i32>() {
+                Ok(year) => Some(year),
+                Err(_) => {
+                    self.item_editor = Some(editor);
+                    return;
+                }
+            }
+        };
+        if title.is_empty() {
+            self.item_editor = Some(editor);
+            return;
+        }
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        let id = editor.id;
+        let kind = editor.kind;
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            match id {
+                Some(id) => {
+                    items::update(&database, &id, kind, &title, year)?;
+                }
+                None => {
+                    items::create(&database, kind, &title, year)?;
+                }
+            }
+            load(&database)
+        });
+    }
+
+    fn cancel_item(&mut self, cx: &mut Context<Self>) {
+        self.item_editor = None;
+        cx.notify();
+    }
+
+    fn begin_delete_item(&mut self, id: String, cx: &mut Context<Self>) {
+        self.confirm_delete_item = Some(id);
+        self.item_editor = None;
+        self.selected = None;
+        cx.notify();
+    }
+
+    fn cancel_delete_item(&mut self, cx: &mut Context<Self>) {
+        self.confirm_delete_item = None;
+        cx.notify();
+    }
+
+    fn delete_item(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.confirm_delete_item.take() else {
+            return;
+        };
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            items::delete(&database, &id)?;
+            load(&database)
         });
     }
 
     fn run<F>(&mut self, cx: &mut Context<Self>, work: F)
     where
-        F: Future<Output = CoreResult<Vec<lists::List>>> + Send + 'static,
+        F: Future<Output = CoreResult<Loaded>> + Send + 'static,
     {
         self.loading = true;
         let task = cx.background_spawn(work);
@@ -210,15 +374,16 @@ impl Shell {
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 match result {
-                    Ok(lists) => {
+                    Ok(loaded) => {
                         if let Some(id) = this.selected.clone()
-                            && !lists.iter().any(|list| list.id == id)
+                            && !loaded.lists.iter().any(|list| list.id == id)
                         {
                             this.selected = None;
                             this.editor = None;
                             this.confirm_delete = None;
                         }
-                        this.lists = lists;
+                        this.lists = loaded.lists;
+                        this.items = loaded.items;
                         this.error = None;
                     }
                     Err(error) => {
@@ -270,8 +435,20 @@ impl Shell {
                         Some(list) => self.list_panel(&list.name, cx),
                         None => Self::empty_element(palette),
                     }
-                } else {
+                } else if self.item_editor.is_some() {
+                    self.item_editor_element(palette, cx)
+                } else if let Some(id) = &self.confirm_delete_item {
+                    let title = self
+                        .items
+                        .iter()
+                        .find(|item| &item.id == id)
+                        .map(|item| item.title.as_str())
+                        .unwrap_or("this item");
+                    self.delete_item_element(title, cx)
+                } else if self.items.is_empty() {
                     Self::empty_element(palette)
+                } else {
+                    self.items_element(palette, cx)
                 }
             }
         }
@@ -397,6 +574,165 @@ impl Shell {
             .into_any_element()
     }
 
+    fn item_editor_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let Some(editor) = &self.item_editor else {
+            return Self::empty_element(palette);
+        };
+        let title = editor.title.read(cx).value().trim().to_owned();
+        let year = editor.year.read(cx).value().trim().to_owned();
+        let can_save = !title.is_empty() && (year.is_empty() || year.parse::<i32>().is_ok());
+        let heading = if editor.id.is_some() {
+            "Edit item"
+        } else {
+            "New item"
+        };
+
+        div()
+            .id("item-editor")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w(px(320.0))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(heading))
+            .child(
+                Input::new(&editor.title)
+                    .id("item-title-input")
+                    .aria_label("Title"),
+            )
+            .child(div().flex().gap_2().children(MediaKind::ALL.map(|kind| {
+                Button::new(format!("item-kind-{}", kind.key()))
+                    .label(kind.label())
+                    .selected(editor.kind == kind)
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_item_kind(kind, cx)))
+            })))
+            .child(
+                Input::new(&editor.year)
+                    .id("item-year-input")
+                    .aria_label("Release year"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("save-item")
+                            .label("Save")
+                            .disabled(!can_save)
+                            .on_click(cx.listener(|this, _, _, cx| this.save_item(cx))),
+                    )
+                    .child(
+                        Button::new("cancel-item")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_item(cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn items_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("items")
+            .role(Role::List)
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w_full()
+            .max_w(px(640.0))
+            .children(self.items.iter().map(|item| {
+                let metadata = match item.release_year {
+                    Some(year) => format!("{} · {year}", item.media_kind.label()),
+                    None => item.media_kind.label().to_owned(),
+                };
+                let id = item.id.clone();
+
+                div()
+                    .id(format!("item-row-{}", item.id))
+                    .role(Role::ListItem)
+                    .test_support()
+                    .aria_label(item.title.clone())
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .p_4()
+                    .bg(rgb(palette.surface))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(rgb(palette.line))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(item.title.clone())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(palette.muted))
+                                    .child(metadata),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new(format!("item-edit-{}", item.id))
+                                    .label("Edit")
+                                    .on_click(cx.listener({
+                                        let id = id.clone();
+                                        move |this, _, window, cx| {
+                                            this.begin_edit_item(id.clone(), window, cx)
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("item-delete-{}", item.id))
+                                    .label("Delete")
+                                    .danger()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.begin_delete_item(id.clone(), cx)
+                                    })),
+                            ),
+                    )
+            }))
+            .into_any_element()
+    }
+
+    fn delete_item_element(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
+        let message = format!("Delete \"{title}\"?");
+
+        div()
+            .id("item-delete-confirmation")
+            .role(Role::Alert)
+            .test_support()
+            .aria_label(message.clone())
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_3()
+            .child(message)
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("cancel-item-delete")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_delete_item(cx))),
+                    )
+                    .child(
+                        Button::new("confirm-item-delete")
+                            .label("Delete")
+                            .danger()
+                            .on_click(cx.listener(|this, _, _, cx| this.delete_item(cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn loading_element(palette: &Palette) -> AnyElement {
         div()
             .id("loading-state")
@@ -427,31 +763,41 @@ impl Shell {
             .flex_col()
             .when(!shows_labels, |lists| lists.gap_1())
             .children(self.lists.iter().map(|list| {
-                let row = div()
-                    .id(format!("list-row-{}", list.id))
-                    .role(Role::ListItem)
-                    .test_support()
-                    .aria_label(list.name.clone());
+                let selected = self.selected.as_deref() == Some(list.id.as_str());
                 let id = list.id.clone();
 
                 if shows_labels {
-                    row.px_3()
-                        .py_2()
-                        .cursor_pointer()
-                        .child(list.name.clone())
+                    Button::new(format!("list-row-{}", list.id))
+                        .ghost()
+                        .w_full()
+                        .h(px(36.0))
+                        .px_3()
+                        .justify_start()
+                        .role(Role::ListItem)
+                        .accessibility_label(list.name.clone())
+                        .selected(selected)
+                        .child(div().w_full().child(list.name.clone()))
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
                         )
+                        .into_any_element()
                 } else {
-                    row.child(
-                        Button::new(format!("list-button-{}", list.id))
-                            .icon(IconName::Inbox)
-                            .tooltip(list.name.clone())
-                            .accessibility_label(list.name.clone())
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
-                            ),
-                    )
+                    div()
+                        .id(format!("list-row-{}", list.id))
+                        .role(Role::ListItem)
+                        .test_support()
+                        .aria_label(list.name.clone())
+                        .child(
+                            Button::new(format!("list-button-{}", list.id))
+                                .icon(IconName::Inbox)
+                                .tooltip(list.name.clone())
+                                .accessibility_label(list.name.clone())
+                                .selected(selected)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.select_list(id.clone(), cx)
+                                })),
+                        )
+                        .into_any_element()
                 }
             }))
     }
@@ -463,7 +809,7 @@ impl Render for Shell {
         let width = sidebar_width(window.viewport_size().width);
         let shows_labels = width > px(RAIL_WIDTH);
         let can_create = matches!(&self.storage, StorageState::Ready(_));
-        let main = self.main_element(&palette, cx);
+        let main_element = self.main_element(&palette, cx);
         let create = Button::new("create-list")
             .disabled(self.loading)
             .on_click(cx.listener(|this, _, window, cx| this.begin_create(window, cx)));
@@ -522,9 +868,29 @@ impl Render for Shell {
                     .flex_1()
                     .h_full()
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(main),
+                    .flex_col()
+                    .gap_6()
+                    .p_6()
+                    .when(can_create, |main| {
+                        main.child(
+                            div().flex().child(
+                                Button::new("add-item")
+                                    .label("Add item")
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.begin_create_item(window, cx)
+                                    })),
+                            ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(main_element),
+                    ),
             )
     }
 }

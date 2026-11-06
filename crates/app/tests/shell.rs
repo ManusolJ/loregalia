@@ -7,7 +7,7 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, Result as CoreResult, lists};
+use loregalia_core::{Database, Result as CoreResult, items, lists, media::MediaKind};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -46,6 +46,16 @@ fn seed_lists(path: &Path, names: &[&str]) -> CoreResult<Vec<lists::List>> {
         lists::create(&database, name)?;
     }
     lists::all(&database)
+}
+
+fn seed_item(
+    path: &Path,
+    media_kind: MediaKind,
+    title: &str,
+    release_year: Option<i32>,
+) -> CoreResult<items::Item> {
+    let database = Database::open(path)?;
+    items::create(&database, media_kind, title, release_year)
 }
 
 #[gpui_kit::test]
@@ -581,6 +591,160 @@ fn deleting_a_list_asks_for_confirmation(cx: &mut TestAppContext) {
 
     assert_eq!(
         lists::all(&Database::open(&path).unwrap()).unwrap(),
+        Vec::new()
+    );
+}
+
+#[gpui_kit::test]
+fn adding_an_item_by_hand_shows_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Piranesi");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-book", cx);
+        window.click("item-year-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "2020");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].media_kind, MediaKind::Book);
+    assert_eq!(stored[0].title, "Piranesi");
+    assert_eq!(stored[0].release_year, Some(2020));
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(format!("item-row-{}", stored[0].id)).label(),
+            Some("Piranesi")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn editing_an_item_updates_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(1984)).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-edit-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Dune Messiah");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-book", cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].id, item.id);
+    assert_eq!(stored[0].title, "Dune Messiah");
+    assert_eq!(stored[0].media_kind, MediaKind::Book);
+    assert_eq!(stored[0].release_year, Some(1984));
+}
+
+#[gpui_kit::test]
+fn deleting_an_item_asks_for_confirmation(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Game, "Outer Wilds", None).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-delete-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-delete-confirmation").visible());
+        window.click("cancel-item-delete", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("item-delete-confirmation").is_none());
+        window.click(format!("item-delete-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("confirm-item-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(format!("item-row-{}", item.id)).is_none());
+        assert!(window.find("empty-state").visible());
+    })
+    .unwrap();
+
+    assert_eq!(
+        items::all(&Database::open(&path).unwrap()).unwrap(),
         Vec::new()
     );
 }

@@ -8,14 +8,16 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, lists};
+use loregalia_core::{Database, items, lists, media::MediaKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 enum Step {
     None,
+    Select,
     Create,
+    AddItem,
     Rename,
     Delete,
 }
@@ -34,6 +36,7 @@ fn main() -> Result<()> {
     let output = output.canonicalize()?;
 
     let populated = populated_database(&output)?;
+    let with_items = items_database(&output)?;
     let empty = empty_database(&output)?;
     let failure = StorageState::Failed("Could not open the database: the disk is full".to_owned());
 
@@ -65,6 +68,27 @@ fn main() -> Result<()> {
             mode: ThemeMode::Dark,
             storage: populated.clone(),
             step: Step::None,
+        },
+        Shot {
+            name: "items-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_items.clone(),
+            step: Step::None,
+        },
+        Shot {
+            name: "item-create-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: empty.clone(),
+            step: Step::AddItem,
+        },
+        Shot {
+            name: "list-selected-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: populated.clone(),
+            step: Step::Select,
         },
         Shot {
             name: "list-create-dark",
@@ -126,8 +150,21 @@ fn empty_database(output: &Path) -> Result<StorageState> {
     database_at(output, "empty-db")
 }
 
-fn database_at(output: &Path, name: &str) -> Result<StorageState> {
-    let directory = output.join(name);
+fn items_database(output: &Path) -> Result<StorageState> {
+    let state = database_at(output, "items-db")?;
+    if let StorageState::Ready(path) = &state {
+        let database = Database::open(path)?;
+        items::create(&database, MediaKind::Movie, "Dune", Some(2021))?;
+        items::create(&database, MediaKind::Book, "Piranesi", Some(2020))?;
+        items::create(&database, MediaKind::Game, "Outer Wilds", None)?;
+    }
+    Ok(state)
+}
+
+fn database_at(_output: &Path, name: &str) -> Result<StorageState> {
+    let root = std::env::temp_dir().join("loregalia-ui-snapshots");
+    std::fs::create_dir_all(&root)?;
+    let directory = root.join(name);
     if directory.exists() {
         std::fs::remove_dir_all(&directory)?;
     }
@@ -168,7 +205,7 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
 
     let first_id = match (&shot.storage, shot.step) {
-        (StorageState::Ready(path), Step::Rename | Step::Delete) => {
+        (StorageState::Ready(path), Step::Select | Step::Rename | Step::Delete) => {
             let database = Database::open(path)?;
             lists::all(&database)?
                 .into_iter()
@@ -180,9 +217,23 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
 
     match shot.step {
         Step::None => {}
+        Step::Select => {
+            if let Some(id) = first_id {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("list-row-{id}"), cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
         Step::Create => {
             cx.update_window(handle, |_, window, cx| {
                 window.click("create-list", cx);
+                window.render_frame(cx);
+            })?;
+        }
+        Step::AddItem => {
+            cx.update_window(handle, |_, window, cx| {
+                window.click("add-item", cx);
                 window.render_frame(cx);
             })?;
         }
