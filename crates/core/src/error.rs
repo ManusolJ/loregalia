@@ -7,6 +7,7 @@ pub enum Error {
     UnknownStatus,
     StatusKindMismatch,
     EmptyTagName,
+    DuplicateTagName,
     UnknownShow,
     SeasonsOnlyForShows,
     DuplicateSeason,
@@ -36,6 +37,7 @@ impl std::fmt::Display for Error {
                 formatter.write_str("the status belongs to another media kind")
             }
             Self::EmptyTagName => formatter.write_str("a tag needs a name"),
+            Self::DuplicateTagName => formatter.write_str("another tag already has that name"),
             Self::UnknownShow => formatter.write_str("the show does not exist"),
             Self::SeasonsOnlyForShows => formatter.write_str("seasons belong only to shows"),
             Self::DuplicateSeason => formatter.write_str("the show already has that season"),
@@ -65,6 +67,7 @@ impl std::error::Error for Error {
             | Self::UnknownStatus
             | Self::StatusKindMismatch
             | Self::EmptyTagName
+            | Self::DuplicateTagName
             | Self::UnknownShow
             | Self::SeasonsOnlyForShows
             | Self::DuplicateSeason

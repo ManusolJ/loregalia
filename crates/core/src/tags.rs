@@ -75,6 +75,32 @@ pub fn create(database: &Database, name: &str) -> Result<Tag> {
         .map_err(Error::from)
 }
 
+pub fn rename(database: &Database, id: &str, name: &str) -> Result<bool> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::EmptyTagName);
+    }
+    if let Some(existing) = by_name(database, name)?
+        && existing.id != id
+    {
+        return Err(Error::DuplicateTagName);
+    }
+
+    let changed = database
+        .connection()
+        .execute("UPDATE tags SET name = ?1 WHERE id = ?2", params![name, id])?;
+
+    Ok(changed > 0)
+}
+
+pub fn delete(database: &Database, id: &str) -> Result<bool> {
+    let changed = database
+        .connection()
+        .execute("DELETE FROM tags WHERE id = ?1", [id])?;
+
+    Ok(changed > 0)
+}
+
 pub fn for_item(database: &Database, item_id: &str) -> Result<Vec<Tag>> {
     let mut statement = database.connection().prepare(
         "SELECT t.id, t.name FROM item_tags link
@@ -160,8 +186,8 @@ pub fn detach_from_list(database: &Database, list_id: &str, tag_id: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::{
-        Tagging, all, attach_to_item, attach_to_list, create, detach_from_item, detach_from_list,
-        for_item, for_list, item_taggings, list_taggings,
+        Tagging, all, attach_to_item, attach_to_list, create, delete, detach_from_item,
+        detach_from_list, for_item, for_list, item_taggings, list_taggings, rename,
     };
     use crate::media::MediaKind;
     use crate::{Database, Error, items, lists};
@@ -320,6 +346,89 @@ mod tests {
             .execute("DELETE FROM tags WHERE id = ?1", [&tag.id])
             .unwrap();
 
+        assert!(item_taggings(&database).unwrap().is_empty());
+        assert!(list_taggings(&database).unwrap().is_empty());
+    }
+
+    #[test]
+    fn renaming_a_tag_changes_its_name_and_keeps_its_id() {
+        let database = database();
+        let tag = create(&database, "Sci-Fi").unwrap();
+
+        assert!(rename(&database, &tag.id, "Science Fiction").unwrap());
+
+        let stored = all(&database).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, tag.id);
+        assert_eq!(stored[0].name, "Science Fiction");
+    }
+
+    #[test]
+    fn renaming_a_tag_to_an_existing_name_is_an_error() {
+        let database = database();
+        let first = create(&database, "Sci-Fi").unwrap();
+        let second = create(&database, "Fantasy").unwrap();
+
+        assert!(matches!(
+            rename(&database, &second.id, "sci-fi"),
+            Err(Error::DuplicateTagName)
+        ));
+
+        let stored = all(&database).unwrap();
+        assert!(
+            stored
+                .iter()
+                .any(|tag| tag.id == first.id && tag.name == "Sci-Fi")
+        );
+        assert!(
+            stored
+                .iter()
+                .any(|tag| tag.id == second.id && tag.name == "Fantasy")
+        );
+    }
+
+    #[test]
+    fn renaming_a_tag_to_a_different_case_of_its_own_name_works() {
+        let database = database();
+        let tag = create(&database, "Sci-Fi").unwrap();
+
+        assert!(rename(&database, &tag.id, "sci-fi").unwrap());
+
+        assert_eq!(all(&database).unwrap()[0].name, "sci-fi");
+    }
+
+    #[test]
+    fn renaming_a_missing_tag_reports_no_change() {
+        let database = database();
+
+        assert!(!rename(&database, "missing", "Name").unwrap());
+    }
+
+    #[test]
+    fn renaming_a_tag_to_an_empty_name_is_an_error() {
+        let database = database();
+        let tag = create(&database, "Sci-Fi").unwrap();
+
+        assert!(matches!(
+            rename(&database, &tag.id, "  "),
+            Err(Error::EmptyTagName)
+        ));
+        assert_eq!(all(&database).unwrap()[0].name, "Sci-Fi");
+    }
+
+    #[test]
+    fn deleting_a_tag_removes_it_and_its_links() {
+        let database = database();
+        let item = items::create(&database, MediaKind::Movie, "Dune", None).unwrap();
+        let list = lists::create(&database, "Queue").unwrap();
+        let tag = create(&database, "Sci-Fi").unwrap();
+        attach_to_item(&database, &item.id, &tag.id).unwrap();
+        attach_to_list(&database, &list.id, &tag.id).unwrap();
+
+        assert!(delete(&database, &tag.id).unwrap());
+        assert!(!delete(&database, &tag.id).unwrap());
+
+        assert!(all(&database).unwrap().is_empty());
         assert!(item_taggings(&database).unwrap().is_empty());
         assert!(list_taggings(&database).unwrap().is_empty());
     }
