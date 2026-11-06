@@ -276,6 +276,18 @@ fn rail_shows_every_list_and_create_with_labels(cx: &mut TestAppContext) {
             assert_eq!(button.bounds().size, size(px(32.0), px(32.0)));
         }
 
+        let first_top = window
+            .find(format!("list-row-{}", seeded[0].id))
+            .bounds()
+            .origin
+            .y;
+        let second_top = window
+            .find(format!("list-row-{}", seeded[1].id))
+            .bounds()
+            .origin
+            .y;
+        assert_eq!(second_top - first_top, px(36.0));
+
         let create = window.find("create-list");
         assert!(create.visible());
         assert_eq!(create.label(), Some("Create list"));

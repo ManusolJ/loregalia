@@ -172,6 +172,7 @@ impl Shell {
             .test_support()
             .flex()
             .flex_col()
+            .when(!shows_labels, |lists| lists.gap_1())
             .children(self.lists.iter().map(|list| {
                 let row = div()
                     .id(format!("list-row-{}", list.id))
