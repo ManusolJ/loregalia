@@ -8,7 +8,7 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, items, lists, media::MediaKind};
+use loregalia_core::{Database, items, list_items, lists, media::MediaKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,6 +21,7 @@ enum Step {
     Rename,
     Delete,
     StatusPicker,
+    AddPicker,
 }
 
 struct Shot {
@@ -38,6 +39,7 @@ fn main() -> Result<()> {
 
     let populated = populated_database(&output)?;
     let with_items = items_database(&output)?;
+    let with_membership = membership_database(&output)?;
     let empty = empty_database(&output)?;
     let failure = StorageState::Failed("Could not open the database: the disk is full".to_owned());
 
@@ -106,6 +108,27 @@ fn main() -> Result<()> {
             step: Step::Select,
         },
         Shot {
+            name: "list-membership-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_membership.clone(),
+            step: Step::Select,
+        },
+        Shot {
+            name: "list-add-picker-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_membership.clone(),
+            step: Step::AddPicker,
+        },
+        Shot {
+            name: "list-membership-light",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Light,
+            storage: with_membership,
+            step: Step::Select,
+        },
+        Shot {
             name: "list-create-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
@@ -157,6 +180,25 @@ fn populated_database(output: &Path) -> Result<StorageState> {
         lists::create(&database, "Watch later")?;
         lists::create(&database, "Reading")?;
         lists::create(&database, "Games")?;
+    }
+    Ok(state)
+}
+
+fn membership_database(output: &Path) -> Result<StorageState> {
+    let state = database_at(output, "membership-db")?;
+    if let StorageState::Ready(path) = &state {
+        let database = Database::open(path)?;
+        let watch = lists::create(&database, "Watch later")?;
+        lists::create(&database, "Reading")?;
+        let dune = items::create(&database, MediaKind::Movie, "Dune", Some(2021))?;
+        let arrival = items::create(&database, MediaKind::Movie, "Arrival", Some(2016))?;
+        let wilds = items::create(&database, MediaKind::Game, "Outer Wilds", None)?;
+        items::create(&database, MediaKind::Book, "Piranesi", Some(2020))?;
+        items::set_status(&database, &dune.id, "movie-done")?;
+        items::set_status(&database, &arrival.id, "movie-active")?;
+        list_items::add(&database, &watch.id, &dune.id)?;
+        list_items::add(&database, &watch.id, &arrival.id)?;
+        list_items::add(&database, &watch.id, &wilds.id)?;
     }
     Ok(state)
 }
@@ -222,7 +264,10 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))?;
 
     let first_id = match (&shot.storage, shot.step) {
-        (StorageState::Ready(path), Step::Select | Step::Rename | Step::Delete) => {
+        (
+            StorageState::Ready(path),
+            Step::Select | Step::Rename | Step::Delete | Step::AddPicker,
+        ) => {
             let database = Database::open(path)?;
             lists::all(&database)?
                 .into_iter()
@@ -269,6 +314,16 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
             if let Some(id) = first_item {
                 cx.update_window(handle, |_, window, cx| {
                     window.click(format!("item-status-{id}"), cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
+        Step::AddPicker => {
+            if let Some(id) = first_id {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("list-row-{id}"), cx);
+                    window.render_frame(cx);
+                    window.click("add-existing-item", cx);
                     window.render_frame(cx);
                 })?;
             }
