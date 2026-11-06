@@ -1166,6 +1166,64 @@ fn removing_an_item_from_a_list_keeps_the_item(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn editing_an_item_from_a_list_returns_to_the_list(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(1984)).unwrap();
+    add_membership(&path, &seeded[0].id, &item.id).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-edit-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Dune Messiah");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.find("list-panel").visible());
+        assert_eq!(
+            window.find(format!("item-row-{}", item.id)).label(),
+            Some("Dune Messiah")
+        );
+    })
+    .unwrap();
+
+    let stored = list_items::all(&Database::open(&path).unwrap(), &seeded[0].id).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].title, "Dune Messiah");
+}
+
+#[gpui_kit::test]
 fn creating_an_item_from_a_list_adds_it_to_that_list(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
