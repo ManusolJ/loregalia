@@ -2170,3 +2170,134 @@ fn selecting_another_list_resets_the_sort_to_manual(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn renaming_a_tag_updates_its_chip(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", None).unwrap();
+    let tag = seed_tag(&path, "Sci-Fi").unwrap();
+    {
+        let database = Database::open(&path).unwrap();
+        tags::attach_to_item(&database, &item.id, &tag.id).unwrap();
+    }
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-tags-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("rename-tag-{}", tag.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("tag-rename-input").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Science Fiction");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-tag-rename", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let chip = window.find(format!("item-tag-{}-{}", item.id, tag.id));
+        assert!(chip.visible());
+        assert_eq!(chip.label(), Some("Science Fiction"));
+    })
+    .unwrap();
+
+    let stored = tags::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].id, tag.id);
+    assert_eq!(stored[0].name, "Science Fiction");
+}
+
+#[gpui_kit::test]
+fn deleting_a_tag_asks_for_confirmation(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", None).unwrap();
+    let tag = seed_tag(&path, "Sci-Fi").unwrap();
+    {
+        let database = Database::open(&path).unwrap();
+        tags::attach_to_item(&database, &item.id, &tag.id).unwrap();
+    }
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-tags-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("delete-tag-{}", tag.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("tag-delete-confirmation").visible());
+        assert!(window.try_find(format!("tag-toggle-{}", tag.id)).is_none());
+        window.click("cancel-tag-delete", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("tag-delete-confirmation").is_none());
+        window.click(format!("delete-tag-{}", tag.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("confirm-tag-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.try_find(format!("tag-toggle-{}", tag.id)).is_none());
+        assert!(
+            window
+                .try_find(format!("item-tag-{}-{}", item.id, tag.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+
+    let database = Database::open(&path).unwrap();
+    assert!(tags::all(&database).unwrap().is_empty());
+    assert!(tags::for_item(&database, &item.id).unwrap().is_empty());
+}
