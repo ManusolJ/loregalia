@@ -76,7 +76,7 @@ fn narrow_window_collapses_the_sidebar_to_a_rail(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
 
-        assert_eq!(window.find("sidebar").bounds().size.width, px(56.0));
+        assert_eq!(window.find("sidebar").bounds().size.width, px(64.0));
         assert!(window.find("empty-state").visible());
     })
     .unwrap();
@@ -260,7 +260,8 @@ fn rail_shows_every_list_and_create_with_labels(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
 
-        assert_eq!(window.find("sidebar").bounds().size.width, px(56.0));
+        assert_eq!(window.find("sidebar").bounds().size.width, px(64.0));
+        assert!(window.find("lists").bounds().size.width >= px(32.0));
         assert_eq!(window.find("lists").role(), Some(Role::List));
 
         for list in &seeded {

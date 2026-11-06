@@ -11,7 +11,7 @@ use loregalia_core::{Database, Result as CoreResult, lists, log};
 use crate::startup::StorageState;
 use crate::theme::Palette;
 
-const RAIL_WIDTH: f32 = 56.0;
+const RAIL_WIDTH: f32 = 64.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
 const SIDEBAR_LABELS_FROM: f32 = 1024.0;
 const EMPTY_MESSAGE: &str = "Nothing planned yet";
@@ -228,6 +228,7 @@ impl Render for Shell {
                     .flex()
                     .flex_col()
                     .p_3()
+                    .when(!shows_labels, |sidebar| sidebar.items_center())
                     .bg(rgb(palette.surface))
                     .border_r_1()
                     .border_color(rgb(palette.line))
@@ -272,8 +273,8 @@ mod tests {
 
     #[test]
     fn sidebar_becomes_a_rail_below_1024() {
-        assert_eq!(sidebar_width(px(960.0)), px(56.0));
-        assert_eq!(sidebar_width(px(1023.0)), px(56.0));
+        assert_eq!(sidebar_width(px(960.0)), px(64.0));
+        assert_eq!(sidebar_width(px(1023.0)), px(64.0));
         assert_eq!(sidebar_width(px(1024.0)), px(240.0));
         assert_eq!(sidebar_width(px(1280.0)), px(240.0));
     }
