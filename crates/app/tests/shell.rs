@@ -7,7 +7,9 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, Result as CoreResult, items, list_items, lists, media::MediaKind};
+use loregalia_core::{
+    Database, Result as CoreResult, items, list_items, lists, media::MediaKind, tags,
+};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -63,6 +65,11 @@ fn add_membership(path: &Path, list_id: &str, item_id: &str) -> CoreResult<()> {
     list_items::add(&database, list_id, item_id)?;
 
     Ok(())
+}
+
+fn seed_tag(path: &Path, name: &str) -> CoreResult<tags::Tag> {
+    let database = Database::open(path)?;
+    tags::create(&database, name)
 }
 
 #[gpui_kit::test]
@@ -1420,4 +1427,226 @@ fn creating_an_item_from_a_list_adds_it_to_that_list(cx: &mut TestAppContext) {
         assert!(window.find(format!("item-row-{}", stored[0].id)).visible());
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn adding_a_tag_to_an_item_shows_a_chip(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", None).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-tags-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("tag-picker").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Sci-Fi");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-tag", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = tags::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].name, "Sci-Fi");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let chip = window.find(format!("item-tag-{}-{}", item.id, stored[0].id));
+        assert!(chip.visible());
+        assert_eq!(chip.label(), Some("Sci-Fi"));
+    })
+    .unwrap();
+
+    let attached = tags::for_item(&Database::open(&path).unwrap(), &item.id).unwrap();
+    assert_eq!(attached, stored);
+}
+
+#[gpui_kit::test]
+fn creating_a_tag_on_a_list_attaches_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("list-tags", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Weekend");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-tag", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = tags::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let chip = window.find(format!("list-tag-{}-{}", seeded[0].id, stored[0].id));
+        assert!(chip.visible());
+        assert_eq!(chip.label(), Some("Weekend"));
+    })
+    .unwrap();
+
+    let attached = tags::for_list(&Database::open(&path).unwrap(), &seeded[0].id).unwrap();
+    assert_eq!(attached, stored);
+}
+
+#[gpui_kit::test]
+fn toggling_an_existing_tag_on_an_item_attaches_and_detaches_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", None).unwrap();
+    let tag = seed_tag(&path, "Favourite").unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-tags-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(format!("tag-toggle-{}", tag.id)).visible());
+        window.click(format!("tag-toggle-{}", tag.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find(format!("item-tag-{}-{}", item.id, tag.id))
+                .visible()
+        );
+        window.click(format!("tag-toggle-{}", tag.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(format!("item-tag-{}-{}", item.id, tag.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+
+    let attached = tags::for_item(&Database::open(&path).unwrap(), &item.id).unwrap();
+    assert!(attached.is_empty());
+}
+
+#[gpui_kit::test]
+fn a_tag_can_be_shared_by_an_item_and_a_list(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let item = seed_item(&path, MediaKind::Movie, "Dune", None).unwrap();
+    let tag = seed_tag(&path, "Sci-Fi").unwrap();
+    add_membership(&path, &seeded[0].id, &item.id).unwrap();
+    {
+        let database = Database::open(&path).unwrap();
+        tags::attach_to_item(&database, &item.id, &tag.id).unwrap();
+    }
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("list-tags", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("tag-toggle-{}", tag.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(
+            window
+                .find(format!("item-tag-{}-{}", item.id, tag.id))
+                .visible()
+        );
+        assert!(
+            window
+                .find(format!("list-tag-{}-{}", seeded[0].id, tag.id))
+                .visible()
+        );
+    })
+    .unwrap();
+
+    let database = Database::open(&path).unwrap();
+    assert_eq!(
+        tags::for_item(&database, &item.id).unwrap(),
+        vec![tag.clone()]
+    );
+    assert_eq!(tags::for_list(&database, &seeded[0].id).unwrap(), vec![tag]);
 }

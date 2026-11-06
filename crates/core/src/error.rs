@@ -6,6 +6,7 @@ pub enum Error {
     DataDirectoryUnavailable,
     UnknownStatus,
     StatusKindMismatch,
+    EmptyTagName,
     ConnectionFailed,
     RateLimited,
     HttpStatus { code: u16 },
@@ -30,6 +31,7 @@ impl std::fmt::Display for Error {
             Self::StatusKindMismatch => {
                 formatter.write_str("the status belongs to another media kind")
             }
+            Self::EmptyTagName => formatter.write_str("a tag needs a name"),
             Self::ConnectionFailed => {
                 formatter.write_str("could not connect to the metadata server or it timed out")
             }
@@ -54,6 +56,7 @@ impl std::error::Error for Error {
             | Self::DataDirectoryUnavailable
             | Self::UnknownStatus
             | Self::StatusKindMismatch
+            | Self::EmptyTagName
             | Self::ConnectionFailed
             | Self::RateLimited
             | Self::HttpStatus { .. } => None,

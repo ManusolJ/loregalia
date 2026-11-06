@@ -12,7 +12,7 @@ use gpui_kit::{
     Window, div, px, rgb,
 };
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, statuses,
+    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, statuses, tags,
 };
 
 use crate::startup::StorageState;
@@ -40,6 +40,9 @@ pub struct Shell {
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
     memberships: Vec<list_items::Membership>,
+    tags: Vec<tags::Tag>,
+    item_tags: Vec<tags::Tagging>,
+    list_tags: Vec<tags::Tagging>,
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
@@ -49,6 +52,7 @@ pub struct Shell {
     confirm_delete_item: Option<String>,
     status_picker: Option<String>,
     add_picker: Option<String>,
+    tag_editor: Option<TagEditor>,
 }
 
 struct ItemEditor {
@@ -64,11 +68,25 @@ struct ListItemActions<'a> {
     can_move_down: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TagTarget {
+    Item(String),
+    List(String),
+}
+
+struct TagEditor {
+    target: TagTarget,
+    input: Entity<InputState>,
+}
+
 struct Loaded {
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
     memberships: Vec<list_items::Membership>,
+    tags: Vec<tags::Tag>,
+    item_tags: Vec<tags::Tagging>,
+    list_tags: Vec<tags::Tagging>,
 }
 
 fn load(database: &Database) -> CoreResult<Loaded> {
@@ -77,6 +95,9 @@ fn load(database: &Database) -> CoreResult<Loaded> {
         items: items::all(database)?,
         statuses: statuses::all(database)?,
         memberships: list_items::memberships(database)?,
+        tags: tags::all(database)?,
+        item_tags: tags::item_taggings(database)?,
+        list_tags: tags::list_taggings(database)?,
     })
 }
 
@@ -98,6 +119,9 @@ impl Shell {
             items: Vec::new(),
             statuses: Vec::new(),
             memberships: Vec::new(),
+            tags: Vec::new(),
+            item_tags: Vec::new(),
+            list_tags: Vec::new(),
             error: None,
             loading,
             selected: None,
@@ -107,6 +131,7 @@ impl Shell {
             confirm_delete_item: None,
             status_picker: None,
             add_picker: None,
+            tag_editor: None,
         };
         shell.reload_lists(cx);
         shell
@@ -146,6 +171,7 @@ impl Shell {
         self.confirm_delete_item = None;
         self.status_picker = None;
         self.add_picker = None;
+        self.tag_editor = None;
         self.editor = Some(Editor::Create(input));
         cx.notify();
     }
@@ -158,6 +184,7 @@ impl Shell {
         self.confirm_delete_item = None;
         self.status_picker = None;
         self.add_picker = None;
+        self.tag_editor = None;
         cx.notify();
     }
 
@@ -182,6 +209,7 @@ impl Shell {
         focus.focus(window, cx);
 
         self.add_picker = None;
+        self.tag_editor = None;
         self.editor = Some(Editor::Rename { id, input });
         cx.notify();
     }
@@ -231,6 +259,7 @@ impl Shell {
         };
 
         self.add_picker = None;
+        self.tag_editor = None;
         self.confirm_delete = Some(id);
         cx.notify();
     }
@@ -267,6 +296,7 @@ impl Shell {
         self.confirm_delete_item = None;
         self.status_picker = None;
         self.add_picker = None;
+        self.tag_editor = None;
         self.item_editor = Some(ItemEditor {
             id: None,
             kind: MediaKind::Movie,
@@ -309,6 +339,7 @@ impl Shell {
         self.confirm_delete_item = None;
         self.status_picker = None;
         self.add_picker = None;
+        self.tag_editor = None;
         cx.notify();
     }
 
@@ -368,6 +399,7 @@ impl Shell {
         self.item_editor = None;
         self.status_picker = None;
         self.add_picker = None;
+        self.tag_editor = None;
         cx.notify();
     }
 
@@ -377,6 +409,7 @@ impl Shell {
         self.selected = None;
         self.status_picker = None;
         self.add_picker = None;
+        self.tag_editor = None;
         cx.notify();
     }
 
@@ -401,6 +434,7 @@ impl Shell {
     }
 
     fn toggle_status_picker(&mut self, id: String, cx: &mut Context<Self>) {
+        self.tag_editor = None;
         self.status_picker = if self.status_picker.as_deref() == Some(id.as_str()) {
             None
         } else {
@@ -424,6 +458,7 @@ impl Shell {
 
     fn toggle_add_picker(&mut self, list_id: String, cx: &mut Context<Self>) {
         self.status_picker = None;
+        self.tag_editor = None;
         self.add_picker = if self.add_picker.as_deref() == Some(list_id.as_str()) {
             None
         } else {
@@ -437,6 +472,7 @@ impl Shell {
             return;
         };
         self.add_picker = None;
+        self.tag_editor = None;
 
         self.run(cx, async move {
             let database = Database::open(path)?;
@@ -481,6 +517,102 @@ impl Shell {
         });
     }
 
+    fn toggle_tag_editor(
+        &mut self,
+        target: TagTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let same = self
+            .tag_editor
+            .as_ref()
+            .is_some_and(|editor| editor.target == target);
+        if same {
+            self.tag_editor = None;
+            cx.notify();
+            return;
+        }
+
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("New tag"));
+        let focus = input.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
+
+        self.status_picker = None;
+        self.add_picker = None;
+        self.tag_editor = Some(TagEditor { target, input });
+        cx.notify();
+    }
+
+    fn save_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = &self.tag_editor else {
+            return;
+        };
+        let name = editor.input.read(cx).value().trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        let target = editor.target.clone();
+        let input = editor.input.clone();
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            let tag = tags::create(&database, &name)?;
+            match target {
+                TagTarget::Item(item_id) => {
+                    tags::attach_to_item(&database, &item_id, &tag.id)?;
+                }
+                TagTarget::List(list_id) => {
+                    tags::attach_to_list(&database, &list_id, &tag.id)?;
+                }
+            }
+            load(&database)
+        });
+    }
+
+    fn toggle_tag(&mut self, target: TagTarget, tag_id: String, cx: &mut Context<Self>) {
+        let attached = self.tag_is_attached(&target, &tag_id);
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            match (&target, attached) {
+                (TagTarget::Item(item_id), true) => {
+                    tags::detach_from_item(&database, item_id, &tag_id)?;
+                }
+                (TagTarget::Item(item_id), false) => {
+                    tags::attach_to_item(&database, item_id, &tag_id)?;
+                }
+                (TagTarget::List(list_id), true) => {
+                    tags::detach_from_list(&database, list_id, &tag_id)?;
+                }
+                (TagTarget::List(list_id), false) => {
+                    tags::attach_to_list(&database, list_id, &tag_id)?;
+                }
+            }
+            load(&database)
+        });
+    }
+
+    fn tag_is_attached(&self, target: &TagTarget, tag_id: &str) -> bool {
+        match target {
+            TagTarget::Item(id) => self
+                .item_tags
+                .iter()
+                .any(|link| &link.owner_id == id && link.tag_id == tag_id),
+            TagTarget::List(id) => self
+                .list_tags
+                .iter()
+                .any(|link| &link.owner_id == id && link.tag_id == tag_id),
+        }
+    }
+
     fn run<F>(&mut self, cx: &mut Context<Self>, work: F)
     where
         F: Future<Output = CoreResult<Loaded>> + Send + 'static,
@@ -501,11 +633,15 @@ impl Shell {
                             this.editor = None;
                             this.confirm_delete = None;
                             this.add_picker = None;
+                            this.tag_editor = None;
                         }
                         this.lists = loaded.lists;
                         this.items = loaded.items;
                         this.statuses = loaded.statuses;
                         this.memberships = loaded.memberships;
+                        this.tags = loaded.tags;
+                        this.item_tags = loaded.item_tags;
+                        this.list_tags = loaded.list_tags;
                         this.error = None;
                     }
                     Err(error) => {
@@ -713,6 +849,12 @@ impl Shell {
         let members = self.items_in_list(&list.id);
         let adding = self.add_picker.as_deref() == Some(list.id.as_str());
         let list_id = list.id.clone();
+        let tag_picker = match &self.tag_editor {
+            Some(editor) if matches!(&editor.target, TagTarget::List(id) if id == &list.id) => {
+                Some(self.tag_picker_element(editor, cx))
+            }
+            _ => None,
+        };
 
         div()
             .id("list-panel")
@@ -741,6 +883,11 @@ impl Shell {
                         div()
                             .flex()
                             .gap_2()
+                            .child(Self::tags_button(
+                                TagTarget::List(list.id.clone()),
+                                "list-tags".to_owned(),
+                                cx,
+                            ))
                             .child(Button::new("rename-list").label("Rename").on_click(
                                 cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
                             ))
@@ -752,6 +899,11 @@ impl Shell {
                             ),
                     ),
             )
+            .child(div().flex().flex_wrap().gap_1().children(
+                self.tags_for_list(&list.id).into_iter().map(|tag| {
+                    Self::tag_chip(format!("list-tag-{}-{}", list.id, tag.id), tag, palette)
+                }),
+            ))
             .child(
                 div().flex().gap_2().child(
                     Button::new("add-existing-item")
@@ -764,6 +916,7 @@ impl Shell {
             .when(adding, |panel| {
                 panel.child(self.add_picker_element(&list.id, palette, cx))
             })
+            .children(tag_picker)
             .child(if members.is_empty() {
                 Self::list_empty_element(palette)
             } else {
@@ -955,6 +1108,104 @@ impl Shell {
             .into_any_element()
     }
 
+    fn tags_for_item(&self, item_id: &str) -> Vec<&tags::Tag> {
+        let mut attached: Vec<&tags::Tag> = self
+            .item_tags
+            .iter()
+            .filter(|link| link.owner_id == item_id)
+            .filter_map(|link| self.tags.iter().find(|tag| tag.id == link.tag_id))
+            .collect();
+        attached.sort_by(|left, right| left.name.cmp(&right.name));
+        attached
+    }
+
+    fn tags_for_list(&self, list_id: &str) -> Vec<&tags::Tag> {
+        let mut attached: Vec<&tags::Tag> = self
+            .list_tags
+            .iter()
+            .filter(|link| link.owner_id == list_id)
+            .filter_map(|link| self.tags.iter().find(|tag| tag.id == link.tag_id))
+            .collect();
+        attached.sort_by(|left, right| left.name.cmp(&right.name));
+        attached
+    }
+
+    fn tag_chip(id: String, tag: &tags::Tag, palette: &Palette) -> AnyElement {
+        div()
+            .id(id)
+            .test_support()
+            .aria_label(tag.name.clone())
+            .h(px(24.0))
+            .px_2()
+            .flex()
+            .items_center()
+            .rounded(px(6.0))
+            .bg(rgb(palette.raised))
+            .border_1()
+            .border_color(rgb(palette.line))
+            .text_xs()
+            .text_color(rgb(palette.muted))
+            .child(tag.name.clone())
+            .into_any_element()
+    }
+
+    fn tags_button(target: TagTarget, id: String, cx: &mut Context<Self>) -> Button {
+        Button::new(id)
+            .icon(IconName::Tag)
+            .tooltip("Tags")
+            .accessibility_label("Tags")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_tag_editor(target.clone(), window, cx)
+            }))
+    }
+
+    fn tag_picker_element(&self, editor: &TagEditor, cx: &mut Context<Self>) -> AnyElement {
+        let target = editor.target.clone();
+        let can_save = !editor.input.read(cx).value().trim().is_empty();
+
+        div()
+            .id("tag-picker")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(self.tags.iter().map(|tag| {
+                        let target = target.clone();
+                        let tag_id = tag.id.clone();
+                        let attached = self.tag_is_attached(&target, &tag.id);
+
+                        Button::new(format!("tag-toggle-{}", tag.id))
+                            .label(tag.name.clone())
+                            .selected(attached)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_tag(target.clone(), tag_id.clone(), cx)
+                            }))
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Input::new(&editor.input)
+                            .id("tag-name-input")
+                            .aria_label("Tag name"),
+                    )
+                    .child(
+                        Button::new("save-tag")
+                            .label("Add")
+                            .disabled(!can_save)
+                            .on_click(cx.listener(|this, _, window, cx| this.save_tag(window, cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn item_row(
         &self,
         item: &items::Item,
@@ -970,6 +1221,12 @@ impl Shell {
         let chip = self.status_chip(item, palette, cx);
         let picker = (self.status_picker.as_deref() == Some(item.id.as_str()))
             .then(|| self.status_picker_element(item, cx));
+        let tag_picker = match &self.tag_editor {
+            Some(editor) if matches!(&editor.target, TagTarget::Item(id) if id == &item.id) => {
+                Some(self.tag_picker_element(editor, cx))
+            }
+            _ => None,
+        };
 
         let actions = match list_actions {
             Some(list_actions) => {
@@ -1003,6 +1260,11 @@ impl Shell {
                                 this.move_item_down(down_list_id.clone(), down_id.clone(), cx)
                             })),
                     )
+                    .child(Self::tags_button(
+                        TagTarget::Item(id.clone()),
+                        format!("item-tags-{}", item.id),
+                        cx,
+                    ))
                     .child(
                         Button::new(format!("item-edit-{}", item.id))
                             .label("Edit")
@@ -1028,6 +1290,11 @@ impl Shell {
                 .flex()
                 .items_center()
                 .gap_2()
+                .child(Self::tags_button(
+                    TagTarget::Item(id.clone()),
+                    format!("item-tags-{}", item.id),
+                    cx,
+                ))
                 .child(
                     Button::new(format!("item-edit-{}", item.id))
                         .label("Edit")
@@ -1076,7 +1343,16 @@ impl Shell {
                                     .text_xs()
                                     .text_color(rgb(palette.muted))
                                     .child(metadata),
-                            ),
+                            )
+                            .child(div().flex().flex_wrap().gap_1().children(
+                                self.tags_for_item(&item.id).into_iter().map(|tag| {
+                                    Self::tag_chip(
+                                        format!("item-tag-{}-{}", item.id, tag.id),
+                                        tag,
+                                        palette,
+                                    )
+                                }),
+                            )),
                     )
                     .child(
                         div()
@@ -1088,6 +1364,7 @@ impl Shell {
                     ),
             )
             .children(picker)
+            .children(tag_picker)
             .into_any_element()
     }
 
