@@ -1,5 +1,5 @@
 use crate::{Database, Error, Result, media::MediaKind};
-use rusqlite::{Row, params, types::Type};
+use rusqlite::{OptionalExtension, Row, params, types::Type};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -10,6 +10,7 @@ pub struct Item {
     pub release_year: Option<i32>,
     pub release_date: Option<String>,
     pub finished_at: Option<String>,
+    pub status_id: String,
 }
 
 impl Item {
@@ -21,6 +22,7 @@ impl Item {
             release_year: row.get(3)?,
             release_date: row.get(4)?,
             finished_at: row.get(5)?,
+            status_id: row.get(6)?,
         })
     }
 }
@@ -42,9 +44,12 @@ pub fn create(
     database
         .connection()
         .query_row(
-            "INSERT INTO items (id, media_kind, title, release_year, created_at)
-             VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-             RETURNING id, title, media_kind, release_year, release_date, finished_at",
+            "INSERT INTO items (id, media_kind, title, release_year, status_id, created_at)
+             VALUES (?1, ?2, ?3, ?4,
+                     (SELECT id FROM statuses
+                      WHERE media_kind = ?2 AND category = 'planned'),
+                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id",
             params![id, media_kind.key(), title, release_year],
             Item::from_row,
         )
@@ -53,7 +58,7 @@ pub fn create(
 
 pub fn all(database: &Database) -> Result<Vec<Item>> {
     let mut statement = database.connection().prepare(
-        "SELECT id, title, media_kind, release_year, release_date, finished_at
+        "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id
          FROM items ORDER BY created_at, rowid",
     )?;
     let rows = statement.query_map([], Item::from_row)?;
@@ -70,8 +75,63 @@ pub fn update(
     release_year: Option<i32>,
 ) -> Result<bool> {
     let changed = database.connection().execute(
-        "UPDATE items SET media_kind = ?1, title = ?2, release_year = ?3 WHERE id = ?4",
+        "UPDATE items
+         SET media_kind = ?1,
+             title = ?2,
+             release_year = ?3,
+             status_id = CASE
+                 WHEN media_kind = ?1 THEN status_id
+                 ELSE (SELECT id FROM statuses
+                       WHERE media_kind = ?1 AND category = 'planned')
+             END,
+             finished_at = CASE
+                 WHEN media_kind = ?1 THEN finished_at
+                 ELSE NULL
+             END
+         WHERE id = ?4",
         params![media_kind.key(), title, release_year, id],
+    )?;
+
+    Ok(changed > 0)
+}
+
+pub fn set_status(database: &Database, id: &str, status_id: &str) -> Result<bool> {
+    let status_kind: Option<String> = database
+        .connection()
+        .query_row(
+            "SELECT media_kind FROM statuses WHERE id = ?1",
+            [status_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(status_kind) = status_kind else {
+        return Err(Error::UnknownStatus);
+    };
+
+    let item_kind: Option<String> = database
+        .connection()
+        .query_row("SELECT media_kind FROM items WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    let Some(item_kind) = item_kind else {
+        return Ok(false);
+    };
+
+    if status_kind != item_kind {
+        return Err(Error::StatusKindMismatch);
+    }
+
+    let changed = database.connection().execute(
+        "UPDATE items
+         SET status_id = ?1,
+             finished_at = CASE
+                 WHEN (SELECT category FROM statuses WHERE id = ?1) = 'done'
+                 THEN COALESCE(finished_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 ELSE NULL
+             END
+         WHERE id = ?2",
+        params![status_id, id],
     )?;
 
     Ok(changed > 0)
@@ -87,12 +147,132 @@ pub fn delete(database: &Database, id: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, all, create, delete, update};
+    use super::{Item, all, create, delete, set_status, update};
     use crate::Database;
+    use crate::Error;
     use crate::media::MediaKind;
 
     fn database() -> Database {
         Database::open_in_memory().unwrap()
+    }
+
+    fn status_of(database: &Database, id: &str) -> Item {
+        all(database)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_created_item_starts_in_the_planned_status_for_its_kind() {
+        let database = database();
+
+        let movie = create(&database, MediaKind::Movie, "Dune", None).unwrap();
+        let show = create(&database, MediaKind::Show, "Dark", None).unwrap();
+        let book = create(&database, MediaKind::Book, "Piranesi", None).unwrap();
+        let game = create(&database, MediaKind::Game, "Outer Wilds", None).unwrap();
+
+        assert_eq!(movie.status_id, "movie-planned");
+        assert_eq!(show.status_id, "show-planned");
+        assert_eq!(book.status_id, "book-planned");
+        assert_eq!(game.status_id, "game-planned");
+    }
+
+    #[test]
+    fn moving_to_done_records_when_it_was_finished() {
+        let database = database();
+        let item = create(&database, MediaKind::Movie, "Dune", None).unwrap();
+
+        assert!(set_status(&database, &item.id, "movie-done").unwrap());
+
+        let stored = status_of(&database, &item.id);
+        assert_eq!(stored.status_id, "movie-done");
+        let finished_at = stored.finished_at.unwrap();
+        assert!(finished_at.ends_with('Z'));
+
+        assert!(set_status(&database, &item.id, "movie-active").unwrap());
+        assert_eq!(status_of(&database, &item.id).finished_at, None);
+    }
+
+    #[test]
+    fn setting_done_again_keeps_the_first_finish_time() {
+        let database = database();
+        let item = create(&database, MediaKind::Book, "Piranesi", None).unwrap();
+        set_status(&database, &item.id, "book-done").unwrap();
+        let first = status_of(&database, &item.id).finished_at.unwrap();
+
+        set_status(&database, &item.id, "book-done").unwrap();
+
+        assert_eq!(status_of(&database, &item.id).finished_at, Some(first));
+    }
+
+    #[test]
+    fn a_status_for_another_media_kind_is_rejected() {
+        let database = database();
+        let item = create(&database, MediaKind::Movie, "Dune", None).unwrap();
+
+        let error = set_status(&database, &item.id, "book-done").unwrap_err();
+
+        assert!(matches!(error, Error::StatusKindMismatch));
+        let stored = status_of(&database, &item.id);
+        assert_eq!(stored.status_id, "movie-planned");
+        assert_eq!(stored.finished_at, None);
+    }
+
+    #[test]
+    fn an_unknown_status_is_an_error() {
+        let database = database();
+        let item = create(&database, MediaKind::Game, "Outer Wilds", None).unwrap();
+
+        assert!(matches!(
+            set_status(&database, &item.id, "missing"),
+            Err(Error::UnknownStatus)
+        ));
+    }
+
+    #[test]
+    fn setting_a_status_on_a_missing_item_reports_no_change() {
+        let database = database();
+        create(&database, MediaKind::Movie, "Dune", None).unwrap();
+
+        assert!(!set_status(&database, "missing", "movie-done").unwrap());
+    }
+
+    #[test]
+    fn changing_the_media_kind_resets_the_status_and_finish_time() {
+        let database = database();
+        let item = create(&database, MediaKind::Movie, "Dune", None).unwrap();
+        set_status(&database, &item.id, "movie-done").unwrap();
+
+        assert!(update(&database, &item.id, MediaKind::Book, "Dune", None).unwrap());
+
+        let stored = status_of(&database, &item.id);
+        assert_eq!(stored.status_id, "book-planned");
+        assert_eq!(stored.finished_at, None);
+    }
+
+    #[test]
+    fn editing_a_title_keeps_the_status_and_finish_time() {
+        let database = database();
+        let item = create(&database, MediaKind::Movie, "Dune", Some(1984)).unwrap();
+        set_status(&database, &item.id, "movie-done").unwrap();
+        let finished_at = status_of(&database, &item.id).finished_at;
+
+        assert!(
+            update(
+                &database,
+                &item.id,
+                MediaKind::Movie,
+                "Dune Messiah",
+                Some(1984)
+            )
+            .unwrap()
+        );
+
+        let stored = status_of(&database, &item.id);
+        assert_eq!(stored.status_id, "movie-done");
+        assert_eq!(stored.finished_at, finished_at);
     }
 
     #[test]

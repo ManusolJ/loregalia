@@ -30,6 +30,65 @@ const MIGRATIONS: &[&str] = &[
         position INTEGER NOT NULL,
         PRIMARY KEY (list_id, item_id)
     ) STRICT;",
+    "CREATE TABLE statuses (
+        id TEXT PRIMARY KEY,
+        media_kind TEXT NOT NULL,
+        category TEXT NOT NULL,
+        label TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        UNIQUE (media_kind, category)
+    ) STRICT;
+    INSERT INTO statuses (id, media_kind, category, label, position) VALUES
+        ('movie-planned', 'movie', 'planned', 'To watch', 0),
+        ('movie-active', 'movie', 'active', 'In progress', 1),
+        ('movie-paused', 'movie', 'paused', 'On hold', 2),
+        ('movie-done', 'movie', 'done', 'Watched', 3),
+        ('movie-dropped', 'movie', 'dropped', 'Dropped', 4),
+        ('show-planned', 'show', 'planned', 'To watch', 0),
+        ('show-active', 'show', 'active', 'In progress', 1),
+        ('show-paused', 'show', 'paused', 'On hold', 2),
+        ('show-done', 'show', 'done', 'Watched', 3),
+        ('show-dropped', 'show', 'dropped', 'Dropped', 4),
+        ('book-planned', 'book', 'planned', 'To read', 0),
+        ('book-active', 'book', 'active', 'In progress', 1),
+        ('book-paused', 'book', 'paused', 'On hold', 2),
+        ('book-done', 'book', 'done', 'Read', 3),
+        ('book-dropped', 'book', 'dropped', 'Dropped', 4),
+        ('game-planned', 'game', 'planned', 'To play', 0),
+        ('game-active', 'game', 'active', 'In progress', 1),
+        ('game-paused', 'game', 'paused', 'On hold', 2),
+        ('game-done', 'game', 'done', 'Played', 3),
+        ('game-dropped', 'game', 'dropped', 'Dropped', 4);
+    ALTER TABLE items ADD COLUMN status_id TEXT REFERENCES statuses(id);
+    UPDATE items SET status_id = (
+        SELECT statuses.id FROM statuses
+        WHERE statuses.media_kind = items.media_kind
+          AND statuses.category = 'planned'
+    );",
+    "PRAGMA defer_foreign_keys = ON;
+    CREATE TABLE item_statuses_backup (
+        id TEXT PRIMARY KEY,
+        status_id TEXT
+    ) STRICT;
+    INSERT INTO item_statuses_backup (id, status_id) SELECT id, status_id FROM items;
+    UPDATE items SET status_id = NULL;
+    CREATE TABLE statuses_new (
+        id TEXT PRIMARY KEY,
+        media_kind TEXT NOT NULL,
+        category TEXT NOT NULL,
+        label TEXT NOT NULL,
+        position INTEGER NOT NULL
+    ) STRICT;
+    INSERT INTO statuses_new (id, media_kind, category, label, position)
+        SELECT id, media_kind, category, label, position FROM statuses;
+    DROP TABLE statuses;
+    ALTER TABLE statuses_new RENAME TO statuses;
+    UPDATE items SET status_id = (
+        SELECT item_statuses_backup.status_id
+        FROM item_statuses_backup
+        WHERE item_statuses_backup.id = items.id
+    );
+    DROP TABLE item_statuses_backup;",
 ];
 
 fn latest_version() -> u32 {
@@ -127,6 +186,86 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[test]
+    fn a_kind_can_gain_a_second_status_in_the_same_category() {
+        let database = Database::open_in_memory().unwrap();
+
+        database
+            .connection()
+            .execute(
+                "INSERT INTO statuses (id, media_kind, category, label, position)
+                 VALUES ('movie-someday', 'movie', 'planned', 'Someday', 5)",
+                [],
+            )
+            .unwrap();
+
+        let planned: i64 = database
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM statuses
+                 WHERE media_kind = 'movie' AND category = 'planned'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(planned, 2);
+    }
+
+    #[test]
+    fn items_still_reject_a_status_that_does_not_exist() {
+        let database = Database::open_in_memory().unwrap();
+
+        let error = database.connection().execute(
+            "INSERT INTO items (id, media_kind, title, created_at, status_id)
+             VALUES ('item-1', 'movie', 'Dune', '2026-11-05T00:00:00Z', 'missing')",
+            [],
+        );
+
+        assert!(error.is_err());
+    }
+
+    #[test]
+    fn a_database_from_before_statuses_gets_a_planned_status_for_each_item() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("before-statuses.db");
+
+        {
+            let connection = Connection::open(&path).unwrap();
+            for migration in &MIGRATIONS[..3] {
+                connection.execute_batch(migration).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 3).unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO items (id, media_kind, title, created_at) VALUES
+                        ('movie-1', 'movie', 'Dune', '2026-11-05T00:00:00Z'),
+                        ('book-1', 'book', 'Piranesi', '2026-11-05T00:00:00Z');",
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+
+        let mut statement = database
+            .connection()
+            .prepare("SELECT id, status_id FROM items ORDER BY id")
+            .unwrap();
+        let statuses: Vec<(String, String)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(
+            statuses,
+            [
+                ("book-1".to_owned(), "book-planned".to_owned()),
+                ("movie-1".to_owned(), "movie-planned".to_owned()),
+            ]
+        );
+        assert_eq!(schema_version(database.connection()), 5);
+    }
 
     fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let values: Vec<(String, OsString)> = values
@@ -346,20 +485,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 4;")
+                .execute_batch("PRAGMA user_version = 6;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 4,
-                supported: 3
+                found: 6,
+                supported: 5
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 4);
+        assert_eq!(schema_version(&connection), 6);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",

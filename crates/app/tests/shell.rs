@@ -230,7 +230,7 @@ fn list_failures_are_shown_and_logged(cx: &mut TestAppContext) {
     .unwrap();
 
     let contents = std::fs::read_to_string(&log_path).unwrap();
-    assert!(contents.contains("Could not update lists"));
+    assert!(contents.contains("Could not update the database"));
 }
 
 #[gpui_kit::test]
@@ -692,6 +692,193 @@ fn editing_an_item_updates_it(cx: &mut TestAppContext) {
     assert_eq!(stored[0].title, "Dune Messiah");
     assert_eq!(stored[0].media_kind, MediaKind::Book);
     assert_eq!(stored[0].release_year, Some(1984));
+}
+
+#[gpui_kit::test]
+fn item_rows_show_the_status_chip(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let chip = window.find(format!("item-status-{}", item.id));
+        assert!(chip.visible());
+        assert_eq!(chip.label(), Some("To watch"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_saved_status_is_shown_after_reopening(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    {
+        let database = Database::open(&path).unwrap();
+        items::set_status(&database, &item.id, "book-done").unwrap();
+    }
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert_eq!(
+            window.find(format!("item-status-{}", item.id)).label(),
+            Some("Read")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn changing_an_items_status_updates_the_chip_and_database(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-status-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find(format!("item-status-{}-movie-done", item.id))
+                .visible()
+        );
+        window.click(format!("item-status-{}-movie-done", item.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert_eq!(
+            window.find(format!("item-status-{}", item.id)).label(),
+            Some("Watched")
+        );
+    })
+    .unwrap();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored[0].status_id, "movie-done");
+    assert!(stored[0].finished_at.is_some());
+}
+
+#[gpui_kit::test]
+fn the_status_picker_offers_only_the_items_media_kind(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-status-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.find(format!("status-picker-{}", item.id)).visible());
+        assert_eq!(
+            window
+                .find(format!("item-status-{}-book-planned", item.id))
+                .label(),
+            Some("To read")
+        );
+        assert_eq!(
+            window
+                .find(format!("item-status-{}-book-done", item.id))
+                .label(),
+            Some("Read")
+        );
+        assert!(
+            window
+                .try_find(format!("item-status-{}-movie-done", item.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn clicking_the_chip_again_closes_the_status_picker(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Game, "Outer Wilds", None).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-status-{}", item.id), cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(format!("status-picker-{}", item.id)).visible());
+        window.click(format!("item-status-{}", item.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(format!("status-picker-{}", item.id))
+                .is_none()
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

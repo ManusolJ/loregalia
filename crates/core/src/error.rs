@@ -4,6 +4,8 @@ pub enum Error {
     Sqlite(rusqlite::Error),
     SchemaTooNew { found: i64, supported: u32 },
     DataDirectoryUnavailable,
+    UnknownStatus,
+    StatusKindMismatch,
     ConnectionFailed,
     RateLimited,
     HttpStatus { code: u16 },
@@ -24,6 +26,10 @@ impl std::fmt::Display for Error {
             Self::DataDirectoryUnavailable => formatter.write_str(
                 "no application data folder is available; set APPDATA, XDG_DATA_HOME or HOME",
             ),
+            Self::UnknownStatus => formatter.write_str("the status does not exist"),
+            Self::StatusKindMismatch => {
+                formatter.write_str("the status belongs to another media kind")
+            }
             Self::ConnectionFailed => {
                 formatter.write_str("could not connect to the metadata server or it timed out")
             }
@@ -46,6 +52,8 @@ impl std::error::Error for Error {
             Self::Json(error) => Some(error),
             Self::SchemaTooNew { .. }
             | Self::DataDirectoryUnavailable
+            | Self::UnknownStatus
+            | Self::StatusKindMismatch
             | Self::ConnectionFailed
             | Self::RateLimited
             | Self::HttpStatus { .. } => None,

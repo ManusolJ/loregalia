@@ -1,16 +1,19 @@
 use std::future::Future;
 use std::path::PathBuf;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{
-    Disableable, IconName, Selectable, button::Button, button::ButtonVariants,
+    Disableable, Icon, Selectable, Sizable, button::Button, button::ButtonVariants,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Pixels, Role, TestSupportExt,
     Window, div, px, rgb,
 };
-use loregalia_core::{Database, Result as CoreResult, items, lists, log, media::MediaKind};
+use loregalia_core::{
+    Database, Result as CoreResult, items, lists, log, media::MediaKind, statuses,
+};
 
 use crate::startup::StorageState;
 use crate::theme::Palette;
@@ -35,6 +38,7 @@ pub struct Shell {
     log_path: Option<PathBuf>,
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
+    statuses: Vec<statuses::Status>,
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
@@ -42,6 +46,7 @@ pub struct Shell {
     confirm_delete: Option<String>,
     item_editor: Option<ItemEditor>,
     confirm_delete_item: Option<String>,
+    status_picker: Option<String>,
 }
 
 struct ItemEditor {
@@ -54,12 +59,14 @@ struct ItemEditor {
 struct Loaded {
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
+    statuses: Vec<statuses::Status>,
 }
 
 fn load(database: &Database) -> CoreResult<Loaded> {
     Ok(Loaded {
         lists: lists::all(database)?,
         items: items::all(database)?,
+        statuses: statuses::all(database)?,
     })
 }
 
@@ -79,6 +86,7 @@ impl Shell {
             log_path,
             lists: Vec::new(),
             items: Vec::new(),
+            statuses: Vec::new(),
             error: None,
             loading,
             selected: None,
@@ -86,6 +94,7 @@ impl Shell {
             confirm_delete: None,
             item_editor: None,
             confirm_delete_item: None,
+            status_picker: None,
         };
         shell.reload_lists(cx);
         shell
@@ -123,6 +132,7 @@ impl Shell {
         self.confirm_delete = None;
         self.item_editor = None;
         self.confirm_delete_item = None;
+        self.status_picker = None;
         self.editor = Some(Editor::Create(input));
         cx.notify();
     }
@@ -133,6 +143,7 @@ impl Shell {
         self.confirm_delete = None;
         self.item_editor = None;
         self.confirm_delete_item = None;
+        self.status_picker = None;
         cx.notify();
     }
 
@@ -239,6 +250,7 @@ impl Shell {
         self.editor = None;
         self.confirm_delete = None;
         self.confirm_delete_item = None;
+        self.status_picker = None;
         self.item_editor = Some(ItemEditor {
             id: None,
             kind: MediaKind::Movie,
@@ -279,6 +291,7 @@ impl Shell {
             year,
         });
         self.confirm_delete_item = None;
+        self.status_picker = None;
         cx.notify();
     }
 
@@ -332,6 +345,7 @@ impl Shell {
 
     fn cancel_item(&mut self, cx: &mut Context<Self>) {
         self.item_editor = None;
+        self.status_picker = None;
         cx.notify();
     }
 
@@ -339,6 +353,7 @@ impl Shell {
         self.confirm_delete_item = Some(id);
         self.item_editor = None;
         self.selected = None;
+        self.status_picker = None;
         cx.notify();
     }
 
@@ -358,6 +373,28 @@ impl Shell {
         self.run(cx, async move {
             let database = Database::open(path)?;
             items::delete(&database, &id)?;
+            load(&database)
+        });
+    }
+
+    fn toggle_status_picker(&mut self, id: String, cx: &mut Context<Self>) {
+        self.status_picker = if self.status_picker.as_deref() == Some(id.as_str()) {
+            None
+        } else {
+            Some(id)
+        };
+        cx.notify();
+    }
+
+    fn change_status(&mut self, item_id: String, status_id: String, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        self.status_picker = None;
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            items::set_status(&database, &item_id, &status_id)?;
             load(&database)
         });
     }
@@ -384,10 +421,11 @@ impl Shell {
                         }
                         this.lists = loaded.lists;
                         this.items = loaded.items;
+                        this.statuses = loaded.statuses;
                         this.error = None;
                     }
                     Err(error) => {
-                        let message = format!("Could not update lists: {error}");
+                        let message = format!("Could not update the database: {error}");
                         this.record(&message, cx);
                         this.error = Some(message);
                     }
@@ -630,6 +668,101 @@ impl Shell {
             .into_any_element()
     }
 
+    fn category_color(palette: &Palette, category: statuses::Category) -> u32 {
+        match category {
+            statuses::Category::Planned => palette.status_planned,
+            statuses::Category::Active => palette.status_active,
+            statuses::Category::Paused => palette.status_paused,
+            statuses::Category::Done => palette.status_done,
+            statuses::Category::Dropped => palette.status_dropped,
+        }
+    }
+
+    fn category_icon(category: statuses::Category) -> IconName {
+        match category {
+            statuses::Category::Planned => IconName::CircleDashed,
+            statuses::Category::Active => IconName::CirclePlay,
+            statuses::Category::Paused => IconName::CirclePause,
+            statuses::Category::Done => IconName::CircleCheck,
+            statuses::Category::Dropped => IconName::CircleX,
+        }
+    }
+
+    fn status_chip(
+        &self,
+        item: &items::Item,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(status) = self
+            .statuses
+            .iter()
+            .find(|status| status.id == item.status_id)
+        else {
+            return div().into_any_element();
+        };
+        let color = rgb(Self::category_color(palette, status.category));
+        let item_id = item.id.clone();
+
+        Button::new(format!("item-status-{}", item.id))
+            .ghost()
+            .h(px(24.0))
+            .px_2()
+            .rounded(px(6.0))
+            .bg(color.alpha(0.15))
+            .accessibility_label(status.label.clone())
+            .on_click(
+                cx.listener(move |this, _, _, cx| this.toggle_status_picker(item_id.clone(), cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Icon::new(Self::category_icon(status.category))
+                            .with_size(px(16.0))
+                            .text_color(color),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(palette.content))
+                            .child(status.label.clone()),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn status_picker_element(&self, item: &items::Item, cx: &mut Context<Self>) -> AnyElement {
+        let item_id = item.id.clone();
+
+        div()
+            .id(format!("status-picker-{}", item.id))
+            .test_support()
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                self.statuses
+                    .iter()
+                    .filter(|status| status.media_kind == item.media_kind)
+                    .map(|status| {
+                        let item_id = item_id.clone();
+                        let status_id = status.id.clone();
+
+                        Button::new(format!("item-status-{}-{}", item.id, status.id))
+                            .label(status.label.clone())
+                            .selected(status.id == item.status_id)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.change_status(item_id.clone(), status_id.clone(), cx)
+                            }))
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn items_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         div()
             .id("items")
@@ -646,6 +779,9 @@ impl Shell {
                     None => item.media_kind.label().to_owned(),
                 };
                 let id = item.id.clone();
+                let chip = self.status_chip(item, palette, cx);
+                let picker = (self.status_picker.as_deref() == Some(item.id.as_str()))
+                    .then(|| self.status_picker_element(item, cx));
 
                 div()
                     .id(format!("item-row-{}", item.id))
@@ -653,9 +789,8 @@ impl Shell {
                     .test_support()
                     .aria_label(item.title.clone())
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
+                    .flex_col()
+                    .gap_2()
                     .p_4()
                     .bg(rgb(palette.surface))
                     .rounded(px(8.0))
@@ -664,39 +799,49 @@ impl Shell {
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(item.title.clone())
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.muted))
-                                    .child(metadata),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                Button::new(format!("item-edit-{}", item.id))
-                                    .label("Edit")
-                                    .on_click(cx.listener({
-                                        let id = id.clone();
-                                        move |this, _, window, cx| {
-                                            this.begin_edit_item(id.clone(), window, cx)
-                                        }
-                                    })),
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(item.title.clone())
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(palette.muted))
+                                            .child(metadata),
+                                    ),
                             )
                             .child(
-                                Button::new(format!("item-delete-{}", item.id))
-                                    .label("Delete")
-                                    .danger()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.begin_delete_item(id.clone(), cx)
-                                    })),
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(chip)
+                                    .child(
+                                        Button::new(format!("item-edit-{}", item.id))
+                                            .label("Edit")
+                                            .on_click(cx.listener({
+                                                let id = id.clone();
+                                                move |this, _, window, cx| {
+                                                    this.begin_edit_item(id.clone(), window, cx)
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(format!("item-delete-{}", item.id))
+                                            .label("Delete")
+                                            .danger()
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.begin_delete_item(id.clone(), cx)
+                                            })),
+                                    ),
                             ),
                     )
+                    .children(picker)
             }))
             .into_any_element()
     }
