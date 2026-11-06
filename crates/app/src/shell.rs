@@ -19,7 +19,6 @@ const SIDEBAR_LABELS_FROM: f32 = 1024.0;
 const EMPTY_MESSAGE: &str = "Nothing planned yet";
 const LOADING_MESSAGE: &str = "Loading lists";
 const LOADING_BLOCK_WIDTH: f32 = 320.0;
-const NEW_LIST_NAME: &str = "New list";
 
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
@@ -36,13 +35,16 @@ pub struct Shell {
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
-    rename: Option<Rename>,
+    editor: Option<Editor>,
     confirm_delete: Option<String>,
 }
 
-struct Rename {
-    id: String,
-    input: Entity<InputState>,
+enum Editor {
+    Create(Entity<InputState>),
+    Rename {
+        id: String,
+        input: Entity<InputState>,
+    },
 }
 
 impl Shell {
@@ -55,7 +57,7 @@ impl Shell {
             error: None,
             loading,
             selected: None,
-            rename: None,
+            editor: None,
             confirm_delete: None,
         };
         shell.reload_lists(cx);
@@ -85,21 +87,20 @@ impl Shell {
         });
     }
 
-    fn create_list(&mut self, cx: &mut Context<Self>) {
-        let StorageState::Ready(path) = self.storage.clone() else {
-            return;
-        };
+    fn begin_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| InputState::new(window, cx));
+        let focus = input.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
 
-        self.run(cx, async move {
-            let database = Database::open(path)?;
-            lists::create(&database, NEW_LIST_NAME)?;
-            lists::all(&database)
-        });
+        self.selected = None;
+        self.confirm_delete = None;
+        self.editor = Some(Editor::Create(input));
+        cx.notify();
     }
 
     fn select_list(&mut self, id: String, cx: &mut Context<Self>) {
         self.selected = Some(id);
-        self.rename = None;
+        self.editor = None;
         self.confirm_delete = None;
         cx.notify();
     }
@@ -124,17 +125,24 @@ impl Shell {
         let focus = input.read(cx).focus_handle(cx);
         focus.focus(window, cx);
 
-        self.rename = Some(Rename { id, input });
+        self.editor = Some(Editor::Rename { id, input });
         cx.notify();
     }
 
-    fn save_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(rename) = self.rename.take() else {
+    fn save_editor(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.take() else {
             return;
         };
-        let name = rename.input.read(cx).value().trim().to_owned();
+        let (id, input) = match editor {
+            Editor::Create(input) => (None, input),
+            Editor::Rename { id, input } => (Some(id), input),
+        };
+        let name = input.read(cx).value().trim().to_owned();
         if name.is_empty() {
-            self.rename = Some(rename);
+            self.editor = Some(match id {
+                Some(id) => Editor::Rename { id, input },
+                None => Editor::Create(input),
+            });
             return;
         }
         let StorageState::Ready(path) = self.storage.clone() else {
@@ -143,13 +151,20 @@ impl Shell {
 
         self.run(cx, async move {
             let database = Database::open(path)?;
-            lists::rename(&database, &rename.id, &name)?;
+            match &id {
+                Some(id) => {
+                    lists::rename(&database, id, &name)?;
+                }
+                None => {
+                    lists::create(&database, &name)?;
+                }
+            }
             lists::all(&database)
         });
     }
 
-    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
-        self.rename = None;
+    fn cancel_editor(&mut self, cx: &mut Context<Self>) {
+        self.editor = None;
         cx.notify();
     }
 
@@ -200,7 +215,7 @@ impl Shell {
                             && !lists.iter().any(|list| list.id == id)
                         {
                             this.selected = None;
-                            this.rename = None;
+                            this.editor = None;
                             this.confirm_delete = None;
                         }
                         this.lists = lists;
@@ -240,8 +255,8 @@ impl Shell {
                 .child(message.clone())
                 .into_any_element(),
             (StorageState::Ready(_), None) => {
-                if self.rename.is_some() {
-                    self.rename_element(palette, cx)
+                if self.editor.is_some() {
+                    self.editor_element(palette, cx)
                 } else if let Some(id) = &self.confirm_delete {
                     let name = self
                         .lists
@@ -273,11 +288,15 @@ impl Shell {
             .into_any_element()
     }
 
-    fn rename_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let Some(rename) = &self.rename else {
+    fn editor_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let Some(editor) = &self.editor else {
             return Self::empty_element(palette);
         };
-        let can_save = !rename.input.read(cx).value().trim().is_empty();
+        let (title, input) = match editor {
+            Editor::Create(input) => ("New list", input),
+            Editor::Rename { input, .. } => ("Rename list", input),
+        };
+        let can_save = !input.read(cx).value().trim().is_empty();
 
         div()
             .id("list-editor")
@@ -286,9 +305,9 @@ impl Shell {
             .flex_col()
             .gap_3()
             .w(px(320.0))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Rename list"))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
             .child(
-                Input::new(&rename.input)
+                Input::new(input)
                     .id("list-name-input")
                     .aria_label("List name"),
             )
@@ -300,12 +319,12 @@ impl Shell {
                         Button::new("save-list")
                             .label("Save")
                             .disabled(!can_save)
-                            .on_click(cx.listener(|this, _, _, cx| this.save_rename(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.save_editor(cx))),
                     )
                     .child(
                         Button::new("cancel-list")
                             .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_rename(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_editor(cx))),
                     ),
             )
             .into_any_element()
@@ -447,7 +466,7 @@ impl Render for Shell {
         let main = self.main_element(&palette, cx);
         let create = Button::new("create-list")
             .disabled(self.loading)
-            .on_click(cx.listener(|this, _, _, cx| this.create_list(cx)));
+            .on_click(cx.listener(|this, _, window, cx| this.begin_create(window, cx)));
         let create = if shows_labels {
             create.label("Create list")
         } else {

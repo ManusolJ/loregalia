@@ -166,6 +166,17 @@ fn creating_a_list_writes_and_reads_it_back(cx: &mut TestAppContext) {
         window.click("create-list", cx);
     })
     .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-editor").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "New list");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-list", cx);
+    })
+    .unwrap();
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
@@ -315,11 +326,22 @@ fn creating_a_list_works_in_the_rail(cx: &mut TestAppContext) {
         window.click("create-list", cx);
     })
     .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-editor").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Weekend");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-list", cx);
+    })
+    .unwrap();
     cx.run_until_parked();
 
     let created = lists::all(&Database::open(&path).unwrap()).unwrap();
     assert_eq!(created.len(), 1);
-    assert_eq!(created[0].name, "New list");
+    assert_eq!(created[0].name, "Weekend");
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -353,6 +375,17 @@ fn create_stays_reachable_with_fifty_lists(cx: &mut TestAppContext) {
         assert_eq!(create.bounds().size, size(px(32.0), px(32.0)));
 
         window.click("create-list", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-editor").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "New list");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-list", cx);
     })
     .unwrap();
     cx.run_until_parked();
