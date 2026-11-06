@@ -58,6 +58,12 @@ struct ItemEditor {
     year: Entity<InputState>,
 }
 
+struct ListItemActions<'a> {
+    list_id: &'a str,
+    can_move_up: bool,
+    can_move_down: bool,
+}
+
 struct Loaded {
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
@@ -447,6 +453,30 @@ impl Shell {
         self.run(cx, async move {
             let database = Database::open(path)?;
             list_items::remove(&database, &list_id, &item_id)?;
+            load(&database)
+        });
+    }
+
+    fn move_item_up(&mut self, list_id: String, item_id: String, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            list_items::move_up(&database, &list_id, &item_id)?;
+            load(&database)
+        });
+    }
+
+    fn move_item_down(&mut self, list_id: String, item_id: String, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            list_items::move_down(&database, &list_id, &item_id)?;
             load(&database)
         });
     }
@@ -928,7 +958,7 @@ impl Shell {
     fn item_row(
         &self,
         item: &items::Item,
-        remove_from: Option<&str>,
+        list_actions: Option<ListItemActions<'_>>,
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -941,14 +971,38 @@ impl Shell {
         let picker = (self.status_picker.as_deref() == Some(item.id.as_str()))
             .then(|| self.status_picker_element(item, cx));
 
-        let actions = match remove_from {
-            Some(list_id) => {
-                let list_id = list_id.to_owned();
+        let actions = match list_actions {
+            Some(list_actions) => {
+                let list_id = list_actions.list_id.to_owned();
+                let up_list_id = list_id.clone();
+                let down_list_id = list_id.clone();
+                let up_id = id.clone();
+                let down_id = id.clone();
 
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .child(
+                        Button::new(format!("move-up-{}", item.id))
+                            .icon(IconName::ArrowUp)
+                            .tooltip("Move up")
+                            .accessibility_label("Move up")
+                            .disabled(!list_actions.can_move_up)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.move_item_up(up_list_id.clone(), up_id.clone(), cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(format!("move-down-{}", item.id))
+                            .icon(IconName::ArrowDown)
+                            .tooltip("Move down")
+                            .accessibility_label("Move down")
+                            .disabled(!list_actions.can_move_down)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.move_item_down(down_list_id.clone(), down_id.clone(), cx)
+                            })),
+                    )
                     .child(
                         Button::new(format!("item-edit-{}", item.id))
                             .label("Edit")
@@ -1053,11 +1107,15 @@ impl Shell {
             .gap_3()
             .w_full()
             .max_w(px(640.0))
-            .children(
-                items
-                    .iter()
-                    .map(|item| self.item_row(item, remove_from, palette, cx)),
-            )
+            .children(items.iter().enumerate().map(|(index, item)| {
+                let list_actions = remove_from.map(|list_id| ListItemActions {
+                    list_id,
+                    can_move_up: index > 0,
+                    can_move_down: index + 1 < items.len(),
+                });
+
+                self.item_row(item, list_actions, palette, cx)
+            }))
             .into_any_element()
     }
 
