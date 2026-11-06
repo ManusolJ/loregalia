@@ -26,6 +26,7 @@ enum Step {
     ItemTags,
     Seasons,
     About,
+    SortTitle,
 }
 
 struct Shot {
@@ -150,8 +151,15 @@ fn main() -> Result<()> {
             name: "list-tags-picker-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
-            storage: with_membership,
+            storage: with_membership.clone(),
             step: Step::ListTags,
+        },
+        Shot {
+            name: "list-sorted-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_membership,
+            step: Step::SortTitle,
         },
         Shot {
             name: "list-create-dark",
@@ -319,7 +327,12 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
     let first_id = match (&shot.storage, shot.step) {
         (
             StorageState::Ready(path),
-            Step::Select | Step::Rename | Step::Delete | Step::AddPicker | Step::ListTags,
+            Step::Select
+            | Step::Rename
+            | Step::Delete
+            | Step::AddPicker
+            | Step::ListTags
+            | Step::SortTitle,
         ) => {
             let database = Database::open(path)?;
             lists::all(&database)?
@@ -394,6 +407,16 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
                     window.click(format!("list-row-{id}"), cx);
                     window.render_frame(cx);
                     window.click("list-tags", cx);
+                    window.render_frame(cx);
+                })?;
+            }
+        }
+        Step::SortTitle => {
+            if let Some(id) = first_id {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("list-row-{id}"), cx);
+                    window.render_frame(cx);
+                    window.click("sort-title", cx);
                     window.render_frame(cx);
                 })?;
             }

@@ -56,6 +56,7 @@ pub struct Shell {
     error: Option<String>,
     loading: bool,
     about: bool,
+    sort: list_items::Sort,
     selected: Option<String>,
     editor: Option<Editor>,
     confirm_delete: Option<String>,
@@ -78,6 +79,7 @@ struct ItemEditor {
 
 struct ListItemActions<'a> {
     list_id: &'a str,
+    manual: bool,
     can_move_up: bool,
     can_move_down: bool,
 }
@@ -147,6 +149,7 @@ impl Shell {
             error: None,
             loading,
             about: false,
+            sort: list_items::Sort::Manual,
             selected: None,
             editor: None,
             confirm_delete: None,
@@ -215,11 +218,14 @@ impl Shell {
         self.add_picker = None;
         self.tag_editor = None;
         self.close_season_panels();
+    fn set_sort(&mut self, sort: list_items::Sort, cx: &mut Context<Self>) {
+        self.sort = sort;
         cx.notify();
     }
 
     fn select_list(&mut self, id: String, cx: &mut Context<Self>) {
         self.about = false;
+        self.sort = list_items::Sort::Manual;
         self.selected = Some(id);
         self.editor = None;
         self.confirm_delete = None;
@@ -1158,7 +1164,8 @@ impl Shell {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let members = self.items_in_list(&list.id);
+        let mut members = self.items_in_list(&list.id);
+        list_items::sort_items(&mut members, self.sort);
         let adding = self.add_picker.as_deref() == Some(list.id.as_str());
         let list_id = list.id.clone();
         let tag_picker = match &self.tag_editor {
@@ -1229,6 +1236,37 @@ impl Shell {
                 panel.child(self.add_picker_element(&list.id, palette, cx))
             })
             .children(tag_picker)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_xs().text_color(rgb(palette.muted)).child("Sort"))
+                    .child(
+                        Button::new("sort-manual")
+                            .label("Manual")
+                            .selected(self.sort == list_items::Sort::Manual)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_sort(list_items::Sort::Manual, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("sort-title")
+                            .label("Title")
+                            .selected(self.sort == list_items::Sort::Title)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_sort(list_items::Sort::Title, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("sort-year")
+                            .label("Year")
+                            .selected(self.sort == list_items::Sort::Year)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_sort(list_items::Sort::Year, cx)
+                            })),
+                    ),
+            )
             .child(if members.is_empty() {
                 Self::list_empty_element(palette)
             } else {
@@ -1769,26 +1807,33 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        Button::new(format!("move-up-{}", item.id))
-                            .icon(IconName::ArrowUp)
-                            .tooltip("Move up")
-                            .accessibility_label("Move up")
-                            .disabled(!list_actions.can_move_up)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.move_item_up(up_list_id.clone(), up_id.clone(), cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(format!("move-down-{}", item.id))
-                            .icon(IconName::ArrowDown)
-                            .tooltip("Move down")
-                            .accessibility_label("Move down")
-                            .disabled(!list_actions.can_move_down)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.move_item_down(down_list_id.clone(), down_id.clone(), cx)
-                            })),
-                    )
+                    .when(list_actions.manual, |actions| {
+                        actions
+                            .child(
+                                Button::new(format!("move-up-{}", item.id))
+                                    .icon(IconName::ArrowUp)
+                                    .tooltip("Move up")
+                                    .accessibility_label("Move up")
+                                    .disabled(!list_actions.can_move_up)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.move_item_up(up_list_id.clone(), up_id.clone(), cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("move-down-{}", item.id))
+                                    .icon(IconName::ArrowDown)
+                                    .tooltip("Move down")
+                                    .accessibility_label("Move down")
+                                    .disabled(!list_actions.can_move_down)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.move_item_down(
+                                            down_list_id.clone(),
+                                            down_id.clone(),
+                                            cx,
+                                        )
+                                    })),
+                            )
+                    })
                     .children(Self::seasons_button(item, cx))
                     .child(Self::tags_button(
                         TagTarget::Item(id.clone()),
@@ -1919,6 +1964,7 @@ impl Shell {
             .children(items.iter().enumerate().map(|(index, item)| {
                 let list_actions = remove_from.map(|list_id| ListItemActions {
                     list_id,
+                    manual: self.sort == list_items::Sort::Manual,
                     can_move_up: index > 0,
                     can_move_down: index + 1 < items.len(),
                 });

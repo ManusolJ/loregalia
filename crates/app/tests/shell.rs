@@ -1988,3 +1988,185 @@ fn deleting_a_season_asks_for_confirmation(cx: &mut TestAppContext) {
             .is_empty()
     );
 }
+
+#[gpui_kit::test]
+fn sorting_a_list_changes_the_view_but_not_the_positions(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let zebra = seed_item(&path, MediaKind::Movie, "Zebra", Some(2001)).unwrap();
+    let apple = seed_item(&path, MediaKind::Book, "apple", Some(1999)).unwrap();
+    let mango = seed_item(&path, MediaKind::Game, "Mango", None).unwrap();
+    add_membership(&path, &seeded[0].id, &zebra.id).unwrap();
+    add_membership(&path, &seeded[0].id, &apple.id).unwrap();
+    add_membership(&path, &seeded[0].id, &mango.id).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("sort-title", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let apple_top = window
+            .find(format!("item-row-{}", apple.id))
+            .bounds()
+            .origin
+            .y;
+        let mango_top = window
+            .find(format!("item-row-{}", mango.id))
+            .bounds()
+            .origin
+            .y;
+        let zebra_top = window
+            .find(format!("item-row-{}", zebra.id))
+            .bounds()
+            .origin
+            .y;
+        assert!(apple_top < mango_top);
+        assert!(mango_top < zebra_top);
+        assert!(window.try_find(format!("move-up-{}", zebra.id)).is_none());
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("sort-year", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let apple_top = window
+            .find(format!("item-row-{}", apple.id))
+            .bounds()
+            .origin
+            .y;
+        let mango_top = window
+            .find(format!("item-row-{}", mango.id))
+            .bounds()
+            .origin
+            .y;
+        let zebra_top = window
+            .find(format!("item-row-{}", zebra.id))
+            .bounds()
+            .origin
+            .y;
+        assert!(apple_top < zebra_top);
+        assert!(zebra_top < mango_top);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("sort-manual", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let apple_top = window
+            .find(format!("item-row-{}", apple.id))
+            .bounds()
+            .origin
+            .y;
+        let mango_top = window
+            .find(format!("item-row-{}", mango.id))
+            .bounds()
+            .origin
+            .y;
+        let zebra_top = window
+            .find(format!("item-row-{}", zebra.id))
+            .bounds()
+            .origin
+            .y;
+        assert!(zebra_top < apple_top);
+        assert!(apple_top < mango_top);
+        assert!(window.find(format!("move-up-{}", apple.id)).visible());
+    })
+    .unwrap();
+
+    let stored: Vec<String> = list_items::all(&Database::open(&path).unwrap(), &seeded[0].id)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(stored, ["Zebra", "apple", "Mango"]);
+}
+
+#[gpui_kit::test]
+fn selecting_another_list_resets_the_sort_to_manual(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["First", "Second"]).unwrap();
+    let zebra = seed_item(&path, MediaKind::Movie, "Zebra", None).unwrap();
+    let apple = seed_item(&path, MediaKind::Book, "apple", None).unwrap();
+
+    for list in &seeded {
+        add_membership(&path, &list.id, &zebra.id).unwrap();
+        add_membership(&path, &list.id, &apple.id).unwrap();
+    }
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("sort-title", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[1].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let apple_top = window
+            .find(format!("item-row-{}", apple.id))
+            .bounds()
+            .origin
+            .y;
+        let zebra_top = window
+            .find(format!("item-row-{}", zebra.id))
+            .bounds()
+            .origin
+            .y;
+        assert!(zebra_top < apple_top);
+    })
+    .unwrap();
+}
