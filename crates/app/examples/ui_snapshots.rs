@@ -20,6 +20,7 @@ enum Step {
     AddItem,
     Rename,
     Delete,
+    StatusPicker,
 }
 
 struct Shot {
@@ -73,6 +74,20 @@ fn main() -> Result<()> {
             name: "items-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
+            storage: with_items.clone(),
+            step: Step::None,
+        },
+        Shot {
+            name: "item-status-picker-dark",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Dark,
+            storage: with_items.clone(),
+            step: Step::StatusPicker,
+        },
+        Shot {
+            name: "item-statuses-light",
+            size: size(px(1280.0), px(800.0)),
+            mode: ThemeMode::Light,
             storage: with_items.clone(),
             step: Step::None,
         },
@@ -154,8 +169,10 @@ fn items_database(output: &Path) -> Result<StorageState> {
     let state = database_at(output, "items-db")?;
     if let StorageState::Ready(path) = &state {
         let database = Database::open(path)?;
-        items::create(&database, MediaKind::Movie, "Dune", Some(2021))?;
-        items::create(&database, MediaKind::Book, "Piranesi", Some(2020))?;
+        let movie = items::create(&database, MediaKind::Movie, "Dune", Some(2021))?;
+        items::set_status(&database, &movie.id, "movie-active")?;
+        let book = items::create(&database, MediaKind::Book, "Piranesi", Some(2020))?;
+        items::set_status(&database, &book.id, "book-done")?;
         items::create(&database, MediaKind::Game, "Outer Wilds", None)?;
     }
     Ok(state)
@@ -215,6 +232,17 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
         _ => None,
     };
 
+    let first_item = match (&shot.storage, shot.step) {
+        (StorageState::Ready(path), Step::StatusPicker) => {
+            let database = Database::open(path)?;
+            items::all(&database)?
+                .into_iter()
+                .next()
+                .map(|item| item.id)
+        }
+        _ => None,
+    };
+
     match shot.step {
         Step::None => {}
         Step::Select => {
@@ -236,6 +264,14 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
                 window.click("add-item", cx);
                 window.render_frame(cx);
             })?;
+        }
+        Step::StatusPicker => {
+            if let Some(id) = first_item {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("item-status-{id}"), cx);
+                    window.render_frame(cx);
+                })?;
+            }
         }
         Step::Rename | Step::Delete => {
             if let Some(id) = first_id {

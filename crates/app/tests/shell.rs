@@ -720,6 +720,36 @@ fn item_rows_show_the_status_chip(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_saved_status_is_shown_after_reopening(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    {
+        let database = Database::open(&path).unwrap();
+        items::set_status(&database, &item.id, "book-done").unwrap();
+    }
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert_eq!(
+            window.find(format!("item-status-{}", item.id)).label(),
+            Some("Read")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn changing_an_items_status_updates_the_chip_and_database(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
