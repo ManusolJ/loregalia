@@ -24,6 +24,12 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         UNIQUE (source, external_id)
     ) STRICT;",
+    "CREATE TABLE list_items (
+        list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        PRIMARY KEY (list_id, item_id)
+    ) STRICT;",
 ];
 
 fn latest_version() -> u32 {
@@ -340,20 +346,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 3;")
+                .execute_batch("PRAGMA user_version = 4;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 3,
-                supported: 2
+                found: 4,
+                supported: 3
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 3);
+        assert_eq!(schema_version(&connection), 4);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",

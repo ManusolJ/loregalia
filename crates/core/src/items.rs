@@ -13,7 +13,7 @@ pub struct Item {
 }
 
 impl Item {
-    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+    pub(crate) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
             title: row.get(1)?,
