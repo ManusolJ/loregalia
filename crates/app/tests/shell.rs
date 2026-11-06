@@ -8,7 +8,7 @@ use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, media::MediaKind, tags,
+    Database, Result as CoreResult, items, list_items, lists, media::MediaKind, seasons, tags,
 };
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -70,6 +70,11 @@ fn add_membership(path: &Path, list_id: &str, item_id: &str) -> CoreResult<()> {
 fn seed_tag(path: &Path, name: &str) -> CoreResult<tags::Tag> {
     let database = Database::open(path)?;
     tags::create(&database, name)
+}
+
+fn seed_season(path: &Path, show_id: &str, number: i32) -> CoreResult<seasons::Season> {
+    let database = Database::open(path)?;
+    seasons::create(&database, show_id, number)
 }
 
 #[gpui_kit::test]
@@ -1649,4 +1654,250 @@ fn a_tag_can_be_shared_by_an_item_and_a_list(cx: &mut TestAppContext) {
         vec![tag.clone()]
     );
     assert_eq!(tags::for_list(&database, &seeded[0].id).unwrap(), vec![tag]);
+}
+
+#[gpui_kit::test]
+fn a_show_row_offers_seasons_and_other_kinds_do_not(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let movie = seed_item(&path, MediaKind::Movie, "Dune", None).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.find(format!("item-seasons-{}", show.id)).visible());
+        assert!(
+            window
+                .try_find(format!("item-seasons-{}", movie.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn adding_a_season_shows_it_with_a_status(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-seasons-{}", show.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("seasons-panel").visible());
+        assert!(window.find("seasons-empty").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "1");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-season", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = seasons::all(&Database::open(&path).unwrap(), &show.id).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].season_number, 1);
+    assert_eq!(stored[0].status_id, "show-planned");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let row = window.find(format!("season-{}", stored[0].id));
+        assert!(row.visible());
+        assert_eq!(row.label(), Some("Season 1"));
+        assert_eq!(
+            window
+                .find(format!("season-status-{}", stored[0].id))
+                .label(),
+            Some("To watch")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn seasons_are_shown_in_number_order(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let second = seed_season(&path, &show.id, 2).unwrap();
+    let first = seed_season(&path, &show.id, 1).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-seasons-{}", show.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let first_top = window
+            .find(format!("season-{}", first.id))
+            .bounds()
+            .origin
+            .y;
+        let second_top = window
+            .find(format!("season-{}", second.id))
+            .bounds()
+            .origin
+            .y;
+        assert!(first_top < second_top);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn changing_a_season_status_updates_the_chip(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let season = seed_season(&path, &show.id, 1).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-seasons-{}", show.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("season-status-{}", season.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find(format!("season-status-picker-{}", season.id))
+                .visible()
+        );
+        window.click(format!("season-set-status-{}-show-done", season.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert_eq!(
+            window.find(format!("season-status-{}", season.id)).label(),
+            Some("Watched")
+        );
+    })
+    .unwrap();
+
+    let stored = seasons::all(&Database::open(&path).unwrap(), &show.id).unwrap();
+    assert_eq!(stored[0].status_id, "show-done");
+    assert!(stored[0].finished_at.is_some());
+}
+
+#[gpui_kit::test]
+fn deleting_a_season_asks_for_confirmation(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let season = seed_season(&path, &show.id, 1).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-seasons-{}", show.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("season-delete-{}", season.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("season-delete-confirmation").visible());
+        assert!(window.find(format!("season-{}", season.id)).visible());
+        window.click("cancel-season-delete", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("season-delete-confirmation").is_none());
+        window.click(format!("season-delete-{}", season.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("confirm-season-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.try_find(format!("season-{}", season.id)).is_none());
+        assert!(window.find("seasons-empty").visible());
+    })
+    .unwrap();
+
+    assert!(
+        seasons::all(&Database::open(&path).unwrap(), &show.id)
+            .unwrap()
+            .is_empty()
+    );
 }

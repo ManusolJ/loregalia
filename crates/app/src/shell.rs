@@ -12,7 +12,8 @@ use gpui_kit::{
     Window, div, px, rgb,
 };
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, statuses, tags,
+    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, seasons,
+    statuses, tags,
 };
 
 use crate::startup::StorageState;
@@ -24,6 +25,14 @@ const SIDEBAR_LABELS_FROM: f32 = 1024.0;
 const EMPTY_MESSAGE: &str = "Nothing planned yet";
 const LOADING_MESSAGE: &str = "Loading lists";
 const LOADING_BLOCK_WIDTH: f32 = 320.0;
+
+fn season_number(value: &str) -> Option<i32> {
+    value
+        .trim()
+        .parse::<i32>()
+        .ok()
+        .filter(|number| *number >= 0)
+}
 
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
@@ -43,6 +52,7 @@ pub struct Shell {
     tags: Vec<tags::Tag>,
     item_tags: Vec<tags::Tagging>,
     list_tags: Vec<tags::Tagging>,
+    seasons: Vec<seasons::Season>,
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
@@ -53,6 +63,9 @@ pub struct Shell {
     status_picker: Option<String>,
     add_picker: Option<String>,
     tag_editor: Option<TagEditor>,
+    season_editor: Option<SeasonEditor>,
+    season_status_picker: Option<String>,
+    confirm_delete_season: Option<String>,
 }
 
 struct ItemEditor {
@@ -79,6 +92,11 @@ struct TagEditor {
     input: Entity<InputState>,
 }
 
+struct SeasonEditor {
+    show_id: String,
+    number: Entity<InputState>,
+}
+
 struct Loaded {
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
@@ -87,6 +105,7 @@ struct Loaded {
     tags: Vec<tags::Tag>,
     item_tags: Vec<tags::Tagging>,
     list_tags: Vec<tags::Tagging>,
+    seasons: Vec<seasons::Season>,
 }
 
 fn load(database: &Database) -> CoreResult<Loaded> {
@@ -98,6 +117,7 @@ fn load(database: &Database) -> CoreResult<Loaded> {
         tags: tags::all(database)?,
         item_tags: tags::item_taggings(database)?,
         list_tags: tags::list_taggings(database)?,
+        seasons: seasons::all_for_every_show(database)?,
     })
 }
 
@@ -122,6 +142,7 @@ impl Shell {
             tags: Vec::new(),
             item_tags: Vec::new(),
             list_tags: Vec::new(),
+            seasons: Vec::new(),
             error: None,
             loading,
             selected: None,
@@ -132,6 +153,9 @@ impl Shell {
             status_picker: None,
             add_picker: None,
             tag_editor: None,
+            season_editor: None,
+            season_status_picker: None,
+            confirm_delete_season: None,
         };
         shell.reload_lists(cx);
         shell
@@ -172,6 +196,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         self.editor = Some(Editor::Create(input));
         cx.notify();
     }
@@ -185,6 +210,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         cx.notify();
     }
 
@@ -210,6 +236,7 @@ impl Shell {
 
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         self.editor = Some(Editor::Rename { id, input });
         cx.notify();
     }
@@ -260,6 +287,7 @@ impl Shell {
 
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         self.confirm_delete = Some(id);
         cx.notify();
     }
@@ -297,6 +325,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         self.item_editor = Some(ItemEditor {
             id: None,
             kind: MediaKind::Movie,
@@ -340,6 +369,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         cx.notify();
     }
 
@@ -377,6 +407,7 @@ impl Shell {
         let id = editor.id;
         let kind = editor.kind;
         let list_id = self.selected.clone();
+        self.close_season_panels();
 
         self.run(cx, async move {
             let database = Database::open(path)?;
@@ -400,6 +431,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         cx.notify();
     }
 
@@ -410,6 +442,7 @@ impl Shell {
         self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         cx.notify();
     }
 
@@ -435,6 +468,7 @@ impl Shell {
 
     fn toggle_status_picker(&mut self, id: String, cx: &mut Context<Self>) {
         self.tag_editor = None;
+        self.close_season_panels();
         self.status_picker = if self.status_picker.as_deref() == Some(id.as_str()) {
             None
         } else {
@@ -459,6 +493,7 @@ impl Shell {
     fn toggle_add_picker(&mut self, list_id: String, cx: &mut Context<Self>) {
         self.status_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
         self.add_picker = if self.add_picker.as_deref() == Some(list_id.as_str()) {
             None
         } else {
@@ -473,6 +508,7 @@ impl Shell {
         };
         self.add_picker = None;
         self.tag_editor = None;
+        self.close_season_panels();
 
         self.run(cx, async move {
             let database = Database::open(path)?;
@@ -529,6 +565,7 @@ impl Shell {
             .is_some_and(|editor| editor.target == target);
         if same {
             self.tag_editor = None;
+            self.close_season_panels();
             cx.notify();
             return;
         }
@@ -539,6 +576,7 @@ impl Shell {
 
         self.status_picker = None;
         self.add_picker = None;
+        self.close_season_panels();
         self.tag_editor = Some(TagEditor { target, input });
         cx.notify();
     }
@@ -613,6 +651,112 @@ impl Shell {
         }
     }
 
+    fn close_season_panels(&mut self) {
+        self.season_editor = None;
+        self.season_status_picker = None;
+        self.confirm_delete_season = None;
+    }
+
+    fn toggle_seasons(&mut self, show_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let same = self
+            .season_editor
+            .as_ref()
+            .is_some_and(|editor| editor.show_id == show_id);
+        if same {
+            self.close_season_panels();
+            cx.notify();
+            return;
+        }
+
+        let number = cx.new(|cx| InputState::new(window, cx).placeholder("Season number"));
+        let focus = number.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
+
+        self.status_picker = None;
+        self.add_picker = None;
+        self.tag_editor = None;
+        self.season_status_picker = None;
+        self.confirm_delete_season = None;
+        self.season_editor = Some(SeasonEditor { show_id, number });
+        cx.notify();
+    }
+
+    fn add_season(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = &self.season_editor else {
+            return;
+        };
+        let Some(number) = season_number(editor.number.read(cx).value().as_ref()) else {
+            return;
+        };
+        let show_id = editor.show_id.clone();
+        let input = editor.number.clone();
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            seasons::create(&database, &show_id, number)?;
+            load(&database)
+        });
+    }
+
+    fn toggle_season_status(&mut self, season_id: String, cx: &mut Context<Self>) {
+        self.season_status_picker =
+            if self.season_status_picker.as_deref() == Some(season_id.as_str()) {
+                None
+            } else {
+                Some(season_id)
+            };
+        cx.notify();
+    }
+
+    fn change_season_status(
+        &mut self,
+        season_id: String,
+        status_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        self.season_status_picker = None;
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            seasons::set_status(&database, &season_id, &status_id)?;
+            load(&database)
+        });
+    }
+
+    fn begin_delete_season(&mut self, season_id: String, cx: &mut Context<Self>) {
+        self.season_status_picker = None;
+        self.confirm_delete_season = Some(season_id);
+        cx.notify();
+    }
+
+    fn cancel_delete_season(&mut self, cx: &mut Context<Self>) {
+        self.confirm_delete_season = None;
+        cx.notify();
+    }
+
+    fn delete_season(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.confirm_delete_season.take() else {
+            return;
+        };
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            seasons::delete(&database, &id)?;
+            load(&database)
+        });
+    }
+
     fn run<F>(&mut self, cx: &mut Context<Self>, work: F)
     where
         F: Future<Output = CoreResult<Loaded>> + Send + 'static,
@@ -642,6 +786,7 @@ impl Shell {
                         this.tags = loaded.tags;
                         this.item_tags = loaded.item_tags;
                         this.list_tags = loaded.list_tags;
+                        this.seasons = loaded.seasons;
                         this.error = None;
                     }
                     Err(error) => {
@@ -1033,32 +1178,16 @@ impl Shell {
         }
     }
 
-    fn status_chip(
-        &self,
-        item: &items::Item,
-        palette: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(status) = self
-            .statuses
-            .iter()
-            .find(|status| status.id == item.status_id)
-        else {
-            return div().into_any_element();
-        };
+    fn status_chip(status: &statuses::Status, id: String, palette: &Palette) -> Button {
         let color = rgb(Self::category_color(palette, status.category));
-        let item_id = item.id.clone();
 
-        Button::new(format!("item-status-{}", item.id))
+        Button::new(id)
             .ghost()
             .h(px(24.0))
             .px_2()
             .rounded(px(6.0))
             .bg(color.alpha(0.15))
             .accessibility_label(status.label.clone())
-            .on_click(
-                cx.listener(move |this, _, _, cx| this.toggle_status_picker(item_id.clone(), cx)),
-            )
             .child(
                 div()
                     .flex()
@@ -1077,7 +1206,6 @@ impl Shell {
                             .child(status.label.clone()),
                     ),
             )
-            .into_any_element()
     }
 
     fn status_picker_element(&self, item: &items::Item, cx: &mut Context<Self>) -> AnyElement {
@@ -1206,6 +1334,223 @@ impl Shell {
             .into_any_element()
     }
 
+    fn seasons_for(&self, show_id: &str) -> Vec<&seasons::Season> {
+        self.seasons
+            .iter()
+            .filter(|season| season.show_id == show_id)
+            .collect()
+    }
+
+    fn seasons_button(item: &items::Item, cx: &mut Context<Self>) -> Option<Button> {
+        if item.media_kind != MediaKind::Show {
+            return None;
+        }
+        let id = item.id.clone();
+
+        Some(
+            Button::new(format!("item-seasons-{}", item.id))
+                .icon(IconName::ListOrdered)
+                .tooltip("Seasons")
+                .accessibility_label("Seasons")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.toggle_seasons(id.clone(), window, cx)
+                })),
+        )
+    }
+
+    fn season_row(
+        &self,
+        season: &seasons::Season,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let label = format!("Season {}", season.season_number);
+        let chip =
+            self.statuses
+                .iter()
+                .find(|status| status.id == season.status_id)
+                .map(|status| {
+                    let season_id = season.id.clone();
+                    Self::status_chip(status, format!("season-status-{}", season.id), palette)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_season_status(season_id.clone(), cx)
+                        }))
+                });
+        let picker = (self.season_status_picker.as_deref() == Some(season.id.as_str()))
+            .then(|| self.season_status_picker_element(season, cx));
+
+        div()
+            .id(format!("season-{}", season.id))
+            .role(Role::ListItem)
+            .test_support()
+            .aria_label(label.clone())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(div().child(label))
+                    .child(
+                        div().flex().items_center().gap_2().children(chip).child(
+                            Button::new(format!("season-delete-{}", season.id))
+                                .label("Delete")
+                                .danger()
+                                .on_click(cx.listener({
+                                    let season_id = season.id.clone();
+                                    move |this, _, _, cx| {
+                                        this.begin_delete_season(season_id.clone(), cx)
+                                    }
+                                })),
+                        ),
+                    ),
+            )
+            .children(picker)
+            .into_any_element()
+    }
+
+    fn season_status_picker_element(
+        &self,
+        season: &seasons::Season,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let season_id = season.id.clone();
+
+        div()
+            .id(format!("season-status-picker-{}", season.id))
+            .test_support()
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .children(
+                self.statuses
+                    .iter()
+                    .filter(|status| status.media_kind == MediaKind::Show)
+                    .map(|status| {
+                        let season_id = season_id.clone();
+                        let status_id = status.id.clone();
+
+                        Button::new(format!("season-set-status-{}-{}", season.id, status.id))
+                            .label(status.label.clone())
+                            .selected(status.id == season.status_id)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.change_season_status(season_id.clone(), status_id.clone(), cx)
+                            }))
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn season_delete_element(&self, season_id: Option<&str>, cx: &mut Context<Self>) -> AnyElement {
+        let Some(season_id) = season_id else {
+            return div().into_any_element();
+        };
+        let message = self
+            .seasons
+            .iter()
+            .find(|season| season.id == season_id)
+            .map(|season| format!("Delete season {}?", season.season_number))
+            .unwrap_or_else(|| "Delete this season?".to_owned());
+
+        div()
+            .id("season-delete-confirmation")
+            .role(Role::Alert)
+            .test_support()
+            .aria_label(message.clone())
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(message)
+            .child(
+                Button::new("cancel-season-delete")
+                    .label("Cancel")
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_delete_season(cx))),
+            )
+            .child(
+                Button::new("confirm-season-delete")
+                    .label("Delete")
+                    .danger()
+                    .on_click(cx.listener(|this, _, _, cx| this.delete_season(cx))),
+            )
+            .into_any_element()
+    }
+
+    fn season_panel_element(
+        &self,
+        editor: &SeasonEditor,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let show_id = editor.show_id.clone();
+        let seasons = self.seasons_for(&show_id);
+        let typed = season_number(editor.number.read(cx).value().as_ref());
+        let can_add = typed
+            .is_some_and(|number| !seasons.iter().any(|season| season.season_number == number));
+        let confirming = self.confirm_delete_season.clone();
+
+        div()
+            .id("seasons-panel")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .rounded(px(8.0))
+            .bg(rgb(palette.raised))
+            .border_1()
+            .border_color(rgb(palette.line))
+            .child(if seasons.is_empty() {
+                div()
+                    .id("seasons-empty")
+                    .role(Role::Status)
+                    .test_support()
+                    .aria_label("No seasons yet")
+                    .text_color(rgb(palette.muted))
+                    .text_xs()
+                    .child("No seasons yet")
+                    .into_any_element()
+            } else {
+                div()
+                    .id("seasons")
+                    .role(Role::List)
+                    .test_support()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children(
+                        seasons
+                            .iter()
+                            .map(|season| self.season_row(season, palette, cx)),
+                    )
+                    .into_any_element()
+            })
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Input::new(&editor.number)
+                            .id("season-number-input")
+                            .aria_label("Season number"),
+                    )
+                    .child(
+                        Button::new("add-season")
+                            .label("Add season")
+                            .disabled(!can_add)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_season(window, cx)),
+                            ),
+                    ),
+            )
+            .when(confirming.is_some(), |panel| {
+                panel.child(self.season_delete_element(confirming.as_deref(), cx))
+            })
+            .into_any_element()
+    }
+
     fn item_row(
         &self,
         item: &items::Item,
@@ -1218,12 +1563,29 @@ impl Shell {
             None => item.media_kind.label().to_owned(),
         };
         let id = item.id.clone();
-        let chip = self.status_chip(item, palette, cx);
+        let chip = self
+            .statuses
+            .iter()
+            .find(|status| status.id == item.status_id)
+            .map(|status| {
+                let item_id = item.id.clone();
+                Self::status_chip(status, format!("item-status-{}", item.id), palette).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.toggle_status_picker(item_id.clone(), cx)
+                    }),
+                )
+            });
         let picker = (self.status_picker.as_deref() == Some(item.id.as_str()))
             .then(|| self.status_picker_element(item, cx));
         let tag_picker = match &self.tag_editor {
             Some(editor) if matches!(&editor.target, TagTarget::Item(id) if id == &item.id) => {
                 Some(self.tag_picker_element(editor, cx))
+            }
+            _ => None,
+        };
+        let season_panel = match &self.season_editor {
+            Some(editor) if editor.show_id == item.id => {
+                Some(self.season_panel_element(editor, palette, cx))
             }
             _ => None,
         };
@@ -1260,6 +1622,7 @@ impl Shell {
                                 this.move_item_down(down_list_id.clone(), down_id.clone(), cx)
                             })),
                     )
+                    .children(Self::seasons_button(item, cx))
                     .child(Self::tags_button(
                         TagTarget::Item(id.clone()),
                         format!("item-tags-{}", item.id),
@@ -1290,6 +1653,7 @@ impl Shell {
                 .flex()
                 .items_center()
                 .gap_2()
+                .children(Self::seasons_button(item, cx))
                 .child(Self::tags_button(
                     TagTarget::Item(id.clone()),
                     format!("item-tags-{}", item.id),
@@ -1359,12 +1723,13 @@ impl Shell {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(chip)
+                            .children(chip)
                             .child(actions),
                     ),
             )
             .children(picker)
             .children(tag_picker)
+            .children(season_panel)
             .into_any_element()
     }
 
@@ -1594,7 +1959,16 @@ impl Render for Shell {
 mod tests {
     use gpui_kit::px;
 
-    use super::sidebar_width;
+    use super::{season_number, sidebar_width};
+
+    #[test]
+    fn season_numbers_are_whole_non_negative_numbers() {
+        assert_eq!(season_number("0"), Some(0));
+        assert_eq!(season_number(" 12 "), Some(12));
+        assert_eq!(season_number("-1"), None);
+        assert_eq!(season_number("1.5"), None);
+        assert_eq!(season_number(""), None);
+    }
 
     #[test]
     fn sidebar_becomes_a_rail_below_1024() {
