@@ -1141,6 +1141,8 @@ impl Shell {
             .items_center()
             .rounded(px(6.0))
             .bg(rgb(palette.raised))
+            .border_1()
+            .border_color(rgb(palette.line))
             .text_xs()
             .text_color(rgb(palette.muted))
             .child(tag.name.clone())
