@@ -391,3 +391,127 @@ fn row_ids_come_from_the_list_id(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn renaming_a_list_updates_the_sidebar_and_database(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Watchlist"]).unwrap();
+    let list = &seeded[0];
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", list.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-panel").visible());
+        window.click("rename-list", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-name-input").visible());
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Weekend");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-list", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert_eq!(
+            window.find(format!("list-row-{}", list.id)).label(),
+            Some("Weekend")
+        );
+        assert_eq!(window.find("list-panel").label(), Some("Weekend"));
+    })
+    .unwrap();
+
+    let stored = lists::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].id, list.id);
+    assert_eq!(stored[0].name, "Weekend");
+}
+
+#[gpui_kit::test]
+fn deleting_a_list_asks_for_confirmation(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Watchlist"]).unwrap();
+    let list = &seeded[0];
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", list.id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("delete-list", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("delete-confirmation").visible());
+        assert!(window.find(format!("list-row-{}", list.id)).visible());
+        window.click("cancel-delete", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("delete-confirmation").is_none());
+        assert!(window.find(format!("list-row-{}", list.id)).visible());
+        window.click("delete-list", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("confirm-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(format!("list-row-{}", list.id)).is_none());
+        assert!(window.find("empty-state").visible());
+    })
+    .unwrap();
+
+    assert_eq!(
+        lists::all(&Database::open(&path).unwrap()).unwrap(),
+        Vec::new()
+    );
+}

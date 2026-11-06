@@ -1,10 +1,12 @@
 use std::future::Future;
 use std::path::PathBuf;
 
-use gpui_kit::component::{Disableable, IconName, button::Button};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{Disableable, IconName, button::Button, button::ButtonVariants};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AppContext, Context, FontWeight, Pixels, Role, TestSupportExt, Window, div, px, rgb,
+    AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Pixels, Role, TestSupportExt,
+    Window, div, px, rgb,
 };
 use loregalia_core::{Database, Result as CoreResult, lists, log};
 
@@ -33,6 +35,14 @@ pub struct Shell {
     lists: Vec<lists::List>,
     error: Option<String>,
     loading: bool,
+    selected: Option<String>,
+    rename: Option<Rename>,
+    confirm_delete: Option<String>,
+}
+
+struct Rename {
+    id: String,
+    input: Entity<InputState>,
 }
 
 impl Shell {
@@ -44,6 +54,9 @@ impl Shell {
             lists: Vec::new(),
             error: None,
             loading,
+            selected: None,
+            rename: None,
+            confirm_delete: None,
         };
         shell.reload_lists(cx);
         shell
@@ -84,6 +97,92 @@ impl Shell {
         });
     }
 
+    fn select_list(&mut self, id: String, cx: &mut Context<Self>) {
+        self.selected = Some(id);
+        self.rename = None;
+        self.confirm_delete = None;
+        cx.notify();
+    }
+
+    fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(name) = self
+            .lists
+            .iter()
+            .find(|list| list.id == id)
+            .map(|list| list.name.clone())
+        else {
+            return;
+        };
+        let input = cx.new(|cx| {
+            let mut input = InputState::new(window, cx).default_value(name);
+            input.select_all(window, cx);
+            input
+        });
+        let focus = input.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
+
+        self.rename = Some(Rename { id, input });
+        cx.notify();
+    }
+
+    fn save_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(rename) = self.rename.take() else {
+            return;
+        };
+        let name = rename.input.read(cx).value().trim().to_owned();
+        if name.is_empty() {
+            self.rename = Some(rename);
+            return;
+        }
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            lists::rename(&database, &rename.id, &name)?;
+            lists::all(&database)
+        });
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename = None;
+        cx.notify();
+    }
+
+    fn begin_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+
+        self.confirm_delete = Some(id);
+        cx.notify();
+    }
+
+    fn cancel_delete(&mut self, cx: &mut Context<Self>) {
+        self.confirm_delete = None;
+        cx.notify();
+    }
+
+    fn delete_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.confirm_delete.take() else {
+            return;
+        };
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        self.selected = None;
+
+        self.run(cx, async move {
+            let database = Database::open(path)?;
+            lists::delete(&database, &id)?;
+            lists::all(&database)
+        });
+    }
+
     fn run<F>(&mut self, cx: &mut Context<Self>, work: F)
     where
         F: Future<Output = CoreResult<Vec<lists::List>>> + Send + 'static,
@@ -97,6 +196,13 @@ impl Shell {
                 this.loading = false;
                 match result {
                     Ok(lists) => {
+                        if let Some(id) = this.selected.clone()
+                            && !lists.iter().any(|list| list.id == id)
+                        {
+                            this.selected = None;
+                            this.rename = None;
+                            this.confirm_delete = None;
+                        }
                         this.lists = lists;
                         this.error = None;
                     }
@@ -112,7 +218,7 @@ impl Shell {
         .detach();
     }
 
-    fn main_element(&self, palette: &Palette) -> AnyElement {
+    fn main_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match (&self.storage, &self.error) {
             (StorageState::Failed(message), _) => div()
                 .id("storage-error")
@@ -133,15 +239,143 @@ impl Shell {
                 .text_xs()
                 .child(message.clone())
                 .into_any_element(),
-            (StorageState::Ready(_), None) => div()
-                .id("empty-state")
-                .role(Role::Status)
-                .test_support()
-                .aria_label(EMPTY_MESSAGE)
-                .text_color(rgb(palette.muted))
-                .child(EMPTY_MESSAGE)
-                .into_any_element(),
+            (StorageState::Ready(_), None) => {
+                if self.rename.is_some() {
+                    self.rename_element(palette, cx)
+                } else if let Some(id) = &self.confirm_delete {
+                    let name = self
+                        .lists
+                        .iter()
+                        .find(|list| &list.id == id)
+                        .map(|list| list.name.as_str())
+                        .unwrap_or("this list");
+                    self.delete_element(name, cx)
+                } else if let Some(id) = &self.selected {
+                    match self.lists.iter().find(|list| &list.id == id) {
+                        Some(list) => self.list_panel(&list.name, cx),
+                        None => Self::empty_element(palette),
+                    }
+                } else {
+                    Self::empty_element(palette)
+                }
+            }
         }
+    }
+
+    fn empty_element(palette: &Palette) -> AnyElement {
+        div()
+            .id("empty-state")
+            .role(Role::Status)
+            .test_support()
+            .aria_label(EMPTY_MESSAGE)
+            .text_color(rgb(palette.muted))
+            .child(EMPTY_MESSAGE)
+            .into_any_element()
+    }
+
+    fn rename_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let Some(rename) = &self.rename else {
+            return Self::empty_element(palette);
+        };
+        let can_save = !rename.input.read(cx).value().trim().is_empty();
+
+        div()
+            .id("list-editor")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w(px(320.0))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child("Rename list"))
+            .child(
+                Input::new(&rename.input)
+                    .id("list-name-input")
+                    .aria_label("List name"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("save-list")
+                            .label("Save")
+                            .disabled(!can_save)
+                            .on_click(cx.listener(|this, _, _, cx| this.save_rename(cx))),
+                    )
+                    .child(
+                        Button::new("cancel-list")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_rename(cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn list_panel(&self, name: &str, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("list-panel")
+            .role(Role::Status)
+            .test_support()
+            .aria_label(name.to_owned())
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(name.to_owned()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("rename-list").label("Rename").on_click(
+                            cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
+                        ),
+                    )
+                    .child(
+                        Button::new("delete-list")
+                            .label("Delete")
+                            .danger()
+                            .on_click(cx.listener(|this, _, _, cx| this.begin_delete(cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn delete_element(&self, name: &str, cx: &mut Context<Self>) -> AnyElement {
+        let message = format!("Delete \"{name}\"?");
+
+        div()
+            .id("delete-confirmation")
+            .role(Role::Alert)
+            .test_support()
+            .aria_label(message.clone())
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_3()
+            .child(message)
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("cancel-delete")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_delete(cx))),
+                    )
+                    .child(
+                        Button::new("confirm-delete")
+                            .label("Delete")
+                            .danger()
+                            .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn loading_element(palette: &Palette) -> AnyElement {
@@ -165,7 +399,7 @@ impl Shell {
             .into_any_element()
     }
 
-    fn list_rows(&self, shows_labels: bool) -> impl IntoElement {
+    fn list_rows(&self, shows_labels: bool, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("lists")
             .role(Role::List)
@@ -179,15 +413,25 @@ impl Shell {
                     .role(Role::ListItem)
                     .test_support()
                     .aria_label(list.name.clone());
+                let id = list.id.clone();
 
                 if shows_labels {
-                    row.px_3().py_2().child(list.name.clone())
+                    row.px_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .child(list.name.clone())
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
+                        )
                 } else {
                     row.child(
                         Button::new(format!("list-button-{}", list.id))
                             .icon(IconName::Inbox)
                             .tooltip(list.name.clone())
-                            .accessibility_label(list.name.clone()),
+                            .accessibility_label(list.name.clone())
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
+                            ),
                     )
                 }
             }))
@@ -200,7 +444,7 @@ impl Render for Shell {
         let width = sidebar_width(window.viewport_size().width);
         let shows_labels = width > px(RAIL_WIDTH);
         let can_create = matches!(&self.storage, StorageState::Ready(_));
-        let main = self.main_element(&palette);
+        let main = self.main_element(&palette, cx);
         let create = Button::new("create-list")
             .disabled(self.loading)
             .on_click(cx.listener(|this, _, _, cx| this.create_list(cx)));
@@ -248,7 +492,7 @@ impl Render for Shell {
                             .min_h_0()
                             .overflow_y_scroll()
                             .when(shows_labels, |lists| lists.mt_3())
-                            .child(self.list_rows(shows_labels)),
+                            .child(self.list_rows(shows_labels, cx)),
                     )
                     .when(can_create, |sidebar| {
                         sidebar.child(div().mt_3().child(create))
