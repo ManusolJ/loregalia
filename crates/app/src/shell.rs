@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 
-use gpui_kit::component::{Disableable, button::Button};
+use gpui_kit::component::{Disableable, IconName, button::Button};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AppContext, Context, FontWeight, Pixels, Role, TestSupportExt, Window, div, px, rgb,
@@ -11,7 +11,7 @@ use loregalia_core::{Database, Result as CoreResult, lists, log};
 use crate::startup::StorageState;
 use crate::theme::Palette;
 
-const RAIL_WIDTH: f32 = 56.0;
+const RAIL_WIDTH: f32 = 64.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
 const SIDEBAR_LABELS_FROM: f32 = 1024.0;
 const EMPTY_MESSAGE: &str = "Nothing planned yet";
@@ -165,19 +165,31 @@ impl Shell {
             .into_any_element()
     }
 
-    fn list_rows(&self) -> impl IntoElement {
+    fn list_rows(&self, shows_labels: bool) -> impl IntoElement {
         div()
+            .id("lists")
+            .role(Role::List)
+            .test_support()
             .flex()
             .flex_col()
-            .gap_3()
+            .when(!shows_labels, |lists| lists.gap_1())
             .children(self.lists.iter().map(|list| {
-                div()
+                let row = div()
                     .id(format!("list-row-{}", list.id))
                     .role(Role::ListItem)
                     .test_support()
-                    .aria_label(list.name.clone())
-                    .py_2()
-                    .child(list.name.clone())
+                    .aria_label(list.name.clone());
+
+                if shows_labels {
+                    row.px_3().py_2().child(list.name.clone())
+                } else {
+                    row.child(
+                        Button::new(format!("list-button-{}", list.id))
+                            .icon(IconName::Inbox)
+                            .tooltip(list.name.clone())
+                            .accessibility_label(list.name.clone()),
+                    )
+                }
             }))
     }
 }
@@ -189,6 +201,17 @@ impl Render for Shell {
         let shows_labels = width > px(RAIL_WIDTH);
         let can_create = matches!(&self.storage, StorageState::Ready(_));
         let main = self.main_element(&palette);
+        let create = Button::new("create-list")
+            .disabled(self.loading)
+            .on_click(cx.listener(|this, _, _, cx| this.create_list(cx)));
+        let create = if shows_labels {
+            create.label("Create list")
+        } else {
+            create
+                .icon(IconName::Plus)
+                .tooltip("Create list")
+                .accessibility_label("Create list")
+        };
 
         div()
             .size_full()
@@ -203,34 +226,32 @@ impl Render for Shell {
                     .w(width)
                     .h_full()
                     .flex_none()
+                    .flex()
+                    .flex_col()
                     .p_3()
+                    .when(!shows_labels, |sidebar| sidebar.items_center())
                     .bg(rgb(palette.surface))
                     .border_r_1()
                     .border_color(rgb(palette.line))
                     .when(shows_labels, |sidebar| {
-                        let sidebar = sidebar
-                            .child(
-                                div()
-                                    .text_color(rgb(palette.muted))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Lists"),
-                            )
-                            .child(div().mt_3().child(self.list_rows()));
-
-                        if can_create {
-                            sidebar.child(
-                                div().mt_3().child(
-                                    Button::new("create-list")
-                                        .label("Create list")
-                                        .disabled(self.loading)
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.create_list(cx)),
-                                        ),
-                                ),
-                            )
-                        } else {
-                            sidebar
-                        }
+                        sidebar.child(
+                            div()
+                                .text_color(rgb(palette.muted))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child("Lists"),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id("list-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .when(shows_labels, |lists| lists.mt_3())
+                            .child(self.list_rows(shows_labels)),
+                    )
+                    .when(can_create, |sidebar| {
+                        sidebar.child(div().mt_3().child(create))
                     }),
             )
             .child(
@@ -253,8 +274,8 @@ mod tests {
 
     #[test]
     fn sidebar_becomes_a_rail_below_1024() {
-        assert_eq!(sidebar_width(px(960.0)), px(56.0));
-        assert_eq!(sidebar_width(px(1023.0)), px(56.0));
+        assert_eq!(sidebar_width(px(960.0)), px(64.0));
+        assert_eq!(sidebar_width(px(1023.0)), px(64.0));
         assert_eq!(sidebar_width(px(1024.0)), px(240.0));
         assert_eq!(sidebar_width(px(1280.0)), px(240.0));
     }
