@@ -1166,6 +1166,154 @@ fn removing_an_item_from_a_list_keeps_the_item(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn moving_a_list_item_down_changes_the_order(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let first = seed_item(&path, MediaKind::Movie, "First", None).unwrap();
+    let second = seed_item(&path, MediaKind::Book, "Second", None).unwrap();
+    add_membership(&path, &seeded[0].id, &first.id).unwrap();
+    add_membership(&path, &seeded[0].id, &second.id).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("move-down-{}", first.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let first_top = window
+            .find(format!("item-row-{}", first.id))
+            .bounds()
+            .origin
+            .y;
+        let second_top = window
+            .find(format!("item-row-{}", second.id))
+            .bounds()
+            .origin
+            .y;
+        assert!(second_top < first_top);
+    })
+    .unwrap();
+
+    let stored: Vec<String> = list_items::all(&Database::open(&path).unwrap(), &seeded[0].id)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(stored, ["Second", "First"]);
+}
+
+#[gpui_kit::test]
+fn moving_a_list_item_up_changes_the_order(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let first = seed_item(&path, MediaKind::Movie, "First", None).unwrap();
+    let second = seed_item(&path, MediaKind::Book, "Second", None).unwrap();
+    let third = seed_item(&path, MediaKind::Game, "Third", None).unwrap();
+    add_membership(&path, &seeded[0].id, &first.id).unwrap();
+    add_membership(&path, &seeded[0].id, &second.id).unwrap();
+    add_membership(&path, &seeded[0].id, &third.id).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("move-up-{}", third.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored: Vec<String> = list_items::all(&Database::open(&path).unwrap(), &seeded[0].id)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(stored, ["First", "Third", "Second"]);
+}
+
+#[gpui_kit::test]
+fn list_item_move_buttons_stop_at_the_edges(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let first = seed_item(&path, MediaKind::Movie, "First", None).unwrap();
+    let second = seed_item(&path, MediaKind::Book, "Second", None).unwrap();
+    add_membership(&path, &seeded[0].id, &first.id).unwrap();
+    add_membership(&path, &seeded[0].id, &second.id).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(format!("move-up-{}", first.id)).visible());
+        assert!(window.find(format!("move-down-{}", second.id)).visible());
+        window.click(format!("move-up-{}", first.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("move-down-{}", second.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored: Vec<String> = list_items::all(&Database::open(&path).unwrap(), &seeded[0].id)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(stored, ["First", "Second"]);
+}
+
+#[gpui_kit::test]
 fn editing_an_item_from_a_list_returns_to_the_list(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
