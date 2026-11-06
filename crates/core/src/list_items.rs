@@ -18,6 +18,24 @@ impl Membership {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Sort {
+    Manual,
+    Title,
+    Year,
+}
+
+pub fn sort_items(items: &mut [&Item], sort: Sort) {
+    match sort {
+        Sort::Manual => {}
+        Sort::Title => items.sort_by_cached_key(|item| item.title.to_lowercase()),
+        Sort::Year => items.sort_by_key(|item| match item.release_year {
+            Some(year) => (0, year),
+            None => (1, 0),
+        }),
+    }
+}
+
 pub fn memberships(database: &Database) -> Result<Vec<Membership>> {
     let mut statement = database
         .connection()
@@ -169,7 +187,7 @@ pub fn all(database: &Database, list_id: &str) -> Result<Vec<Item>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Membership, add, all, memberships, move_down, move_up, remove};
+    use super::{Membership, Sort, add, all, memberships, move_down, move_up, remove, sort_items};
     use crate::media::MediaKind;
     use crate::{Database, items, lists};
 
@@ -298,6 +316,88 @@ mod tests {
         assert!(move_up(&database, &list.id, &third.id).unwrap());
 
         assert_eq!(titles(&database, &list.id), ["C", "A"]);
+    }
+
+    fn three_items(database: &Database) -> (lists::List, Vec<items::Item>) {
+        let list = lists::create(database, "Queue").unwrap();
+        let zebra = items::create(database, MediaKind::Movie, "Zebra", Some(2001)).unwrap();
+        let apple = items::create(database, MediaKind::Book, "apple", Some(1999)).unwrap();
+        let mango = items::create(database, MediaKind::Game, "Mango", None).unwrap();
+        add(database, &list.id, &zebra.id).unwrap();
+        add(database, &list.id, &apple.id).unwrap();
+        add(database, &list.id, &mango.id).unwrap();
+
+        let stored = all(database, &list.id).unwrap();
+        (list, stored)
+    }
+
+    fn view_titles(items: &[&items::Item]) -> Vec<String> {
+        items.iter().map(|item| item.title.clone()).collect()
+    }
+
+    #[test]
+    fn manual_sort_keeps_the_position_order() {
+        let database = database();
+        let (_, stored) = three_items(&database);
+        let mut view: Vec<&items::Item> = stored.iter().collect();
+
+        sort_items(&mut view, Sort::Manual);
+
+        assert_eq!(view_titles(&view), ["Zebra", "apple", "Mango"]);
+    }
+
+    #[test]
+    fn title_sort_ignores_case() {
+        let database = database();
+        let (_, stored) = three_items(&database);
+        let mut view: Vec<&items::Item> = stored.iter().collect();
+
+        sort_items(&mut view, Sort::Title);
+
+        assert_eq!(view_titles(&view), ["apple", "Mango", "Zebra"]);
+    }
+
+    #[test]
+    fn year_sort_puts_unknown_years_last() {
+        let database = database();
+        let (_, stored) = three_items(&database);
+        let mut view: Vec<&items::Item> = stored.iter().collect();
+
+        sort_items(&mut view, Sort::Year);
+
+        assert_eq!(view_titles(&view), ["apple", "Zebra", "Mango"]);
+    }
+
+    #[test]
+    fn sorting_a_view_does_not_change_the_stored_positions() {
+        let database = database();
+        let (list, stored) = three_items(&database);
+        let mut view: Vec<&items::Item> = stored.iter().collect();
+
+        sort_items(&mut view, Sort::Title);
+
+        let stored_titles: Vec<String> = all(&database, &list.id)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.title)
+            .collect();
+        assert_eq!(stored_titles, ["Zebra", "apple", "Mango"]);
+    }
+
+    #[test]
+    fn sorting_keeps_the_manual_order_for_equal_years() {
+        let database = database();
+        let list = lists::create(&database, "Queue").unwrap();
+        let first = items::create(&database, MediaKind::Movie, "First", Some(2001)).unwrap();
+        let second = items::create(&database, MediaKind::Book, "Second", Some(2001)).unwrap();
+        add(&database, &list.id, &first.id).unwrap();
+        add(&database, &list.id, &second.id).unwrap();
+        let stored = all(&database, &list.id).unwrap();
+        let mut view: Vec<&items::Item> = stored.iter().collect();
+
+        sort_items(&mut view, Sort::Year);
+
+        assert_eq!(view_titles(&view), ["First", "Second"]);
     }
 
     #[test]
