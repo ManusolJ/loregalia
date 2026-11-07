@@ -1,10 +1,10 @@
+use crate::providers::{Candidate, Source};
 use crate::{Error, Result};
 use serde::Deserialize;
 use std::time::Duration;
 
 const BASE_URL: &str = "https://api.tvmaze.com";
 const SEARCH_PATH: &str = "/search/shows";
-pub const SOURCE: &str = "tvmaze";
 const USER_AGENT: &str = concat!(
     "Loregalia/",
     env!("CARGO_PKG_VERSION"),
@@ -18,6 +18,18 @@ pub struct Show {
     pub title: String,
     pub release_year: Option<i32>,
     pub cover_url: Option<String>,
+}
+
+impl From<Show> for Candidate {
+    fn from(show: Show) -> Self {
+        Self {
+            source: Source::TvMaze,
+            external_id: show.external_id.to_string(),
+            title: show.title,
+            release_year: show.release_year,
+            cover_url: show.cover_url,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -56,6 +68,10 @@ fn release_year(premiered: Option<&str>) -> Option<i32> {
 
 pub fn search(query: &str) -> Result<Vec<Show>> {
     search_at(BASE_URL, query, TIMEOUT)
+}
+
+pub fn search_candidates(query: &str) -> Result<Vec<Candidate>> {
+    Ok(search(query)?.into_iter().map(Candidate::from).collect())
 }
 
 pub fn search_json(query: &str) -> Result<String> {
@@ -161,6 +177,27 @@ mod tests {
                         .to_owned()
                 ),
             }
+        );
+    }
+
+    #[test]
+    fn a_show_becomes_a_tvmaze_candidate() {
+        let show = Show {
+            external_id: 42,
+            title: "Dark".to_owned(),
+            release_year: Some(2017),
+            cover_url: Some("https://example.test/dark.jpg".to_owned()),
+        };
+
+        let candidate: crate::providers::Candidate = show.into();
+
+        assert_eq!(candidate.source, crate::providers::Source::TvMaze);
+        assert_eq!(candidate.external_id, "42");
+        assert_eq!(candidate.title, "Dark");
+        assert_eq!(candidate.release_year, Some(2017));
+        assert_eq!(
+            candidate.cover_url.as_deref(),
+            Some("https://example.test/dark.jpg")
         );
     }
 

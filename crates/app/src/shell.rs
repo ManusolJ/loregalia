@@ -13,14 +13,16 @@ use gpui_kit::{
     Window, div, px, rgb,
 };
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind,
-    providers::tvmaze, seasons, settings, statuses, tags,
+    Database, Result as CoreResult, items, list_items, lists, log,
+    media::MediaKind,
+    providers::{self, Candidate, Source},
+    seasons, settings, statuses, tags,
 };
 
 use crate::startup::StorageState;
 use crate::theme::Palette;
 
-pub type ShowSearch = Arc<dyn Fn(&str) -> CoreResult<Vec<tvmaze::Show>> + Send + Sync>;
+pub type MetadataSearch = Arc<dyn Fn(MediaKind, &str) -> CoreResult<Vec<Candidate>> + Send + Sync>;
 
 const RAIL_WIDTH: f32 = 64.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
@@ -37,10 +39,10 @@ fn season_number(value: &str) -> Option<i32> {
         .filter(|number| *number >= 0)
 }
 
-fn show_result_label(show: &tvmaze::Show, already_added: bool) -> String {
-    let label = match show.release_year {
-        Some(year) => format!("{} ({year})", show.title),
-        None => show.title.clone(),
+fn candidate_label(candidate: &Candidate, already_added: bool) -> String {
+    let label = match candidate.release_year {
+        Some(year) => format!("{} ({year})", candidate.title),
+        None => candidate.title.clone(),
     };
 
     if already_added {
@@ -61,7 +63,7 @@ pub fn sidebar_width(window_width: Pixels) -> Pixels {
 pub struct Shell {
     storage: StorageState,
     log_path: Option<PathBuf>,
-    show_search: ShowSearch,
+    metadata_search: MetadataSearch,
     theme: settings::Theme,
     settings_screen: bool,
     settings_error: Option<String>,
@@ -110,7 +112,7 @@ enum SearchStatus {
     Searching,
     Empty,
     Failed(String),
-    Results(Vec<tvmaze::Show>),
+    Results(Vec<Candidate>),
 }
 
 struct ListItemActions<'a> {
@@ -180,27 +182,21 @@ impl Shell {
         theme: settings::Theme,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_search(
-            storage,
-            log_path,
-            theme,
-            Arc::new(|query: &str| tvmaze::search(query)),
-            cx,
-        )
+        Self::new_with_search(storage, log_path, theme, Arc::new(providers::search), cx)
     }
 
     pub fn new_with_search(
         storage: StorageState,
         log_path: Option<PathBuf>,
         theme: settings::Theme,
-        show_search: ShowSearch,
+        metadata_search: MetadataSearch,
         cx: &mut Context<Self>,
     ) -> Self {
         let loading = matches!(&storage, StorageState::Ready(_));
         let mut shell = Self {
             storage,
             log_path,
-            show_search,
+            metadata_search,
             theme,
             settings_screen: false,
             settings_error: None,
@@ -541,28 +537,28 @@ impl Shell {
         let Some(editor) = &mut self.item_editor else {
             return;
         };
+        if editor.kind == kind {
+            return;
+        }
 
         editor.kind = kind;
+        editor.search_request += 1;
+        editor.search = SearchStatus::Idle;
+        editor.lookup = None;
 
-        if kind == MediaKind::Show {
-            if editor.id.is_none() && editor.search_input.is_none() {
-                editor.search_input =
-                    Some(cx.new(|cx| InputState::new(window, cx).placeholder("Search TVmaze")));
-            }
-        } else {
-            editor.search_request += 1;
-            editor.search = SearchStatus::Idle;
-            editor.lookup = None;
+        if providers::supported(kind) && editor.id.is_none() && editor.search_input.is_none() {
+            editor.search_input =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Search by title")));
         }
 
         cx.notify();
     }
 
-    fn search_shows(&mut self, cx: &mut Context<Self>) {
+    fn search_metadata(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = &mut self.item_editor else {
             return;
         };
-        if editor.id.is_some() || editor.kind != MediaKind::Show {
+        if editor.id.is_some() || !providers::supported(editor.kind) {
             return;
         }
         let Some(input) = &editor.search_input else {
@@ -575,11 +571,12 @@ impl Shell {
 
         editor.search_request += 1;
         let request = editor.search_request;
+        let kind = editor.kind;
         editor.search = SearchStatus::Searching;
-        let search = self.show_search.clone();
+        let search = self.metadata_search.clone();
         cx.notify();
 
-        let task = cx.background_spawn(async move { search(&query) });
+        let task = cx.background_spawn(async move { search(kind, &query) });
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -587,14 +584,14 @@ impl Shell {
                 let Some(editor) = &mut this.item_editor else {
                     return;
                 };
-                if editor.search_request != request || editor.kind != MediaKind::Show {
+                if editor.search_request != request || editor.kind != kind {
                     return;
                 }
 
                 let mut failure = None;
                 editor.search = match result {
-                    Ok(shows) if shows.is_empty() => SearchStatus::Empty,
-                    Ok(shows) => SearchStatus::Results(shows),
+                    Ok(results) if results.is_empty() => SearchStatus::Empty,
+                    Ok(results) => SearchStatus::Results(results),
                     Err(error) => {
                         let message = error.to_string();
                         failure = Some(message.clone());
@@ -603,7 +600,7 @@ impl Shell {
                 };
 
                 if let Some(message) = failure {
-                    this.record(&format!("TVmaze search failed: {message}"), cx);
+                    this.record(&format!("Metadata search failed: {message}"), cx);
                 }
                 cx.notify();
             });
@@ -613,33 +610,34 @@ impl Shell {
 
     fn select_search_result(
         &mut self,
-        external_id: i64,
+        source: Source,
+        external_id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(editor) = &mut self.item_editor else {
             return;
         };
-        let shows = match &editor.search {
-            SearchStatus::Results(shows) => shows,
+        let results = match &editor.search {
+            SearchStatus::Results(results) => results,
             _ => return,
         };
-        let Some(show) = shows
+        let Some(candidate) = results
             .iter()
-            .find(|show| show.external_id == external_id)
+            .find(|candidate| candidate.source == source && candidate.external_id == external_id)
             .cloned()
         else {
             return;
         };
 
         editor.lookup = Some(items::Lookup {
-            source: tvmaze::SOURCE.to_owned(),
-            external_id: show.external_id.to_string(),
-            cover_url: show.cover_url.clone(),
+            source: candidate.source,
+            external_id: candidate.external_id.clone(),
+            cover_url: candidate.cover_url.clone(),
         });
 
-        let title = show.title;
-        let year = show
+        let title = candidate.title;
+        let year = candidate
             .release_year
             .map(|year| year.to_string())
             .unwrap_or_default();
@@ -1763,8 +1761,8 @@ impl Shell {
                     .aria_label("Release year"),
             );
 
-        if editor.id.is_none() && editor.kind == MediaKind::Show {
-            panel = panel.child(self.show_search_element(editor, palette, cx));
+        if editor.id.is_none() && providers::supported(editor.kind) {
+            panel = panel.child(self.metadata_search_element(editor, palette, cx));
         }
 
         if let Some(duplicate) = duplicate {
@@ -1804,16 +1802,14 @@ impl Shell {
             .into_any_element()
     }
 
-    fn has_show(&self, show: &tvmaze::Show) -> bool {
-        let external_id = show.external_id.to_string();
-
+    fn has_candidate(&self, candidate: &Candidate) -> bool {
         self.items.iter().any(|item| {
-            item.source.as_deref() == Some(tvmaze::SOURCE)
-                && item.external_id.as_deref() == Some(external_id.as_str())
+            item.source.as_deref() == Some(candidate.source.key())
+                && item.external_id.as_deref() == Some(candidate.external_id.as_str())
         })
     }
 
-    fn show_search_element(
+    fn metadata_search_element(
         &self,
         editor: &ItemEditor,
         palette: &Palette,
@@ -1824,28 +1820,37 @@ impl Shell {
         };
         let query = input.read(cx).value().trim().to_owned();
         let searching = matches!(editor.search, SearchStatus::Searching);
+        let source_label = providers::source(editor.kind)
+            .map(Source::label)
+            .unwrap_or("metadata");
 
         let mut panel = div()
-            .id("show-search")
+            .id("metadata-search")
             .test_support()
-            .aria_label("Search TVmaze")
+            .aria_label("Search metadata")
             .flex()
             .flex_col()
             .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(palette.muted))
+                    .child(format!("Results from {source_label}")),
+            )
             .child(
                 div()
                     .flex()
                     .gap_2()
                     .child(
                         Input::new(input)
-                            .id("show-search-input")
-                            .aria_label("Search TVmaze"),
+                            .id("metadata-search-input")
+                            .aria_label("Search by title"),
                     )
                     .child(
-                        Button::new("search-shows")
+                        Button::new("search-metadata")
                             .label("Search")
                             .disabled(query.is_empty() || searching)
-                            .on_click(cx.listener(|this, _, _, cx| this.search_shows(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.search_metadata(cx))),
                     ),
             );
 
@@ -1853,27 +1858,27 @@ impl Shell {
             SearchStatus::Idle => panel,
             SearchStatus::Searching => panel.child(
                 div()
-                    .id("show-search-loading")
+                    .id("metadata-search-loading")
                     .role(Role::Status)
                     .test_support()
-                    .aria_label("Searching TVmaze")
+                    .aria_label(format!("Searching {source_label}"))
                     .text_color(rgb(palette.muted))
                     .text_xs()
-                    .child("Searching TVmaze"),
+                    .child(format!("Searching {source_label}")),
             ),
             SearchStatus::Empty => panel.child(
                 div()
-                    .id("show-search-empty")
+                    .id("metadata-search-empty")
                     .role(Role::Status)
                     .test_support()
-                    .aria_label("No matches on TVmaze")
+                    .aria_label(format!("No matches on {source_label}"))
                     .text_color(rgb(palette.muted))
                     .text_xs()
-                    .child("No matches on TVmaze"),
+                    .child(format!("No matches on {source_label}")),
             ),
             SearchStatus::Failed(message) => panel.child(
                 div()
-                    .id("show-search-failed")
+                    .id("metadata-search-failed")
                     .role(Role::Alert)
                     .test_support()
                     .aria_label(message.clone())
@@ -1881,23 +1886,25 @@ impl Shell {
                     .text_xs()
                     .child(message.clone()),
             ),
-            SearchStatus::Results(shows) => {
-                let results = shows.iter().map(|show| {
-                    let already_added = self.has_show(show);
-                    let label = show_result_label(show, already_added);
-                    let external_id = show.external_id;
+            SearchStatus::Results(results) => {
+                let results = results.iter().map(|candidate| {
+                    let already_added = self.has_candidate(candidate);
+                    let label = candidate_label(candidate, already_added);
+                    let source = candidate.source;
+                    let external_id = candidate.external_id.clone();
+                    let id = format!("search-result-{}-{}", source.key(), external_id);
 
-                    Button::new(format!("search-result-{external_id}"))
+                    Button::new(id)
                         .label(label)
                         .disabled(already_added)
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            this.select_search_result(external_id, window, cx)
+                            this.select_search_result(source, external_id.clone(), window, cx)
                         }))
                 });
 
                 panel.child(
                     div()
-                        .id("show-search-results")
+                        .id("metadata-search-results")
                         .test_support()
                         .flex()
                         .flex_col()
