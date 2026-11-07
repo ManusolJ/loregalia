@@ -1081,6 +1081,184 @@ fn switching_away_from_shows_clears_the_lookup(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_hand_typed_duplicate_warns_but_can_be_saved(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(1984)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dune");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let warning = window.find("item-duplicate-warning");
+        assert!(warning.visible());
+        assert_eq!(warning.role(), Some(Role::Alert));
+        assert_eq!(
+            warning.label(),
+            Some(r#""Dune" is already in your library. You can still save it."#)
+        );
+        assert_eq!(window.find("save-item").label(), Some("Save anyway"));
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 2);
+    assert!(
+        stored
+            .iter()
+            .all(|item| item.media_kind == MediaKind::Movie)
+    );
+    assert!(
+        stored
+            .iter()
+            .all(|item| item.title.eq_ignore_ascii_case("dune"))
+    );
+}
+
+#[gpui_kit::test]
+fn a_duplicate_of_another_media_kind_does_not_warn(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Book, "Dune", Some(1965)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Dune");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.try_find("item-duplicate-warning").is_none());
+        assert_eq!(window.find("save-item").label(), Some("Save"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_duplicate_warning_tracks_the_selected_kind(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(1984)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Dune");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-duplicate-warning").visible());
+        window.click("item-kind-book", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("item-duplicate-warning").is_none());
+        window.click("item-kind-movie", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-duplicate-warning").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_looked_up_show_does_not_warn_about_the_same_hand_typed_title(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let search: ShowSearch = Arc::new(|_| Ok(vec![found_show()]));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-result-42", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.try_find("item-duplicate-warning").is_none());
+        assert_eq!(window.find("save-item").label(), Some("Save"));
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored[0].source, None);
+    assert_eq!(stored[1].source.as_deref(), Some(tvmaze::SOURCE));
+    assert!(stored.iter().all(|item| item.title == "Dark"));
+}
+
+#[gpui_kit::test]
 fn item_rows_show_the_status_chip(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");

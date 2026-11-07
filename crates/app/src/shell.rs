@@ -1575,6 +1575,16 @@ impl Shell {
         let title = editor.title.read(cx).value().trim().to_owned();
         let year = editor.year.read(cx).value().trim().to_owned();
         let can_save = !title.is_empty() && (year.is_empty() || year.parse::<i32>().is_ok());
+        let duplicate = if editor.id.is_none() && editor.lookup.is_none() {
+            items::duplicate(&self.items, editor.kind, &title)
+        } else {
+            None
+        };
+        let save_label = if duplicate.is_some() {
+            "Save anyway"
+        } else {
+            "Save"
+        };
         let heading = if editor.id.is_some() {
             "Edit item"
         } else {
@@ -1612,6 +1622,23 @@ impl Shell {
             panel = panel.child(self.show_search_element(editor, palette, cx));
         }
 
+        if let Some(duplicate) = duplicate {
+            let message = format!(
+                "\"{}\" is already in your library. You can still save it.",
+                duplicate.title
+            );
+            panel = panel.child(
+                div()
+                    .id("item-duplicate-warning")
+                    .role(Role::Alert)
+                    .test_support()
+                    .aria_label(message.clone())
+                    .text_color(rgb(palette.status_paused))
+                    .text_xs()
+                    .child(message),
+            );
+        }
+
         panel
             .child(
                 div()
@@ -1619,7 +1646,7 @@ impl Shell {
                     .gap_2()
                     .child(
                         Button::new("save-item")
-                            .label("Save")
+                            .label(save_label)
                             .disabled(!can_save)
                             .on_click(cx.listener(|this, _, _, cx| this.save_item(cx))),
                     )

@@ -110,6 +110,17 @@ pub fn create_from_lookup(
         })
 }
 
+pub fn duplicate<'a>(items: &'a [Item], media_kind: MediaKind, title: &str) -> Option<&'a Item> {
+    let title = title.trim().to_lowercase();
+    if title.is_empty() {
+        return None;
+    }
+
+    items
+        .iter()
+        .find(|item| item.media_kind == media_kind && item.title.trim().to_lowercase() == title)
+}
+
 pub fn all(database: &Database) -> Result<Vec<Item>> {
     let mut statement = database.connection().prepare(
         "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url
@@ -201,7 +212,9 @@ pub fn delete(database: &Database, id: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, Lookup, all, create, create_from_lookup, delete, set_status, update};
+    use super::{
+        Item, Lookup, all, create, create_from_lookup, delete, duplicate, set_status, update,
+    };
     use crate::Database;
     use crate::Error;
     use crate::media::MediaKind;
@@ -412,6 +425,36 @@ mod tests {
         create(&database, MediaKind::Movie, "Dune", Some(2021)).unwrap();
 
         assert_eq!(all(&database).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_duplicate_is_found_by_title_and_kind_ignoring_case() {
+        let database = database();
+        let existing = create(&database, MediaKind::Movie, "Dune", Some(1984)).unwrap();
+        let stored = all(&database).unwrap();
+
+        assert_eq!(
+            duplicate(&stored, MediaKind::Movie, "  dUnE  "),
+            Some(&existing)
+        );
+        assert_eq!(duplicate(&stored, MediaKind::Book, "Dune"), None);
+        assert_eq!(duplicate(&stored, MediaKind::Movie, "Dune Messiah"), None);
+        assert_eq!(duplicate(&stored, MediaKind::Movie, "   "), None);
+    }
+
+    #[test]
+    fn a_looked_up_item_can_match_a_hand_typed_title() {
+        let database = database();
+        let lookup = Lookup {
+            source: "tvmaze".to_owned(),
+            external_id: "42".to_owned(),
+            cover_url: None,
+        };
+        let existing =
+            create_from_lookup(&database, MediaKind::Show, "Dark", Some(2017), &lookup).unwrap();
+        let stored = all(&database).unwrap();
+
+        assert_eq!(duplicate(&stored, MediaKind::Show, "dark"), Some(&existing));
     }
 
     #[test]
