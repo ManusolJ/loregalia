@@ -98,11 +98,14 @@ them.
 
 ## Relay
 
-Planned, not built (D-11, D-24). Hosting is D-26, and where its code lives is D-27.
+Planned, not built (D-11, D-24). It runs on the owner's server at home for now, and moves to a VPS
+if the app grows (D-26). Where its code lives is D-27.
 
 - **Relay only:** it forwards search and details for TMDB and IGDB, and nothing else, so it cannot
   be used as a general proxy for the project's keys.
-- **Keys:** they live in the host's secret settings, never in the repo, the app or a log.
+- **Keys:** they live in the server's configuration, never in the repo, the app or a log.
+- **A stable address:** the app reaches the relay by a domain name over HTTPS, never by an IP
+  address, so moving it to a VPS needs no app update.
 - **Public by design:** a desktop app cannot hide a password, so anyone can call the relay. Narrow
   endpoints and per-client rate limits are the protection. IGDB's 4 requests per second is shared by
   every user.
@@ -112,6 +115,8 @@ Planned, not built (D-11, D-24). Hosting is D-26, and where its code lives is D-
   needs them. Say so in the app's privacy note.
 - **The app works without it:** saved items, hand entry, TVmaze and Open Library keep working when
   the relay is down, and a user's own keys skip it entirely.
+- **AniDB later:** when anime moves to AniDB (D-28), the relay holds the registered client, caches
+  results and the daily title dump, and keeps to AniDB's limits for every user at once.
 - **Deploying is a human task:** agents build and test it against saved responses only.
 - **Sync is separate:** sync across devices stays out of scope (`PRODUCT.md`). If it comes later,
   build it as its own service, so the relay stays small and the app stays usable offline.

@@ -30,7 +30,8 @@ commercial license, and IGDB needs a partnership.
     flow as being for
     [apps that can securely store a secret](https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/),
     and a desktop installer cannot. This is why the secret stays on the relay.
-  - **TMDB's** pages do not say whether one key may serve many users through a relay. Ask TMDB.
+  - **TMDB's** pages do not say whether one key may serve many users through a relay. The project
+    assumes it may (see Assumptions).
 - **TMDB data must be refreshed or removed within six months.** Store its ID, refresh details and
   images before they expire, and never let the user's own fields depend on them.
 - **Cover shapes:** TVmaze has poster images, and IGDB's `cover_big` is 264 x 374, both close to the
@@ -53,7 +54,7 @@ the top result. Anime films come from TMDB.
 | [MyAnimeList](https://myanimelist.net/static/apiagreement.html) | Free apps allowed, but the Client ID may not be shared, so each user would need their own |
 | [Jikan](https://docs.api.jikan.moe/) | Scrapes MyAnimeList, whose agreement bans scraping by API users |
 | [Kitsu](https://kitsu.app/terms) | Public API, but its terms grant a personal license; not cleared |
-| AniDB | API page could not be read |
+| AniDB | Has an HTTP API, but needs a registered client name and version, allows about one request every two seconds, and bans clients that go over. It asks clients to [cache locally](https://wiki.anidb.net/Udp), and search usually works from its title dump, downloaded at most once a day. Its wiki blocks automated reads, so these come from its UDP spec and [user reports](https://www.filebot.net/forums/viewtopic.php?p=51839) |
 
 ## Games without IGDB (checked 2026-11-07)
 
@@ -82,16 +83,20 @@ relay (see `ARCHITECTURE.md`).
 
 - **IGDB storage:** IGDB's FAQ prefers local storage, but the
   [Twitch agreement](https://legal.twitch.com/legal/developer-agreement/) that governs its API limits
-  caching to 24 hours without authorization. Ask IGDB, or follow the stricter rule, before release.
+  caching to 24 hours without authorization. Follow the stricter rule: 24 hours.
 - **Open Library's license:** it asserts no new rights, but warns that individual records may have
   existing rights issues. Its pages do not state CC0.
-- **Donations:** TMDB calls a project commercial if "the primary purpose is to create revenue", but
-  its terms also ban revenue "directly or indirectly", and neither TMDB nor IGDB mentions donations.
-  Confirm D-25 with both by email.
-- **Relays:** neither TMDB nor IGDB says whether one key may serve many users through a relay. Ask
-  both before release.
 - **Local AI use:** TMDB's terms prohibit training AI systems on its content, so never put its data
   into training sets.
+
+## Assumptions
+
+The project is built on these. If a source says otherwise, the design changes then.
+
+- **Donations:** a free app with an optional Ko-fi link is non-commercial for TMDB and IGDB (D-25).
+  TMDB calls a project commercial if "the primary purpose is to create revenue", but its terms also
+  ban revenue "directly or indirectly", and neither source mentions donations.
+- **Relays:** one key may serve every user through the relay (D-11). Neither TMDB nor IGDB says.
 
 ## Rejected for now
 
