@@ -4,6 +4,7 @@ use std::time::Duration;
 
 const BASE_URL: &str = "https://api.tvmaze.com";
 const SEARCH_PATH: &str = "/search/shows";
+pub const SOURCE: &str = "tvmaze";
 const USER_AGENT: &str = concat!(
     "Loregalia/",
     env!("CARGO_PKG_VERSION"),

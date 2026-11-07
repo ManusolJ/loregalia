@@ -9,6 +9,7 @@ pub enum Error {
     EmptyTagName,
     DuplicateTagName,
     UnknownShow,
+    DuplicateLookup,
     SeasonsOnlyForShows,
     DuplicateSeason,
     InvalidSeasonNumber,
@@ -39,6 +40,9 @@ impl std::fmt::Display for Error {
             Self::EmptyTagName => formatter.write_str("a tag needs a name"),
             Self::DuplicateTagName => formatter.write_str("another tag already has that name"),
             Self::UnknownShow => formatter.write_str("the show does not exist"),
+            Self::DuplicateLookup => {
+                formatter.write_str("an item from that source is already in the library")
+            }
             Self::SeasonsOnlyForShows => formatter.write_str("seasons belong only to shows"),
             Self::DuplicateSeason => formatter.write_str("the show already has that season"),
             Self::InvalidSeasonNumber => formatter.write_str("a season number cannot be negative"),
@@ -69,6 +73,7 @@ impl std::error::Error for Error {
             | Self::EmptyTagName
             | Self::DuplicateTagName
             | Self::UnknownShow
+            | Self::DuplicateLookup
             | Self::SeasonsOnlyForShows
             | Self::DuplicateSeason
             | Self::InvalidSeasonNumber

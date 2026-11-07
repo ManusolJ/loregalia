@@ -4,13 +4,15 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Pixels, Point, Result, Role, Size, TestAppContext,
     WindowBounds, WindowOptions, px, size,
 };
-use loregalia_app::shell::Shell;
+use loregalia_app::shell::{Shell, ShowSearch};
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, media::MediaKind, seasons, tags,
+    Database, Error, Result as CoreResult, items, list_items, lists, media::MediaKind,
+    providers::tvmaze, seasons, tags,
 };
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn open_shell(
@@ -36,6 +38,41 @@ fn open_shell(
 
         Ok(window)
     })
+}
+
+fn open_shell_with_search(
+    cx: &mut TestAppContext,
+    window_size: Size<Pixels>,
+    storage: StorageState,
+    log_path: Option<PathBuf>,
+    search: ShowSearch,
+) -> Result<AnyWindowHandle> {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::apply(ThemeMode::Dark, cx);
+
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Point::default(),
+                size: window_size,
+            })),
+            ..Default::default()
+        };
+        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| Shell::new_with_search(storage, log_path, search, cx))
+        })?;
+
+        Ok(window)
+    })
+}
+
+fn found_show() -> tvmaze::Show {
+    tvmaze::Show {
+        external_id: 42,
+        title: "Dark".to_owned(),
+        release_year: Some(2017),
+        cover_url: Some("https://example.test/dark.jpg".to_owned()),
+    }
 }
 
 fn ready(temporary: &TempDir) -> StorageState {
@@ -711,6 +748,336 @@ fn editing_an_item_updates_it(cx: &mut TestAppContext) {
     assert_eq!(stored[0].title, "Dune Messiah");
     assert_eq!(stored[0].media_kind, MediaKind::Book);
     assert_eq!(stored[0].release_year, Some(1984));
+}
+
+#[gpui_kit::test]
+fn searching_tvmaze_adds_the_chosen_show(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let search: ShowSearch = Arc::new(|query: &str| {
+        if query == "dark" {
+            Ok(vec![found_show()])
+        } else {
+            Ok(Vec::new())
+        }
+    });
+
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("search-result-42").label(), Some("Dark (2017)"));
+        window.click("search-result-42", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].media_kind, MediaKind::Show);
+    assert_eq!(stored[0].title, "Dark");
+    assert_eq!(stored[0].release_year, Some(2017));
+    assert_eq!(stored[0].source.as_deref(), Some(tvmaze::SOURCE));
+    assert_eq!(stored[0].external_id.as_deref(), Some("42"));
+    assert_eq!(
+        stored[0].cover_url.as_deref(),
+        Some("https://example.test/dark.jpg")
+    );
+}
+
+#[gpui_kit::test]
+fn an_empty_show_search_is_not_a_failure(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: ShowSearch = Arc::new(|_| Ok(Vec::new()));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "zzz");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let empty = window.find("show-search-empty");
+        assert!(empty.visible());
+        assert_eq!(empty.role(), Some(Role::Status));
+        assert_eq!(empty.label(), Some("No matches on TVmaze"));
+        assert!(window.try_find("show-search-failed").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_show_search_is_shown_as_an_alert(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: ShowSearch = Arc::new(|_| Err(Error::ConnectionFailed));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let failed = window.find("show-search-failed");
+        assert!(failed.visible());
+        assert_eq!(failed.role(), Some(Role::Alert));
+        assert!(
+            failed
+                .label()
+                .is_some_and(|label| label.contains("could not connect"))
+        );
+        assert!(window.try_find("show-search-empty").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_show_already_in_the_library_cannot_be_added_twice(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let lookup = items::Lookup {
+        source: tvmaze::SOURCE.to_owned(),
+        external_id: "42".to_owned(),
+        cover_url: None,
+    };
+    items::create_from_lookup(
+        &Database::open(&path).unwrap(),
+        MediaKind::Show,
+        "Dark",
+        Some(2017),
+        &lookup,
+    )
+    .unwrap();
+    let search: ShowSearch = Arc::new(|_| Ok(vec![found_show()]));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let result = window.find("search-result-42");
+        assert!(result.visible());
+        assert_eq!(result.label(), Some("Dark (2017) (already added)"));
+        assert_eq!(result.disabled(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_show_search_appears_only_for_new_shows(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let search: ShowSearch = Arc::new(|_| Ok(vec![found_show()]));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("show-search").is_none());
+        window.click("item-kind-show", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("show-search").visible());
+        assert_eq!(window.find("search-shows").disabled(), Some(true));
+        window.click("cancel-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-edit-{}", item.id), cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+        assert!(window.try_find("show-search").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn switching_away_from_shows_clears_the_lookup(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let search: ShowSearch = Arc::new(|_| Ok(vec![found_show()]));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-result-42", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-movie", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("show-search").is_none());
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].media_kind, MediaKind::Movie);
+    assert_eq!(stored[0].title, "Dark");
+    assert_eq!(stored[0].source, None);
+    assert_eq!(stored[0].external_id, None);
+    assert_eq!(stored[0].cover_url, None);
 }
 
 #[gpui_kit::test]

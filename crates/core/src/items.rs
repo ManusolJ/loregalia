@@ -11,6 +11,16 @@ pub struct Item {
     pub release_date: Option<String>,
     pub finished_at: Option<String>,
     pub status_id: String,
+    pub source: Option<String>,
+    pub external_id: Option<String>,
+    pub cover_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Lookup {
+    pub source: String,
+    pub external_id: String,
+    pub cover_url: Option<String>,
 }
 
 impl Item {
@@ -23,6 +33,9 @@ impl Item {
             release_date: row.get(4)?,
             finished_at: row.get(5)?,
             status_id: row.get(6)?,
+            source: row.get(7)?,
+            external_id: row.get(8)?,
+            cover_url: row.get(9)?,
         })
     }
 }
@@ -49,16 +62,57 @@ pub fn create(
                      (SELECT id FROM statuses
                       WHERE media_kind = ?2 AND category = 'planned'),
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id",
+             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url",
             params![id, media_kind.key(), title, release_year],
             Item::from_row,
         )
         .map_err(Error::from)
 }
 
+pub fn create_from_lookup(
+    database: &Database,
+    media_kind: MediaKind,
+    title: &str,
+    release_year: Option<i32>,
+    lookup: &Lookup,
+) -> Result<Item> {
+    let id = Uuid::now_v7().to_string();
+
+    database
+        .connection()
+        .query_row(
+            "INSERT INTO items
+                 (id, media_kind, title, release_year, status_id, source, external_id, cover_url, created_at)
+             VALUES (?1, ?2, ?3, ?4,
+                     (SELECT id FROM statuses
+                      WHERE media_kind = ?2 AND category = 'planned'),
+                     ?5, ?6, ?7,
+                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url",
+            params![
+                id,
+                media_kind.key(),
+                title,
+                release_year,
+                lookup.source.as_str(),
+                lookup.external_id.as_str(),
+                lookup.cover_url.as_deref()
+            ],
+            Item::from_row,
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Error::DuplicateLookup
+            }
+            error => Error::Sqlite(error),
+        })
+}
+
 pub fn all(database: &Database) -> Result<Vec<Item>> {
     let mut statement = database.connection().prepare(
-        "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id
+        "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url
          FROM items ORDER BY created_at, rowid",
     )?;
     let rows = statement.query_map([], Item::from_row)?;
@@ -147,7 +201,7 @@ pub fn delete(database: &Database, id: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, all, create, delete, set_status, update};
+    use super::{Item, Lookup, all, create, create_from_lookup, delete, set_status, update};
     use crate::Database;
     use crate::Error;
     use crate::media::MediaKind;
@@ -288,6 +342,66 @@ mod tests {
         assert_eq!(stored[0].release_year, Some(2020));
         assert_eq!(stored[0].release_date, None);
         assert_eq!(stored[0].finished_at, None);
+        assert_eq!(stored[0].source, None);
+        assert_eq!(stored[0].external_id, None);
+        assert_eq!(stored[0].cover_url, None);
+    }
+
+    #[test]
+    fn a_looked_up_item_keeps_its_source_and_cover() {
+        let database = database();
+        let lookup = Lookup {
+            source: "tvmaze".to_owned(),
+            external_id: "39235".to_owned(),
+            cover_url: Some("https://example.test/poster.jpg".to_owned()),
+        };
+
+        let created = create_from_lookup(
+            &database,
+            MediaKind::Show,
+            "A Confession",
+            Some(2019),
+            &lookup,
+        )
+        .unwrap();
+
+        assert_eq!(created.source.as_deref(), Some("tvmaze"));
+        assert_eq!(created.external_id.as_deref(), Some("39235"));
+        assert_eq!(
+            created.cover_url.as_deref(),
+            Some("https://example.test/poster.jpg")
+        );
+        assert_eq!(all(&database).unwrap(), vec![created]);
+    }
+
+    #[test]
+    fn the_same_lookup_cannot_be_saved_twice() {
+        let database = database();
+        let lookup = Lookup {
+            source: "tvmaze".to_owned(),
+            external_id: "39235".to_owned(),
+            cover_url: None,
+        };
+        create_from_lookup(
+            &database,
+            MediaKind::Show,
+            "A Confession",
+            Some(2019),
+            &lookup,
+        )
+        .unwrap();
+
+        let error = create_from_lookup(
+            &database,
+            MediaKind::Show,
+            "A Confession",
+            Some(2019),
+            &lookup,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, Error::DuplicateLookup));
+        assert_eq!(all(&database).unwrap().len(), 1);
     }
 
     #[test]
