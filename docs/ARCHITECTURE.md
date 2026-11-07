@@ -7,6 +7,7 @@ in milliseconds without a window.
 ```text
 crates/app    GPUI views, theme, window. Depends on core and gpui-kit.
 crates/core   Domain types, storage, metadata providers. No GPUI.
+crates/relay  Planned: the metadata relay server (D-27). Depends on core, never on GPUI or app.
 xtask         The gate and project rules. Standard library only.
 ```
 
@@ -99,7 +100,8 @@ them.
 ## Relay
 
 Planned, not built (D-11, D-24). It runs on the owner's server at home for now, and moves to a VPS
-if the app grows (D-26). Where its code lives is D-27.
+if the app grows (D-26). Its code lives in `crates/relay` (D-27), and it ships as its own binary,
+deployed separately from the app.
 
 - **Relay only:** it forwards search and details for TMDB and IGDB, and nothing else, so it cannot
   be used as a general proxy for the project's keys.

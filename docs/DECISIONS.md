@@ -31,6 +31,7 @@ one, move it to Decided, with the date.
 | D-24 | Build the relay in Rust                                                  | The same language as the app, so it can share types and provider code with `core`        | 2026-11-07 |
 | D-25 | Loregalia stays free; an optional Ko-fi link may go in About, never tied to a feature or to metadata | Keeps the app non-commercial under TMDB's and IGDB's terms | 2026-11-07 |
 | D-26 | Host the relay on the owner's own server at home; move to a VPS if the app grows | No hosting cost while the app is small; the app reaches the relay by domain name, so a move needs no app update | 2026-11-07 |
+| D-27 | The relay lives in this workspace as `crates/relay`                      | Shares `core`'s types and provider code; one gate, and one change updates both sides     | 2026-11-07 |
 | D-28 | TVmaze for anime now; AniDB, through the relay, when more is needed      | AniDB has an API, and its strict limits and registered client suit a relay that caches   | 2026-11-07 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
@@ -44,7 +45,6 @@ The findings behind these are in `METADATA.md`. Recommendations are suggestions,
 | D-09 | Which source for books?                                           | Open Library: no key. Google Books stays a possible fallback                  |
 | D-12 | How long may covers and details be stored?                        | Follow each source's limit: refresh TMDB within 6 months; resolve IGDB's conflict before release |
 | D-21 | What contact goes in the User-Agent for Open Library's higher limit? | A project address, never a user's personal one                             |
-| D-27 | Does the relay live in this workspace or in its own repo?         | This workspace, as `crates/relay`: one gate, shared types, and one change updates both sides. A separate repo suits a separate release cycle or other contributors |
 
 ## Open: can wait
 

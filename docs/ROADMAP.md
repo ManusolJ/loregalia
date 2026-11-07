@@ -40,7 +40,7 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [ ] Settings: optional user API keys that bypass the relay, stored outside the database and the
       repo
 - [ ] Metadata lookup: provider trait, then each chosen source
-- [ ] Relay: decide D-27, then build the TMDB and IGDB relay in Rust
+- [ ] Relay: build the TMDB and IGDB relay in `crates/relay`, with a gate rule that keeps GPUI out
 - [x] About screen: attribution each source requires
 - [ ] Covers: loading, no-image tile, failure
 - [ ] Theme setting: Dark, Light, System
