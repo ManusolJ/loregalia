@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/app", "crates/core", "xtask"]
+members = ["crates/app", "crates/core", "crates/relay", "xtask"]
 default-members = ["crates/app"]
 resolver = "3"
 
@@ -11,9 +11,12 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+axum = "0.8"
 gpui-kit = "=0.9.0"
 loregalia-core = { path = "crates/core" }
+rusqlite = { version = "0.41", features = ["bundled"] }
 tempfile = "3"
+tokio = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

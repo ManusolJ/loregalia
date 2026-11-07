@@ -1,4 +1,5 @@
 pub mod open_library;
+pub mod relay;
 pub mod tvmaze;
 
 use crate::media::MediaKind;
@@ -6,7 +7,7 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "lowercase")]
 pub enum Source {
     TvMaze,
     OpenLibrary,
@@ -78,6 +79,16 @@ mod tests {
     fn every_source_round_trips_through_its_key() {
         for source in Source::ALL {
             assert_eq!(Source::from_key(source.key()), Some(source));
+        }
+    }
+
+    #[test]
+    fn source_keys_match_their_json_values() {
+        for source in Source::ALL {
+            assert_eq!(
+                serde_json::to_value(source).unwrap(),
+                serde_json::Value::String(source.key().to_owned())
+            );
         }
     }
 
