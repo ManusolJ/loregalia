@@ -113,6 +113,10 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE (show_id, season_number)
     ) STRICT;",
     "ALTER TABLE items ADD COLUMN cover_url TEXT;",
+    "CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    ) STRICT;",
 ];
 
 fn latest_version() -> u32 {
@@ -288,7 +292,43 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 8);
+        assert_eq!(schema_version(database.connection()), 9);
+    }
+
+    #[test]
+    fn a_database_from_before_settings_gets_the_table() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("before-settings.db");
+
+        {
+            let connection = Connection::open(&path).unwrap();
+            for migration in &MIGRATIONS[..8] {
+                connection.execute_batch(migration).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 8).unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO items (id, media_kind, title, created_at, status_id)
+                     VALUES ('movie-1', 'movie', 'Dune', '2026-11-05T00:00:00Z', 'movie-planned');",
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+
+        crate::settings::set(&database, "theme", "light").unwrap();
+        assert_eq!(
+            crate::settings::get(&database, "theme").unwrap(),
+            Some("light".to_owned())
+        );
+        let title: String = database
+            .connection()
+            .query_row("SELECT title FROM items WHERE id = 'movie-1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Dune");
+        assert_eq!(schema_version(database.connection()), 9);
     }
 
     #[test]
@@ -545,20 +585,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 9;")
+                .execute_batch("PRAGMA user_version = 10;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 9,
-                supported: 8
+                found: 10,
+                supported: 9
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 9);
+        assert_eq!(schema_version(&connection), 10);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",

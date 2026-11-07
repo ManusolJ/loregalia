@@ -1,4 +1,3 @@
-use gpui_kit::component::ThemeMode;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Pixels, Point, Result, Role, Size, TestAppContext,
@@ -9,7 +8,7 @@ use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
     Database, Error, Result as CoreResult, items, list_items, lists, media::MediaKind,
-    providers::tvmaze, seasons, tags,
+    providers::tvmaze, seasons, settings, tags,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,7 +22,7 @@ fn open_shell(
 ) -> Result<AnyWindowHandle> {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        theme::apply(ThemeMode::Dark, cx);
+        theme::apply_choice(settings::Theme::Dark, cx);
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -33,7 +32,7 @@ fn open_shell(
             ..Default::default()
         };
         let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new(storage, log_path, cx))
+            cx.new(|cx| Shell::new(storage, log_path, settings::Theme::Dark, cx))
         })?;
 
         Ok(window)
@@ -49,7 +48,7 @@ fn open_shell_with_search(
 ) -> Result<AnyWindowHandle> {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        theme::apply(ThemeMode::Dark, cx);
+        theme::apply_choice(settings::Theme::Dark, cx);
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -59,7 +58,34 @@ fn open_shell_with_search(
             ..Default::default()
         };
         let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new_with_search(storage, log_path, search, cx))
+            cx.new(|cx| {
+                Shell::new_with_search(storage, log_path, settings::Theme::Dark, search, cx)
+            })
+        })?;
+
+        Ok(window)
+    })
+}
+
+fn open_shell_with_theme(
+    cx: &mut TestAppContext,
+    window_size: Size<Pixels>,
+    storage: StorageState,
+    choice: settings::Theme,
+) -> Result<AnyWindowHandle> {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::apply_choice(choice, cx);
+
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Point::default(),
+                size: window_size,
+            })),
+            ..Default::default()
+        };
+        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| Shell::new(storage, None, choice, cx))
         })?;
 
         Ok(window)
@@ -2337,6 +2363,248 @@ fn the_about_button_is_reachable_in_the_rail(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("about-screen").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_settings_screen_offers_every_theme(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let screen = window.find("settings-screen");
+        assert!(screen.visible());
+        assert_eq!(screen.label(), Some("Settings, Dark theme"));
+        assert!(window.find("theme-dark").visible());
+        assert!(window.find("theme-light").visible());
+        assert!(window.find("theme-system").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selecting_the_light_theme_applies_and_saves(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("theme-light", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let palette = cx.update(|cx| *cx.global::<theme::Palette>());
+    assert_eq!(palette, theme::LIGHT);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("settings-screen").label(),
+            Some("Settings, Light theme")
+        );
+    })
+    .unwrap();
+
+    let database = Database::open(&path).unwrap();
+    assert_eq!(settings::theme(&database).unwrap(), settings::Theme::Light);
+}
+
+#[gpui_kit::test]
+fn selecting_the_system_theme_persists_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("theme-system", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("settings-screen").label(),
+            Some("Settings, System theme")
+        );
+    })
+    .unwrap();
+
+    let database = Database::open(&path).unwrap();
+    assert_eq!(settings::theme(&database).unwrap(), settings::Theme::System);
+}
+
+#[gpui_kit::test]
+fn a_failed_theme_save_is_shown(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("theme-light", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let error = window.find("settings-error");
+        assert!(error.visible());
+        assert_eq!(error.role(), Some(Role::Alert));
+        assert!(
+            error
+                .label()
+                .is_some_and(|label| label.contains("Could not save the theme"))
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_saved_theme_opens_in_the_shell(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let database = Database::open(&path).unwrap();
+    settings::set_theme(&database, settings::Theme::Light).unwrap();
+    drop(database);
+
+    let handle = open_shell_with_theme(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        settings::Theme::Light,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let palette = cx.update(|cx| *cx.global::<theme::Palette>());
+    assert_eq!(palette, theme::LIGHT);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("settings-screen").label(),
+            Some("Settings, Light theme")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_settings_button_is_reachable_in_the_rail(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(960.0), px(600.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let button = window.find("settings-button");
+        assert!(button.visible());
+        assert_eq!(button.label(), Some("Settings"));
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-screen").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selecting_a_list_leaves_the_settings_screen(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-screen").visible());
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.try_find("settings-screen").is_none());
+        assert!(window.find("list-panel").visible());
     })
     .unwrap();
 }

@@ -8,7 +8,9 @@ use gpui_kit::{
 use loregalia_app::shell::Shell;
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
-use loregalia_core::{Database, items, list_items, lists, media::MediaKind, seasons, tags};
+use loregalia_core::{
+    Database, items, list_items, lists, media::MediaKind, seasons, settings::Theme, tags,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -314,8 +316,13 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
         ..Default::default()
     };
     let (handle, _) = cx.update(|cx| {
+        let choice = if shot.mode.is_dark() {
+            Theme::Dark
+        } else {
+            Theme::Light
+        };
         gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new(shot.storage.clone(), None, cx))
+            cx.new(|cx| Shell::new(shot.storage.clone(), None, choice, cx))
         })
     })?;
 

@@ -1,5 +1,6 @@
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Global, rgb};
+use gpui_kit::{App, Global, WindowAppearance, rgb};
+use loregalia_core::settings::Theme as ThemeChoice;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Palette {
@@ -78,6 +79,19 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
         theme.sidebar = rgb(palette.surface).into();
         theme.link = rgb(palette.accent).into();
     });
+}
+
+pub fn apply_choice(choice: ThemeChoice, cx: &mut App) {
+    let mode = match choice {
+        ThemeChoice::Dark => ThemeMode::Dark,
+        ThemeChoice::Light => ThemeMode::Light,
+        ThemeChoice::System => match cx.window_appearance() {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => ThemeMode::Dark,
+            _ => ThemeMode::Light,
+        },
+    };
+
+    apply(mode, cx);
 }
 
 #[cfg(test)]

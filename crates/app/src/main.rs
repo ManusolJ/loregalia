@@ -8,7 +8,11 @@ use loregalia_app::startup::{
 };
 
 fn main() {
-    let Startup { storage, log_path } = prepare();
+    let Startup {
+        storage,
+        log_path,
+        theme,
+    } = prepare();
     if let StorageState::Failed(message) = &storage {
         eprintln!("{message}");
     }
@@ -19,7 +23,7 @@ fn main() {
     gpui_kit::application()
         .with_assets(AllAssets)
         .run(move |cx| {
-            loregalia_app::init(cx);
+            loregalia_app::init(cx, theme);
 
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
@@ -30,7 +34,7 @@ fn main() {
 
             let options = loregalia_app::window_options(cx);
             if let Err(error) = gpui_kit::open_window(options, cx, |_, cx| {
-                cx.new(|cx| Shell::new(storage, log_path, cx))
+                cx.new(|cx| Shell::new(storage, log_path, theme, cx))
             }) {
                 let message = window_open_failure(&error);
                 eprintln!("{message}");
