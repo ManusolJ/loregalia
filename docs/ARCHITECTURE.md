@@ -1,11 +1,13 @@
 # Architecture
 
-One Rust workspace builds one desktop binary. All logic, storage and network code lives in a crate
-that knows nothing about the UI, so most work can be tested in milliseconds without a window.
+One Rust workspace builds one desktop binary, and later a small metadata relay (D-24). All logic,
+storage and network code lives in a crate that knows nothing about the UI, so most work can be tested
+in milliseconds without a window.
 
 ```text
 crates/app    GPUI views, theme, window. Depends on core and gpui-kit.
 crates/core   Domain types, storage, metadata providers. No GPUI.
+crates/relay  Planned: the metadata relay server (D-27). Depends on core, never on GPUI or app.
 xtask         The gate and project rules. Standard library only.
 ```
 
@@ -79,12 +81,18 @@ them.
 - **Timestamps:** ISO-8601 UTC text ending in `Z`, shown in local time by the UI.
 - **`finished_at`:** record it from the first version. Statistics are out of scope, but they can't
   be recovered for items finished before the column existed.
+- **Source data (D-12):** store each item's source and external ID, and keep the user's own fields,
+  such as status and notes, separate from what a source provided. Refresh TMDB data in the
+  background before it is six months old.
+- **Settings (D-14):** a `settings` table holds preferences such as the theme. API keys a user
+  enters never go in the database.
 - **Units in names:** `runtime_minutes`, `page_count`, `season_number`. Never a bare `length` or
   `size`.
 
 ## Network
 
-- Only metadata lookups use the network, from `core` providers.
+- Only metadata lookups use the network, from `core` providers. TVmaze and Open Library are called
+  directly. TMDB and IGDB go through the Loregalia relay, unless the user entered their own key.
 - One trait, with one implementation per source, chosen by `MediaKind`. No API's field names travel
   beyond its provider module.
 - Every request has a timeout. Debounce search-as-you-type, respect each source's rate limit, and
@@ -93,6 +101,32 @@ them.
 - Save each API's real response as a fixture the first time you call it. Tests never use the network.
 - Remote covers through `img()` need an HTTP client installed with `cx.set_http_client(...)`. Native
   builds fail every request until one is set.
+
+## Relay
+
+Planned, not built (D-11, D-24). It runs on the owner's server at home for now, and moves to a VPS
+if the app grows (D-26). Its code lives in `crates/relay` (D-27), and it ships as its own binary,
+deployed separately from the app.
+
+- **Relay only:** it forwards search and details for TMDB and IGDB, and nothing else, so it cannot
+  be used as a general proxy for the project's keys.
+- **Keys:** they live in the server's configuration, never in the repo, the app or a log.
+- **A stable address:** the app reaches the relay by a domain name over HTTPS, never by an IP
+  address, so moving it to a VPS needs no app update.
+- **Public by design:** a desktop app cannot hide a password, so anyone can call the relay. Narrow
+  endpoints and per-client rate limits are the protection. IGDB's 4 requests per second is shared by
+  every user.
+- **Cache within each source's limits:** TMDB for six months at most, IGDB for 24 hours
+  (`METADATA.md`).
+- **No personal data:** do not store searches, and keep IP addresses only as long as rate limiting
+  needs them. Say so in the app's privacy note.
+- **The app works without it:** saved items, hand entry, TVmaze and Open Library keep working when
+  the relay is down, and a user's own keys skip it entirely.
+- **AniDB later:** when anime moves to AniDB (D-28), the relay holds the registered client, caches
+  results and the daily title dump, and keeps to AniDB's limits for every user at once.
+- **Deploying is a human task:** agents build and test it against saved responses only.
+- **Sync is separate:** sync across devices stays out of scope (`PRODUCT.md`). If it comes later,
+  build it as its own service, so the relay stays small and the app stays usable offline.
 
 ## Failure
 
@@ -116,4 +150,6 @@ them.
 branch, because releases can include breaking changes.
 
 `crates/core` may also use `rusqlite` (D-01), `uuid`, and `ureq`, `serde` and `serde_json` (D-22).
-Tests may use `tempfile` (D-23). Any other dependency needs a human's approval first.
+Tests may use `tempfile` (D-23). `crates/app` may use `interprocess` to detect a second launch
+(D-18). The relay's dependencies are not chosen yet. Any other dependency
+needs a human's approval first.
