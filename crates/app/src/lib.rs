@@ -2,15 +2,15 @@ pub mod shell;
 pub mod startup;
 pub mod theme;
 
-use gpui_kit::component::ThemeMode;
 use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use loregalia_core::settings::Theme;
 use loregalia_core::storage::APP_FOLDER;
 
 const APP_TITLE: &str = "Loregalia";
 
-pub fn init(cx: &mut App) {
+pub fn init(cx: &mut App, theme: Theme) {
     gpui_kit::init(cx);
-    theme::apply(ThemeMode::Dark, cx);
+    theme::apply_choice(theme, cx);
 }
 
 pub fn window_options(cx: &App) -> WindowOptions {

@@ -1,4 +1,8 @@
-use loregalia_core::{Database, Result as CoreResult, log, storage};
+use loregalia_core::{
+    Database, Result as CoreResult, log,
+    settings::{self, Theme},
+    storage,
+};
 use std::any::Any;
 use std::fmt::Display;
 use std::path::PathBuf;
@@ -12,6 +16,7 @@ pub enum StorageState {
 pub struct Startup {
     pub storage: StorageState,
     pub log_path: Option<PathBuf>,
+    pub theme: Theme,
 }
 
 pub fn prepare() -> Startup {
@@ -29,9 +34,12 @@ fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
         &format!("Loregalia {} starting", env!("CARGO_PKG_VERSION")),
     );
 
-    let storage = match directory {
-        Ok(directory) => open_at(storage::database_in(&directory)),
-        Err(error) => StorageState::Failed(format!("Could not find the app data folder: {error}")),
+    let (storage, theme) = match directory {
+        Ok(directory) => open_at_with_theme(storage::database_in(&directory)),
+        Err(error) => (
+            StorageState::Failed(format!("Could not find the app data folder: {error}")),
+            Theme::Dark,
+        ),
     };
 
     match &storage {
@@ -41,13 +49,28 @@ fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
         StorageState::Failed(message) => record(&log_path, message),
     }
 
-    Startup { storage, log_path }
+    Startup {
+        storage,
+        log_path,
+        theme,
+    }
 }
 
+#[cfg(test)]
 fn open_at(path: PathBuf) -> StorageState {
+    open_at_with_theme(path).0
+}
+
+fn open_at_with_theme(path: PathBuf) -> (StorageState, Theme) {
     match Database::open(&path) {
-        Ok(_) => StorageState::Ready(path),
-        Err(error) => StorageState::Failed(format!("Could not open the database: {error}")),
+        Ok(database) => {
+            let theme = settings::theme(&database).unwrap_or_default();
+            (StorageState::Ready(path), theme)
+        }
+        Err(error) => (
+            StorageState::Failed(format!("Could not open the database: {error}")),
+            Theme::Dark,
+        ),
     }
 }
 
@@ -97,7 +120,11 @@ mod tests {
         StorageState, install_panic_hook, open_at, panic_line, panic_message, prepare_with, record,
         window_open_failure,
     };
-    use loregalia_core::Error;
+    use loregalia_core::{
+        Database, Error,
+        settings::{self, Theme},
+        storage,
+    };
     use tempfile::TempDir;
 
     #[test]
@@ -165,6 +192,32 @@ mod tests {
 
         assert!(matches!(&startup.storage, StorageState::Failed(_)));
         assert!(startup.log_path.is_none());
+        assert_eq!(startup.theme, Theme::Dark);
+    }
+
+    #[test]
+    fn startup_loads_the_saved_theme() {
+        let temporary = TempDir::new().unwrap();
+        let database = Database::open(storage::database_in(temporary.path())).unwrap();
+        settings::set_theme(&database, Theme::Light).unwrap();
+        drop(database);
+
+        let startup = prepare_with(Ok(temporary.path().to_path_buf()));
+
+        assert!(matches!(&startup.storage, StorageState::Ready(_)));
+        assert_eq!(startup.theme, Theme::Light);
+    }
+
+    #[test]
+    fn startup_falls_back_to_dark_for_an_unknown_theme() {
+        let temporary = TempDir::new().unwrap();
+        let database = Database::open(storage::database_in(temporary.path())).unwrap();
+        settings::set(&database, "theme", "neon").unwrap();
+        drop(database);
+
+        let startup = prepare_with(Ok(temporary.path().to_path_buf()));
+
+        assert_eq!(startup.theme, Theme::Dark);
     }
 
     #[test]
