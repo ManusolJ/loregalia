@@ -1,3 +1,4 @@
+use gpui_kit::http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Pixels, Point, Result, Role, Size, TestAppContext,
@@ -94,6 +95,38 @@ fn open_shell_with_theme(
     })
 }
 
+fn open_shell_with_http(
+    cx: &mut TestAppContext,
+    window_size: Size<Pixels>,
+    storage: StorageState,
+    client: Arc<dyn HttpClient>,
+) -> Result<AnyWindowHandle> {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::apply_choice(settings::Theme::Dark, cx);
+        cx.set_http_client(client);
+
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Point::default(),
+                size: window_size,
+            })),
+            ..Default::default()
+        };
+        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| Shell::new(storage, None, settings::Theme::Dark, cx))
+        })?;
+
+        Ok(window)
+    })
+}
+
+const TINY_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+    0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0, 3, 1,
+    1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 fn found_show() -> Candidate {
     Candidate {
         source: Source::TvMaze,
@@ -136,6 +169,16 @@ fn seed_item(
 ) -> CoreResult<items::Item> {
     let database = Database::open(path)?;
     items::create(&database, media_kind, title, release_year)
+}
+
+fn seed_cover_item(path: &Path, title: &str) -> CoreResult<items::Item> {
+    let database = Database::open(path)?;
+    let lookup = items::Lookup {
+        source: Source::TvMaze,
+        external_id: "42".to_owned(),
+        cover_url: Some("https://example.test/dark.jpg".to_owned()),
+    };
+    items::create_from_lookup(&database, MediaKind::Show, title, Some(2017), &lookup)
 }
 
 fn add_membership(path: &Path, list_id: &str, item_id: &str) -> CoreResult<()> {
@@ -1439,6 +1482,149 @@ fn a_looked_up_show_does_not_warn_about_the_same_hand_typed_title(cx: &mut TestA
     assert_eq!(stored[0].source, None);
     assert_eq!(stored[1].source.as_deref(), Some(Source::TvMaze.key()));
     assert!(stored.iter().all(|item| item.title == "Dark"));
+}
+
+#[gpui_kit::test]
+fn the_image_http_client_fetches_a_cover(cx: &mut TestAppContext) {
+    use gpui_kit::http_client::{Method, Request, StatusCode};
+    use loregalia_app::http::ImageHttpClient;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request);
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!");
+    });
+
+    let client = ImageHttpClient::new(cx.background_executor.clone());
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(format!("http://{address}/cover.png"))
+        .body(AsyncBody::default())
+        .unwrap();
+    let result = Arc::new(Mutex::new(None));
+    let slot = result.clone();
+    cx.background_executor
+        .spawn(async move {
+            *slot.lock().unwrap() = Some(client.send(request).await);
+        })
+        .detach();
+    cx.run_until_parked();
+
+    let response = result
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the image request did not finish")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[gpui_kit::test]
+fn an_item_cover_loads_into_the_row(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_cover_item(&path, "Dark").unwrap();
+    let client = FakeHttpClient::create(|_| async {
+        Ok(Response::builder()
+            .status(200)
+            .body(AsyncBody::from(TINY_PNG.to_vec()))
+            .unwrap())
+    });
+
+    let handle = open_shell_with_http(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        client,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let cover = window.find(format!("cover-{}", item.id));
+        assert!(cover.visible());
+        assert_eq!(cover.role(), Some(Role::Image));
+        assert_eq!(cover.label(), Some("Cover for Dark"));
+        assert!(window.find(format!("cover-image-{}", item.id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_item_without_a_cover_shows_the_fallback_tile(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.find(format!("cover-fallback-{}", item.id)).visible());
+        assert!(
+            window
+                .try_find(format!("cover-image-{}", item.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_cover_keeps_the_fallback_tile(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_cover_item(&path, "Dark").unwrap();
+    let client = FakeHttpClient::create(|_| async {
+        Ok(Response::builder()
+            .status(404)
+            .body(AsyncBody::default())
+            .unwrap())
+    });
+
+    let handle = open_shell_with_http(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        client,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        assert!(window.find(format!("cover-fallback-{}", item.id)).visible());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

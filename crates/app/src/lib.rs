@@ -1,6 +1,9 @@
+pub mod http;
 pub mod shell;
 pub mod startup;
 pub mod theme;
+
+use std::sync::Arc;
 
 use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use loregalia_core::settings::Theme;
@@ -11,6 +14,9 @@ const APP_TITLE: &str = "Loregalia";
 pub fn init(cx: &mut App, theme: Theme) {
     gpui_kit::init(cx);
     theme::apply_choice(theme, cx);
+    cx.set_http_client(Arc::new(http::ImageHttpClient::new(
+        cx.background_executor().clone(),
+    )));
 }
 
 pub fn window_options(cx: &App) -> WindowOptions {
