@@ -12,6 +12,8 @@ const REQUIRED_DOCS: [&str; 6] = [
     "docs/PRODUCT.md",
     "docs/ROADMAP.md",
 ];
+const RELAY_MANIFEST: &str = "crates/relay/Cargo.toml";
+const APP_PACKAGE: &str = "loregalia";
 const RAW_COLOR_CALLS: [&str; 4] = ["rgb(0x", "rgba(0x", "hsla(", "hsl("];
 const BANNED_IMPORTS: [&str; 2] = ["use gpui_kit::*", "use gpui::"];
 
@@ -19,6 +21,7 @@ pub fn check(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
 
     check_core_is_pure(root, &mut violations);
+    check_relay(root, &mut violations);
     check_agents_file(root, &mut violations);
 
     for doc in REQUIRED_DOCS {
@@ -47,6 +50,51 @@ fn check_core_is_pure(root: &Path, violations: &mut Vec<String>) {
             "crates/core/Cargo.toml: loregalia-core must not depend on gpui or gpui-kit".to_owned(),
         );
     }
+}
+
+fn check_relay(root: &Path, violations: &mut Vec<String>) {
+    let Ok(manifest) = fs::read_to_string(root.join(RELAY_MANIFEST)) else {
+        return;
+    };
+
+    violations.extend(check_relay_manifest(&manifest));
+}
+
+pub fn check_relay_manifest(manifest: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    if manifest.contains("gpui") {
+        violations.push(format!(
+            "{RELAY_MANIFEST}: the relay must not depend on gpui or gpui-kit"
+        ));
+    }
+
+    if manifest.lines().any(depends_on_app) {
+        violations.push(format!(
+            "{RELAY_MANIFEST}: the relay must not depend on the app crate (crates/app); use loregalia-core"
+        ));
+    }
+
+    violations
+}
+
+fn depends_on_app(line: &str) -> bool {
+    let line = line.trim();
+    let key = line
+        .split(['=', '.', ' ', '['])
+        .find(|part| !part.is_empty())
+        .unwrap_or_default();
+    let table = line
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(|header| header.rsplit('.').next());
+    let renamed_package = format!("package = \"{APP_PACKAGE}\"");
+
+    key == APP_PACKAGE
+        || table == Some(APP_PACKAGE)
+        || line.contains(&renamed_package)
+        || line.contains("crates/app\"")
+        || line.contains("\"../app\"")
 }
 
 fn check_agents_file(root: &Path, violations: &mut Vec<String>) {
@@ -130,9 +178,54 @@ fn relative_path(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::check_source;
+    use super::{check_relay_manifest, check_source};
+    use std::path::Path;
 
     const VIEW: &str = "crates/app/src/shell.rs";
+
+    const CLEAN_RELAY: &str = "[package]\nname = \"loregalia-relay\"\n\n[dependencies]\nloregalia-core.workspace = true\naxum = \"0.8\"\n";
+
+    #[test]
+    fn a_relay_using_only_core_passes() {
+        assert!(check_relay_manifest(CLEAN_RELAY).is_empty());
+    }
+
+    #[test]
+    fn a_relay_depending_on_gpui_is_rejected() {
+        let manifest = format!("{CLEAN_RELAY}gpui-kit.workspace = true\n");
+
+        let violations = check_relay_manifest(&manifest);
+
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("gpui"));
+    }
+
+    #[test]
+    fn a_relay_depending_on_the_app_crate_is_rejected() {
+        let manifests = [
+            format!("{CLEAN_RELAY}loregalia.workspace = true\n"),
+            format!("{CLEAN_RELAY}loregalia = {{ path = \"../app\" }}\n"),
+            format!("{CLEAN_RELAY}\n[dependencies.loregalia]\nworkspace = true\n"),
+            format!("{CLEAN_RELAY}views = {{ package = \"loregalia\", version = \"0.1\" }}\n"),
+            format!("{CLEAN_RELAY}views = {{ path = \"../../crates/app\" }}\n"),
+        ];
+
+        for manifest in manifests {
+            let violations = check_relay_manifest(&manifest);
+
+            assert_eq!(violations.len(), 1, "{manifest}");
+            assert!(violations[0].contains("crates/app"), "{manifest}");
+        }
+    }
+
+    #[test]
+    fn a_missing_relay_crate_is_not_a_violation() {
+        let mut violations = Vec::new();
+
+        super::check_relay(Path::new("no-such-root"), &mut violations);
+
+        assert!(violations.is_empty());
+    }
 
     #[test]
     fn clean_source_passes() {

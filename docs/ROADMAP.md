@@ -41,7 +41,8 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [ ] Settings: optional user API keys that bypass the relay, stored outside the database and the
       repo
 - [ ] Metadata lookup: provider trait, then each chosen source
-- [ ] Relay: build the TMDB and IGDB relay in `crates/relay`, with a gate rule that keeps GPUI out
+- [ ] Relay: build the TMDB and IGDB relay in `crates/relay`; the gate already keeps GPUI and the
+      app crate out of it
 - [x] About screen: attribution each source requires
 - [ ] Covers: loading, no-image tile, failure
 - [ ] Theme setting: Dark, Light, System

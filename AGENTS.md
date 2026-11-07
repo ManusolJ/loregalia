@@ -60,7 +60,8 @@ Read the pinned source, not your memory:
 The gate enforces the rules marked (gate).
 
 - **Crates (gate):** `crates/core` is domain logic, storage and metadata providers, and must not
-  depend on GPUI. `crates/app` is views only, with no SQL and no HTTP.
+  depend on GPUI. `crates/app` is views only, with no SQL and no HTTP. `crates/relay` must not
+  depend on GPUI or on `crates/app`.
 - **Logic goes in `core`** as plain functions over values, so it tests in milliseconds.
 - **No comments (gate).** Rename or restructure instead.
 - **No panics in non-test code (gate):** no `unwrap`, `expect`, `panic!` or `todo!`. A release panic
