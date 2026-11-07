@@ -9,8 +9,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Pixels, Role, TestSupportExt,
-    Window, div, px, rgb,
+    AnyElement, AppContext, Context, Entity, Focusable, FontWeight, ObjectFit, Pixels, Role,
+    TestSupportExt, Window, div, img, px, rgb,
 };
 use loregalia_core::{
     Database, Result as CoreResult, items, list_items, lists, log,
@@ -2399,6 +2399,61 @@ impl Shell {
             .into_any_element()
     }
 
+    fn media_kind_icon(kind: MediaKind) -> IconName {
+        match kind {
+            MediaKind::Movie => IconName::Film,
+            MediaKind::Show => IconName::Tv,
+            MediaKind::Book => IconName::BookOpen,
+            MediaKind::Game => IconName::Gamepad2,
+        }
+    }
+
+    fn cover_element(item: &items::Item, palette: &Palette) -> AnyElement {
+        let mut cover = div()
+            .id(format!("cover-{}", item.id))
+            .role(Role::Image)
+            .test_support()
+            .aria_label(format!("Cover for {}", item.title))
+            .relative()
+            .w(px(32.0))
+            .h(px(48.0))
+            .flex_none()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(rgb(palette.line))
+            .overflow_hidden()
+            .bg(rgb(palette.surface))
+            .child(
+                div()
+                    .id(format!("cover-fallback-{}", item.id))
+                    .test_support()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Icon::new(Self::media_kind_icon(item.media_kind))
+                            .with_size(px(16.0))
+                            .text_color(rgb(palette.muted)),
+                    ),
+            );
+
+        if let Some(url) = &item.cover_url {
+            cover = cover.child(
+                img(url.clone())
+                    .id(format!("cover-image-{}", item.id))
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .test_support(),
+            );
+        }
+
+        cover.into_any_element()
+    }
+
     fn item_row(
         &self,
         item: &items::Item,
@@ -2554,24 +2609,34 @@ impl Shell {
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(item.title.clone())
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap_3()
+                            .child(Self::cover_element(item, palette))
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.muted))
-                                    .child(metadata),
-                            )
-                            .child(div().flex().flex_wrap().gap_1().children(
-                                self.tags_for_item(&item.id).into_iter().map(|tag| {
-                                    Self::tag_chip(
-                                        format!("item-tag-{}-{}", item.id, tag.id),
-                                        tag,
-                                        palette,
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .min_w_0()
+                                    .child(item.title.clone())
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(palette.muted))
+                                            .child(metadata),
                                     )
-                                }),
-                            )),
+                                    .child(div().flex().flex_wrap().gap_1().children(
+                                        self.tags_for_item(&item.id).into_iter().map(|tag| {
+                                            Self::tag_chip(
+                                                format!("item-tag-{}-{}", item.id, tag.id),
+                                                tag,
+                                                palette,
+                                            )
+                                        }),
+                                    )),
+                            ),
                     )
                     .child(
                         div()

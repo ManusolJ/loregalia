@@ -1,4 +1,5 @@
 mod error;
+pub mod images;
 pub mod items;
 pub mod list_items;
 pub mod lists;
