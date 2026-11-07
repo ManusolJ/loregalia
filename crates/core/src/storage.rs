@@ -112,6 +112,7 @@ const MIGRATIONS: &[&str] = &[
         finished_at TEXT,
         UNIQUE (show_id, season_number)
     ) STRICT;",
+    "ALTER TABLE items ADD COLUMN cover_url TEXT;",
 ];
 
 fn latest_version() -> u32 {
@@ -287,7 +288,43 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 7);
+        assert_eq!(schema_version(database.connection()), 8);
+    }
+
+    #[test]
+    fn a_database_from_before_covers_gets_a_cover_column() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("before-covers.db");
+
+        {
+            let connection = Connection::open(&path).unwrap();
+            for migration in &MIGRATIONS[..7] {
+                connection.execute_batch(migration).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 7).unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO items (id, media_kind, title, created_at, status_id)
+                     VALUES ('show-1', 'show', 'Dark', '2026-11-05T00:00:00Z', 'show-planned');",
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+
+        let cover: Option<String> = database
+            .connection()
+            .query_row(
+                "SELECT cover_url FROM items WHERE id = 'show-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cover, None);
+        assert_eq!(
+            schema_version(database.connection()),
+            i64::from(latest_version())
+        );
     }
 
     fn environment(values: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -508,20 +545,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 8;")
+                .execute_batch("PRAGMA user_version = 9;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 8,
-                supported: 7
+                found: 9,
+                supported: 8
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 8);
+        assert_eq!(schema_version(&connection), 9);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",

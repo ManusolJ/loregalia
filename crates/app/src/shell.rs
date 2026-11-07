@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
@@ -12,12 +13,14 @@ use gpui_kit::{
     Window, div, px, rgb,
 };
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, seasons,
-    statuses, tags,
+    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind,
+    providers::tvmaze, seasons, statuses, tags,
 };
 
 use crate::startup::StorageState;
 use crate::theme::Palette;
+
+pub type ShowSearch = Arc<dyn Fn(&str) -> CoreResult<Vec<tvmaze::Show>> + Send + Sync>;
 
 const RAIL_WIDTH: f32 = 64.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
@@ -34,6 +37,19 @@ fn season_number(value: &str) -> Option<i32> {
         .filter(|number| *number >= 0)
 }
 
+fn show_result_label(show: &tvmaze::Show, already_added: bool) -> String {
+    let label = match show.release_year {
+        Some(year) => format!("{} ({year})", show.title),
+        None => show.title.clone(),
+    };
+
+    if already_added {
+        format!("{label} (already added)")
+    } else {
+        label
+    }
+}
+
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
         px(RAIL_WIDTH)
@@ -45,6 +61,7 @@ pub fn sidebar_width(window_width: Pixels) -> Pixels {
 pub struct Shell {
     storage: StorageState,
     log_path: Option<PathBuf>,
+    show_search: ShowSearch,
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
@@ -77,6 +94,20 @@ struct ItemEditor {
     kind: MediaKind,
     title: Entity<InputState>,
     year: Entity<InputState>,
+    search_input: Option<Entity<InputState>>,
+    search: SearchStatus,
+    search_request: u64,
+    lookup: Option<items::Lookup>,
+}
+
+#[derive(Default)]
+enum SearchStatus {
+    #[default]
+    Idle,
+    Searching,
+    Empty,
+    Failed(String),
+    Results(Vec<tvmaze::Show>),
 }
 
 struct ListItemActions<'a> {
@@ -141,10 +172,25 @@ enum Editor {
 
 impl Shell {
     pub fn new(storage: StorageState, log_path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+        Self::new_with_search(
+            storage,
+            log_path,
+            Arc::new(|query: &str| tvmaze::search(query)),
+            cx,
+        )
+    }
+
+    pub fn new_with_search(
+        storage: StorageState,
+        log_path: Option<PathBuf>,
+        show_search: ShowSearch,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let loading = matches!(&storage, StorageState::Ready(_));
         let mut shell = Self {
             storage,
             log_path,
+            show_search,
             lists: Vec::new(),
             items: Vec::new(),
             statuses: Vec::new(),
@@ -374,6 +420,10 @@ impl Shell {
             kind: MediaKind::Movie,
             title,
             year,
+            search_input: None,
+            search: SearchStatus::Idle,
+            search_request: 0,
+            lookup: None,
         });
         cx.notify();
     }
@@ -407,6 +457,10 @@ impl Shell {
             kind,
             title,
             year,
+            search_input: None,
+            search: SearchStatus::Idle,
+            search_request: 0,
+            lookup: None,
         });
         self.confirm_delete_item = None;
         self.status_picker = None;
@@ -417,11 +471,111 @@ impl Shell {
         cx.notify();
     }
 
-    fn select_item_kind(&mut self, kind: MediaKind, cx: &mut Context<Self>) {
-        if let Some(editor) = &mut self.item_editor {
-            editor.kind = kind;
-            cx.notify();
+    fn select_item_kind(&mut self, kind: MediaKind, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.item_editor else {
+            return;
+        };
+
+        editor.kind = kind;
+
+        if kind == MediaKind::Show {
+            if editor.id.is_none() && editor.search_input.is_none() {
+                editor.search_input =
+                    Some(cx.new(|cx| InputState::new(window, cx).placeholder("Search TVmaze")));
+            }
+        } else {
+            editor.search_request += 1;
+            editor.search = SearchStatus::Idle;
+            editor.lookup = None;
         }
+
+        cx.notify();
+    }
+
+    fn search_shows(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.item_editor else {
+            return;
+        };
+        if editor.id.is_some() || editor.kind != MediaKind::Show {
+            return;
+        }
+        let Some(input) = &editor.search_input else {
+            return;
+        };
+        let query = input.read(cx).value().trim().to_owned();
+        if query.is_empty() || matches!(editor.search, SearchStatus::Searching) {
+            return;
+        }
+
+        editor.search_request += 1;
+        let request = editor.search_request;
+        editor.search = SearchStatus::Searching;
+        let search = self.show_search.clone();
+        cx.notify();
+
+        let task = cx.background_spawn(async move { search(&query) });
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(editor) = &mut this.item_editor else {
+                    return;
+                };
+                if editor.search_request != request || editor.kind != MediaKind::Show {
+                    return;
+                }
+
+                editor.search = match result {
+                    Ok(shows) if shows.is_empty() => SearchStatus::Empty,
+                    Ok(shows) => SearchStatus::Results(shows),
+                    Err(error) => SearchStatus::Failed(error.to_string()),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn select_search_result(
+        &mut self,
+        external_id: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = &mut self.item_editor else {
+            return;
+        };
+        let shows = match &editor.search {
+            SearchStatus::Results(shows) => shows,
+            _ => return,
+        };
+        let Some(show) = shows
+            .iter()
+            .find(|show| show.external_id == external_id)
+            .cloned()
+        else {
+            return;
+        };
+
+        editor.lookup = Some(items::Lookup {
+            source: tvmaze::SOURCE.to_owned(),
+            external_id: show.external_id.to_string(),
+            cover_url: show.cover_url.clone(),
+        });
+
+        let title = show.title;
+        let year = show
+            .release_year
+            .map(|year| year.to_string())
+            .unwrap_or_default();
+        editor
+            .title
+            .update(cx, |state, cx| state.set_value(title, window, cx));
+        editor
+            .year
+            .update(cx, |state, cx| state.set_value(year, window, cx));
+
+        cx.notify();
     }
 
     fn save_item(&mut self, cx: &mut Context<Self>) {
@@ -450,6 +604,7 @@ impl Shell {
         };
         let id = editor.id;
         let kind = editor.kind;
+        let lookup = editor.lookup;
         let list_id = self.selected.clone();
         self.close_season_panels();
 
@@ -460,7 +615,12 @@ impl Shell {
                     items::update(&database, &id, kind, &title, year)?;
                 }
                 None => {
-                    let created = items::create(&database, kind, &title, year)?;
+                    let created = match lookup {
+                        Some(lookup) => {
+                            items::create_from_lookup(&database, kind, &title, year, &lookup)?
+                        }
+                        None => items::create(&database, kind, &title, year)?,
+                    };
                     if let Some(list_id) = &list_id {
                         list_items::add(&database, list_id, &created.id)?;
                     }
@@ -1421,7 +1581,7 @@ impl Shell {
             "New item"
         };
 
-        div()
+        let mut panel = div()
             .id("item-editor")
             .test_support()
             .flex()
@@ -1438,13 +1598,21 @@ impl Shell {
                 Button::new(format!("item-kind-{}", kind.key()))
                     .label(kind.label())
                     .selected(editor.kind == kind)
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_item_kind(kind, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_item_kind(kind, window, cx)
+                    }))
             })))
             .child(
                 Input::new(&editor.year)
                     .id("item-year-input")
                     .aria_label("Release year"),
-            )
+            );
+
+        if editor.id.is_none() && editor.kind == MediaKind::Show {
+            panel = panel.child(self.show_search_element(editor, palette, cx));
+        }
+
+        panel
             .child(
                 div()
                     .flex()
@@ -1462,6 +1630,114 @@ impl Shell {
                     ),
             )
             .into_any_element()
+    }
+
+    fn has_show(&self, show: &tvmaze::Show) -> bool {
+        let external_id = show.external_id.to_string();
+
+        self.items.iter().any(|item| {
+            item.source.as_deref() == Some(tvmaze::SOURCE)
+                && item.external_id.as_deref() == Some(external_id.as_str())
+        })
+    }
+
+    fn show_search_element(
+        &self,
+        editor: &ItemEditor,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(input) = &editor.search_input else {
+            return div().into_any_element();
+        };
+        let query = input.read(cx).value().trim().to_owned();
+        let searching = matches!(editor.search, SearchStatus::Searching);
+
+        let mut panel = div()
+            .id("show-search")
+            .test_support()
+            .aria_label("Search TVmaze")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Input::new(input)
+                            .id("show-search-input")
+                            .aria_label("Search TVmaze"),
+                    )
+                    .child(
+                        Button::new("search-shows")
+                            .label("Search")
+                            .disabled(query.is_empty() || searching)
+                            .on_click(cx.listener(|this, _, _, cx| this.search_shows(cx))),
+                    ),
+            );
+
+        panel = match &editor.search {
+            SearchStatus::Idle => panel,
+            SearchStatus::Searching => panel.child(
+                div()
+                    .id("show-search-loading")
+                    .role(Role::Status)
+                    .test_support()
+                    .aria_label("Searching TVmaze")
+                    .text_color(rgb(palette.muted))
+                    .text_xs()
+                    .child("Searching TVmaze"),
+            ),
+            SearchStatus::Empty => panel.child(
+                div()
+                    .id("show-search-empty")
+                    .role(Role::Status)
+                    .test_support()
+                    .aria_label("No matches on TVmaze")
+                    .text_color(rgb(palette.muted))
+                    .text_xs()
+                    .child("No matches on TVmaze"),
+            ),
+            SearchStatus::Failed(message) => panel.child(
+                div()
+                    .id("show-search-failed")
+                    .role(Role::Alert)
+                    .test_support()
+                    .aria_label(message.clone())
+                    .text_color(rgb(palette.danger))
+                    .text_xs()
+                    .child(message.clone()),
+            ),
+            SearchStatus::Results(shows) => {
+                let results = shows.iter().map(|show| {
+                    let already_added = self.has_show(show);
+                    let label = show_result_label(show, already_added);
+                    let external_id = show.external_id;
+
+                    Button::new(format!("search-result-{external_id}"))
+                        .label(label)
+                        .disabled(already_added)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_search_result(external_id, window, cx)
+                        }))
+                });
+
+                panel.child(
+                    div()
+                        .id("show-search-results")
+                        .test_support()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .max_h(px(240.0))
+                        .overflow_y_scroll()
+                        .children(results),
+                )
+            }
+        };
+
+        panel.into_any_element()
     }
 
     fn category_color(palette: &Palette, category: statuses::Category) -> u32 {
