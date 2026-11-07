@@ -525,11 +525,20 @@ impl Shell {
                     return;
                 }
 
+                let mut failure = None;
                 editor.search = match result {
                     Ok(shows) if shows.is_empty() => SearchStatus::Empty,
                     Ok(shows) => SearchStatus::Results(shows),
-                    Err(error) => SearchStatus::Failed(error.to_string()),
+                    Err(error) => {
+                        let message = error.to_string();
+                        failure = Some(message.clone());
+                        SearchStatus::Failed(message)
+                    }
                 };
+
+                if let Some(message) = failure {
+                    this.record(&format!("TVmaze search failed: {message}"), cx);
+                }
                 cx.notify();
             });
         })

@@ -128,6 +128,23 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_database_is_reported_without_being_changed() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("loregalia.db");
+        std::fs::write(&path, b"this is not a database").unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let state = open_at(path.clone());
+
+        let message = match state {
+            StorageState::Failed(message) => message,
+            StorageState::Ready(path) => format!("unexpected ready state at {}", path.display()),
+        };
+        assert!(message.starts_with("Could not open the database:"));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
     fn startup_logs_the_version_and_database_path() {
         let temporary = TempDir::new().unwrap();
 
