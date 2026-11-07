@@ -10,6 +10,7 @@ pub enum Error {
     DuplicateTagName,
     UnknownShow,
     DuplicateLookup,
+    UnsupportedLookup,
     SeasonsOnlyForShows,
     DuplicateSeason,
     InvalidSeasonNumber,
@@ -43,6 +44,9 @@ impl std::fmt::Display for Error {
             Self::DuplicateLookup => {
                 formatter.write_str("an item from that source is already in the library")
             }
+            Self::UnsupportedLookup => {
+                formatter.write_str("no metadata source is available for this media kind yet")
+            }
             Self::SeasonsOnlyForShows => formatter.write_str("seasons belong only to shows"),
             Self::DuplicateSeason => formatter.write_str("the show already has that season"),
             Self::InvalidSeasonNumber => formatter.write_str("a season number cannot be negative"),
@@ -74,6 +78,7 @@ impl std::error::Error for Error {
             | Self::DuplicateTagName
             | Self::UnknownShow
             | Self::DuplicateLookup
+            | Self::UnsupportedLookup
             | Self::SeasonsOnlyForShows
             | Self::DuplicateSeason
             | Self::InvalidSeasonNumber

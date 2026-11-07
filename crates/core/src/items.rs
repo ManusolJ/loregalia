@@ -1,3 +1,4 @@
+use crate::providers::Source;
 use crate::{Database, Error, Result, media::MediaKind};
 use rusqlite::{OptionalExtension, Row, params, types::Type};
 use uuid::Uuid;
@@ -18,7 +19,7 @@ pub struct Item {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Lookup {
-    pub source: String,
+    pub source: Source,
     pub external_id: String,
     pub cover_url: Option<String>,
 }
@@ -94,7 +95,7 @@ pub fn create_from_lookup(
                 media_kind.key(),
                 title,
                 release_year,
-                lookup.source.as_str(),
+                lookup.source.key(),
                 lookup.external_id.as_str(),
                 lookup.cover_url.as_deref()
             ],
@@ -364,7 +365,7 @@ mod tests {
     fn a_looked_up_item_keeps_its_source_and_cover() {
         let database = database();
         let lookup = Lookup {
-            source: "tvmaze".to_owned(),
+            source: crate::providers::Source::TvMaze,
             external_id: "39235".to_owned(),
             cover_url: Some("https://example.test/poster.jpg".to_owned()),
         };
@@ -391,7 +392,7 @@ mod tests {
     fn the_same_lookup_cannot_be_saved_twice() {
         let database = database();
         let lookup = Lookup {
-            source: "tvmaze".to_owned(),
+            source: crate::providers::Source::TvMaze,
             external_id: "39235".to_owned(),
             cover_url: None,
         };
@@ -446,7 +447,7 @@ mod tests {
     fn a_looked_up_item_can_match_a_hand_typed_title() {
         let database = database();
         let lookup = Lookup {
-            source: "tvmaze".to_owned(),
+            source: crate::providers::Source::TvMaze,
             external_id: "42".to_owned(),
             cover_url: None,
         };
