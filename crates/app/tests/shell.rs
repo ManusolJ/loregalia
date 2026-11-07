@@ -869,7 +869,62 @@ fn an_empty_show_search_is_not_a_failure(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_failed_show_search_is_shown_as_an_alert(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
+    let log_path = temporary.path().join("loregalia.log");
     let search: ShowSearch = Arc::new(|_| Err(Error::ConnectionFailed));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        Some(log_path.clone()),
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+        window.click("show-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "private-query-42");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-shows", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let failed = window.find("show-search-failed");
+        assert!(failed.visible());
+        assert_eq!(failed.role(), Some(Role::Alert));
+        assert!(
+            failed
+                .label()
+                .is_some_and(|label| label.contains("could not connect"))
+        );
+        assert!(window.try_find("show-search-empty").is_none());
+    })
+    .unwrap();
+
+    let contents = std::fs::read_to_string(&log_path).unwrap();
+    assert!(contents.contains("TVmaze search failed"));
+    assert!(contents.contains("could not connect"));
+    assert!(!contents.contains("private-query-42"));
+}
+
+#[gpui_kit::test]
+fn a_rate_limited_search_names_the_rate_limit(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: ShowSearch = Arc::new(|_| Err(Error::RateLimited));
     let handle = open_shell_with_search(
         cx,
         size(px(1280.0), px(800.0)),
@@ -904,13 +959,11 @@ fn a_failed_show_search_is_shown_as_an_alert(cx: &mut TestAppContext) {
 
         let failed = window.find("show-search-failed");
         assert!(failed.visible());
-        assert_eq!(failed.role(), Some(Role::Alert));
         assert!(
             failed
                 .label()
-                .is_some_and(|label| label.contains("could not connect"))
+                .is_some_and(|label| label.contains("rate limiting"))
         );
-        assert!(window.try_find("show-search-empty").is_none());
     })
     .unwrap();
 }
