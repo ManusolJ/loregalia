@@ -25,7 +25,8 @@ not record which episode or page you stopped at.
 - **Statuses:** To watch, In progress, On hold, Watched, Dropped, with labels that fit each type of
   media, and room to add more
 - **Metadata lookup:** search public APIs to fill in titles, covers and details, or type items by hand
-- **Local-first:** your data stays in a SQLite file on your computer, with no account and no server
+- **Local-first:** your data stays in a SQLite file on your computer, with no account. Movie and game
+  searches go through a small Loregalia server that holds the API keys, unless you add your own
 
 The full scope, including what is deliberately left out, is in [PRODUCT.md](docs/PRODUCT.md).
 

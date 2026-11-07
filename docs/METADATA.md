@@ -1,7 +1,8 @@
 # Metadata sources
 
-Findings from each API's official pages, checked on 2026-11-05. Terms change, so recheck a source
-before building its provider. The final choices are decisions D-09 to D-12 and D-20.
+Findings from each API's official pages, checked on 2026-11-05 and 2026-11-07. Terms change, so
+recheck a source before building its provider. The choices are decisions D-09 to D-12, D-20 and
+D-28.
 
 ## Recommended
 
@@ -21,16 +22,15 @@ commercial license, and IGDB needs a partnership.
 - **Every provider is optional.** None of these sources promises uptime: TMDB says it offers no SLA,
   and the others link no status page. Typing an item by hand must always work, and saved items must
   work offline.
-- **Users bring their own TMDB and IGDB credentials**, entered in Settings and kept out of the repo
-  and the installer. Shows and books work with no setup.
+- **TMDB and IGDB go through the Loregalia relay (D-11)**, so users set nothing up. A user may enter
+  their own keys in Settings, and the app then calls those sources directly. Shows and books need no
+  key at all.
   - **IGDB** only accepts application credentials from a
     [Confidential](https://api-docs.igdb.com/#account-creation) Twitch client. Twitch describes that
     flow as being for
     [apps that can securely store a secret](https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/),
-    and a desktop installer cannot. A shared secret would also need a backend, which this app does
-    not have. Getting credentials requires a Twitch account with two-factor authentication.
-  - **TMDB's** pages do not say whether a key may ship in a distributed app, so this is the cautious
-    reading. Ask TMDB before changing it.
+    and a desktop installer cannot. This is why the secret stays on the relay.
+  - **TMDB's** pages do not say whether one key may serve many users through a relay. Ask TMDB.
 - **TMDB data must be refreshed or removed within six months.** Store its ID, refresh details and
   images before they expire, and never let the user's own fields depend on them.
 - **Cover shapes:** TVmaze has poster images, and IGDB's `cover_big` is 264 x 374, both close to the
@@ -41,6 +41,43 @@ commercial license, and IGDB needs a partnership.
 - **User-Agent:** send a descriptive one to TVmaze, Open Library and Wikidata. Open Library's higher
   limit needs a contact email in it (D-21). Never use a user's personal address.
 
+## Anime (checked 2026-11-07)
+
+TVmaze returned six well-known anime with images, Japanese language and seasons. One search for
+"Mob Psycho 100" returned the live-action show instead, so the UI must show a list of matches, not
+the top result. Anime films come from TMDB.
+
+| Source | Finding |
+| ------ | ------- |
+| [AniList](https://docs.anilist.co/guide/terms-of-use) | Bans use in "anime and manga list or tracker services", including media data. Currently [30 requests a minute](https://docs.anilist.co/guide/rate-limiting) |
+| [MyAnimeList](https://myanimelist.net/static/apiagreement.html) | Free apps allowed, but the Client ID may not be shared, so each user would need their own |
+| [Jikan](https://docs.api.jikan.moe/) | Scrapes MyAnimeList, whose agreement bans scraping by API users |
+| [Kitsu](https://kitsu.app/terms) | Public API, but its terms grant a personal license; not cleared |
+| AniDB | API page could not be read |
+
+## Games without IGDB (checked 2026-11-07)
+
+| Source | Finding |
+| ------ | ------- |
+| Steam store | Answers search and details with no key, with 600x900 portrait covers, but it is not an official API, and the [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/) bans scripts and bots |
+| [Steam Web API](https://steamcommunity.com/dev/apiterms) | Official, but keys may not be shared, and each key needs a domain |
+| GOG catalog | Answers search with no key and has portrait covers; not an official API, and its terms were not read |
+| Epic store, itch.io | Blocked (403) or rate-limited (429) on the first request |
+| [Hasheous](https://hasheous.org/index.html?page=termsofservice) | Relays IGDB, needs an app-level client key, and is a free volunteer service; credit the original source |
+| [SteamGridDB](https://www.steamgriddb.com/terms) | Terms say personal, non-commercial use and restrict automated use |
+
+## How similar apps handle keys (checked 2026-11-07)
+
+| Strategy | Examples |
+| -------- | -------- |
+| Own relay server holds the keys | [Playnite](https://github.com/JosefNemec/PlayniteExtensions) for IGDB, [Sonarr](https://github.com/Sonarr/Sonarr) and [Radarr](https://github.com/Radarr/Radarr) for TV and movie data |
+| Keys built into the app, users may override | [Tonkatsu Box](https://github.com/hacan359/tonkatsu_box) adds TMDB and IGDB keys at release from CI secrets; [Yamtrack](https://github.com/FuzzyGrim/Yamtrack) and [Jellyfin](https://github.com/jellyfin/jellyfin) ship default keys |
+| Users bring their own keys | [Ryot](https://github.com/IgnisDa/ryot), [MediaTracker](https://github.com/bonukai/MediaTracker) |
+| A community relay | [RomM](https://docs.romm.app/latest/getting-started/metadata-providers/) through Hasheous |
+
+Radarr users have complained when its server was down, so the app must keep working without the
+relay (see `ARCHITECTURE.md`).
+
 ## Unresolved
 
 - **IGDB storage:** IGDB's FAQ prefers local storage, but the
@@ -48,6 +85,11 @@ commercial license, and IGDB needs a partnership.
   caching to 24 hours without authorization. Ask IGDB, or follow the stricter rule, before release.
 - **Open Library's license:** it asserts no new rights, but warns that individual records may have
   existing rights issues. Its pages do not state CC0.
+- **Donations:** TMDB calls a project commercial if "the primary purpose is to create revenue", but
+  its terms also ban revenue "directly or indirectly", and neither TMDB nor IGDB mentions donations.
+  Confirm D-25 with both by email.
+- **Relays:** neither TMDB nor IGDB says whether one key may serve many users through a relay. Ask
+  both before release.
 - **Local AI use:** TMDB's terms prohibit training AI systems on its content, so never put its data
   into training sets.
 

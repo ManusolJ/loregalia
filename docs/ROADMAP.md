@@ -13,7 +13,10 @@ Work top to bottom. Tick items only when they are verified, not when the code co
 
 - [x] Data model decisions D-02 to D-08 and D-19
 - [x] Check API terms (`METADATA.md`)
-- [ ] Choose sources and credential handling: D-09 to D-12 and D-21
+- [x] Choose the game source and credential handling: D-10 and D-11
+- [ ] Choose the remaining sources: D-09, D-12, D-21 and D-28
+- [ ] Email TMDB and IGDB: confirm a free app with a Ko-fi link is non-commercial (D-25), and that a
+      relay may serve many users with one key
 
 ## 3. Walking skeleton
 
@@ -36,8 +39,10 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Lists: create, rename, delete, membership
 - [x] Tags: on lists and items
 - [x] Shows and seasons
-- [ ] Settings: API credentials, stored outside the database and the repo
+- [ ] Settings: optional user API keys that bypass the relay, stored outside the database and the
+      repo
 - [ ] Metadata lookup: provider trait, then each chosen source
+- [ ] Relay: decide D-26 and D-27, then build the TMDB and IGDB relay in Rust
 - [x] About screen: attribution each source requires
 - [ ] Covers: loading, no-image tile, failure
 - [ ] Theme setting: Dark, Light, System
@@ -46,6 +51,6 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 
 - [ ] Failure paths: no network, bad key, missing database, older database
 - [ ] Recheck each source's terms, and resolve IGDB's storage conflict
-- [ ] No key in the repo or the installer unless the API's terms allow it
+- [ ] No key in the repo or the installer; the project's keys live only on the relay
 - [ ] Human check on Windows: scaling at 100% and 150%, resizing, keyboard navigation
 - [ ] README with the reasons behind each major decision

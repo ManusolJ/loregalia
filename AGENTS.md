@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Loregalia is a local-first desktop app for planning what to watch, read and play next, and for
-recording what is finished. Rust, GPUI through `gpui-kit`, SQLite. No server. Windows is the shipped
-platform; Linux only has to build and pass tests, because agents work in a Linux sandbox.
+recording what is finished. Rust, GPUI through `gpui-kit`, SQLite. User data never leaves the
+computer; a small Rust relay only holds metadata API keys (D-11). Windows is the shipped platform;
+Linux only has to build and pass tests, because agents work in a Linux sandbox.
 
 ## Commands
 

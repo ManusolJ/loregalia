@@ -1,7 +1,8 @@
 # Architecture
 
-One Rust workspace builds one desktop binary. All logic, storage and network code lives in a crate
-that knows nothing about the UI, so most work can be tested in milliseconds without a window.
+One Rust workspace builds one desktop binary, and later a small metadata relay (D-24). All logic,
+storage and network code lives in a crate that knows nothing about the UI, so most work can be tested
+in milliseconds without a window.
 
 ```text
 crates/app    GPUI views, theme, window. Depends on core and gpui-kit.
@@ -84,7 +85,8 @@ them.
 
 ## Network
 
-- Only metadata lookups use the network, from `core` providers.
+- Only metadata lookups use the network, from `core` providers. TVmaze and Open Library are called
+  directly. TMDB and IGDB go through the Loregalia relay, unless the user entered their own key.
 - One trait, with one implementation per source, chosen by `MediaKind`. No API's field names travel
   beyond its provider module.
 - Every request has a timeout. Debounce search-as-you-type, respect each source's rate limit, and
@@ -93,6 +95,26 @@ them.
 - Save each API's real response as a fixture the first time you call it. Tests never use the network.
 - Remote covers through `img()` need an HTTP client installed with `cx.set_http_client(...)`. Native
   builds fail every request until one is set.
+
+## Relay
+
+Planned, not built (D-11, D-24). Hosting is D-26, and where its code lives is D-27.
+
+- **Relay only:** it forwards search and details for TMDB and IGDB, and nothing else, so it cannot
+  be used as a general proxy for the project's keys.
+- **Keys:** they live in the host's secret settings, never in the repo, the app or a log.
+- **Public by design:** a desktop app cannot hide a password, so anyone can call the relay. Narrow
+  endpoints and per-client rate limits are the protection. IGDB's 4 requests per second is shared by
+  every user.
+- **Cache within each source's limits:** TMDB for six months at most, IGDB for 24 hours until its
+  storage conflict is resolved (`METADATA.md`).
+- **No personal data:** do not store searches, and keep IP addresses only as long as rate limiting
+  needs them. Say so in the app's privacy note.
+- **The app works without it:** saved items, hand entry, TVmaze and Open Library keep working when
+  the relay is down, and a user's own keys skip it entirely.
+- **Deploying is a human task:** agents build and test it against saved responses only.
+- **Sync is separate:** sync across devices stays out of scope (`PRODUCT.md`). If it comes later,
+  build it as its own service, so the relay stays small and the app stays usable offline.
 
 ## Failure
 
@@ -116,4 +138,5 @@ them.
 branch, because releases can include breaking changes.
 
 `crates/core` may also use `rusqlite` (D-01), `uuid`, and `ureq`, `serde` and `serde_json` (D-22).
-Tests may use `tempfile` (D-23). Any other dependency needs a human's approval first.
+Tests may use `tempfile` (D-23). The relay's dependencies are not chosen yet. Any other dependency
+needs a human's approval first.
