@@ -26,7 +26,7 @@ Elevation is a lighter surface: `bg`, then `surface`, then `raised`.
 
 ## Type
 
-The system font for now (D-13). Nothing goes below 12 px. Use three weights only: 400, 500, 600.
+The system font (D-13). Nothing goes below 12 px. Use three weights only: 400, 500, 600.
 
 | Role                                 | Size / line height | Weight             |
 | ------------------------------------ | ------------------ | ------------------ |
@@ -119,4 +119,4 @@ the sidebar.
 ## Theme
 
 The setting offers Dark (the default), Light and System. Apply a choice with `theme::apply`, which
-also updates `gpui-kit`'s component colors. Where the choice is stored is D-14.
+also updates `gpui-kit`'s component colors. The choice is stored in the `settings` table (D-14).

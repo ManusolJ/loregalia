@@ -14,7 +14,7 @@ Work top to bottom. Tick items only when they are verified, not when the code co
 - [x] Data model decisions D-02 to D-08 and D-19
 - [x] Check API terms (`METADATA.md`)
 - [x] Choose the game source and credential handling: D-10 and D-11
-- [ ] Choose the remaining sources: D-09, D-12 and D-21
+- [x] Choose the remaining sources: D-09, D-12 and D-21
 
 ## 3. Walking skeleton
 
@@ -25,7 +25,8 @@ Prove the painful parts while the app is still small.
 - [x] One view writes a row and reads it back, off the UI thread
 - [x] Write a log file, because the installed app has no console
 - [x] One real call to the first source from `core`, with its response saved as a fixture
-- [ ] Decide D-16 and D-18, then build an installer
+- [ ] Build an installer with `cargo-packager`, and make a second launch focus the open window
+      (D-16, D-18)
 - [ ] Human check: install it, start it from the Start menu, and confirm covers and data persist
 
 ## 4. Features
@@ -48,7 +49,7 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 ## 5. Release readiness
 
 - [ ] Failure paths: no network, bad key, missing database, older database
-- [ ] Recheck each source's terms, and resolve IGDB's storage conflict
+- [ ] Recheck each source's terms before release
 - [ ] No key in the repo or the installer; the project's keys live only on the relay
 - [ ] Human check on Windows: scaling at 100% and 150%, resizing, keyboard navigation
 - [ ] README with the reasons behind each major decision

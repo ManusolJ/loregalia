@@ -1,8 +1,8 @@
 # Metadata sources
 
 Findings from each API's official pages, checked on 2026-11-05 and 2026-11-07. Terms change, so
-recheck a source before building its provider. The choices are decisions D-09 to D-12, D-20 and
-D-28.
+recheck a source before building its provider. The choices are decisions D-09 to D-12, D-20, D-21
+and D-28.
 
 ## Recommended
 
@@ -40,7 +40,8 @@ commercial license, and IGDB needs a partnership.
   requests per 5 minutes per IP. Add `?default=false` so a missing cover returns 404 instead of a
   blank image.
 - **User-Agent:** send a descriptive one to TVmaze, Open Library and Wikidata. Open Library's higher
-  limit needs a contact email in it (D-21). Never use a user's personal address.
+  limit needs a contact email, but Loregalia sends only its name and repo link (D-21), so each user
+  gets 1 request per second. Never use a user's personal address.
 
 ## Anime (checked 2026-11-07)
 
@@ -83,7 +84,8 @@ relay (see `ARCHITECTURE.md`).
 
 - **IGDB storage:** IGDB's FAQ prefers local storage, but the
   [Twitch agreement](https://legal.twitch.com/legal/developer-agreement/) that governs its API limits
-  caching to 24 hours without authorization. Follow the stricter rule: 24 hours.
+  caching to 24 hours without authorization. Saved items follow IGDB's FAQ and keep their data
+  (D-12), while the relay's cache keeps to 24 hours.
 - **Open Library's license:** it asserts no new rights, but warns that individual records may have
   existing rights issues. Its pages do not state CC0.
 - **Local AI use:** TMDB's terms prohibit training AI systems on its content, so never put its data

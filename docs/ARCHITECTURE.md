@@ -81,6 +81,11 @@ them.
 - **Timestamps:** ISO-8601 UTC text ending in `Z`, shown in local time by the UI.
 - **`finished_at`:** record it from the first version. Statistics are out of scope, but they can't
   be recovered for items finished before the column existed.
+- **Source data (D-12):** store each item's source and external ID, and keep the user's own fields,
+  such as status and notes, separate from what a source provided. Refresh TMDB data in the
+  background before it is six months old.
+- **Settings (D-14):** a `settings` table holds preferences such as the theme. API keys a user
+  enters never go in the database.
 - **Units in names:** `runtime_minutes`, `page_count`, `season_number`. Never a bare `length` or
   `size`.
 
@@ -111,8 +116,8 @@ deployed separately from the app.
 - **Public by design:** a desktop app cannot hide a password, so anyone can call the relay. Narrow
   endpoints and per-client rate limits are the protection. IGDB's 4 requests per second is shared by
   every user.
-- **Cache within each source's limits:** TMDB for six months at most, IGDB for 24 hours until its
-  storage conflict is resolved (`METADATA.md`).
+- **Cache within each source's limits:** TMDB for six months at most, IGDB for 24 hours
+  (`METADATA.md`).
 - **No personal data:** do not store searches, and keep IP addresses only as long as rate limiting
   needs them. Say so in the app's privacy note.
 - **The app works without it:** saved items, hand entry, TVmaze and Open Library keep working when
@@ -145,5 +150,6 @@ deployed separately from the app.
 branch, because releases can include breaking changes.
 
 `crates/core` may also use `rusqlite` (D-01), `uuid`, and `ureq`, `serde` and `serde_json` (D-22).
-Tests may use `tempfile` (D-23). The relay's dependencies are not chosen yet. Any other dependency
+Tests may use `tempfile` (D-23). `crates/app` may use `interprocess` to detect a second launch
+(D-18). The relay's dependencies are not chosen yet. Any other dependency
 needs a human's approval first.
