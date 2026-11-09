@@ -11,6 +11,8 @@ pub enum Error {
     UnknownShow,
     DuplicateLookup,
     UnsupportedLookup,
+    Unauthorized,
+    RelayUnavailable,
     SeasonsOnlyForShows,
     DuplicateSeason,
     InvalidSeasonNumber,
@@ -47,6 +49,11 @@ impl std::fmt::Display for Error {
             Self::UnsupportedLookup => {
                 formatter.write_str("no metadata source is available for this media kind yet")
             }
+            Self::Unauthorized => {
+                formatter.write_str("the metadata source rejected the credentials")
+            }
+            Self::RelayUnavailable => formatter
+                .write_str("the Loregalia metadata service is unavailable; try again later"),
             Self::SeasonsOnlyForShows => formatter.write_str("seasons belong only to shows"),
             Self::DuplicateSeason => formatter.write_str("the show already has that season"),
             Self::InvalidSeasonNumber => formatter.write_str("a season number cannot be negative"),
@@ -79,6 +86,8 @@ impl std::error::Error for Error {
             | Self::UnknownShow
             | Self::DuplicateLookup
             | Self::UnsupportedLookup
+            | Self::Unauthorized
+            | Self::RelayUnavailable
             | Self::SeasonsOnlyForShows
             | Self::DuplicateSeason
             | Self::InvalidSeasonNumber

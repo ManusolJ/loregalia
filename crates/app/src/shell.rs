@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
@@ -23,6 +24,20 @@ use crate::startup::StorageState;
 use crate::theme::Palette;
 
 pub type MetadataSearch = Arc<dyn Fn(MediaKind, &str) -> CoreResult<Vec<Candidate>> + Send + Sync>;
+pub type MetadataDetails = Arc<dyn Fn(Source, String) -> CoreResult<Candidate> + Send + Sync>;
+
+const TMDB_REFRESH_AFTER_DAYS: u64 = 150;
+
+fn default_search() -> MetadataSearch {
+    Arc::new(|kind, query| providers::search(kind, query, providers::relay::base_url()))
+}
+
+fn default_details() -> MetadataDetails {
+    Arc::new(|source, external_id| match source {
+        Source::Tmdb => providers::relay::movie(providers::relay::base_url(), &external_id),
+        _ => Err(loregalia_core::Error::UnsupportedLookup),
+    })
+}
 
 const RAIL_WIDTH: f32 = 64.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
@@ -52,6 +67,14 @@ fn candidate_label(candidate: &Candidate, already_added: bool) -> String {
     }
 }
 
+fn refresh_cutoff() -> String {
+    let cutoff = SystemTime::now()
+        .checked_sub(Duration::from_secs(TMDB_REFRESH_AFTER_DAYS * 86_400))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    log::timestamp(cutoff)
+}
+
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
         px(RAIL_WIDTH)
@@ -64,6 +87,8 @@ pub struct Shell {
     storage: StorageState,
     log_path: Option<PathBuf>,
     metadata_search: MetadataSearch,
+    metadata_details: MetadataDetails,
+    refresh_started: bool,
     theme: settings::Theme,
     settings_screen: bool,
     settings_error: Option<String>,
@@ -182,7 +207,14 @@ impl Shell {
         theme: settings::Theme,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_search(storage, log_path, theme, Arc::new(providers::search), cx)
+        Self::new_with_services(
+            storage,
+            log_path,
+            theme,
+            default_search(),
+            default_details(),
+            cx,
+        )
     }
 
     pub fn new_with_search(
@@ -192,11 +224,31 @@ impl Shell {
         metadata_search: MetadataSearch,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_services(
+            storage,
+            log_path,
+            theme,
+            metadata_search,
+            default_details(),
+            cx,
+        )
+    }
+
+    pub fn new_with_services(
+        storage: StorageState,
+        log_path: Option<PathBuf>,
+        theme: settings::Theme,
+        metadata_search: MetadataSearch,
+        metadata_details: MetadataDetails,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let loading = matches!(&storage, StorageState::Ready(_));
         let mut shell = Self {
             storage,
             log_path,
             metadata_search,
+            metadata_details,
+            refresh_started: false,
             theme,
             settings_screen: false,
             settings_error: None,
@@ -251,6 +303,83 @@ impl Shell {
             let database = Database::open(path)?;
             load(&database)
         });
+    }
+
+    fn start_metadata_refresh(&mut self, cx: &mut Context<Self>) {
+        if self.refresh_started {
+            return;
+        }
+        self.refresh_started = true;
+
+        let cutoff = refresh_cutoff();
+        let due: Vec<(String, String)> = items::due_for_refresh(&self.items, &cutoff)
+            .into_iter()
+            .filter_map(|item| {
+                item.external_id
+                    .clone()
+                    .map(|external_id| (item.id.clone(), external_id))
+            })
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        let details = self.metadata_details.clone();
+
+        let task = cx.background_spawn(async move {
+            let database = Database::open(path)?;
+            let mut updated = Vec::new();
+            let mut failures = Vec::new();
+
+            for (id, external_id) in due {
+                match details(Source::Tmdb, external_id) {
+                    Ok(candidate) => {
+                        let latest = items::SourceData {
+                            title: candidate.title,
+                            release_year: candidate.release_year,
+                            cover_url: candidate.cover_url,
+                        };
+                        let refreshed_at = log::timestamp(SystemTime::now());
+                        if items::apply_refresh(&database, &id, latest, &refreshed_at)?
+                            && let Some(item) = items::get(&database, &id)?
+                        {
+                            updated.push(item);
+                        }
+                    }
+                    Err(error) => failures.push(error.to_string()),
+                }
+            }
+
+            Ok::<_, loregalia_core::Error>((updated, failures))
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok((updated, failures)) => {
+                        for item in updated {
+                            if let Some(slot) =
+                                this.items.iter_mut().find(|slot| slot.id == item.id)
+                            {
+                                *slot = item;
+                            }
+                        }
+                        for failure in failures {
+                            this.record(&format!("Metadata refresh failed: {failure}"), cx);
+                        }
+                    }
+                    Err(error) => {
+                        this.record(&format!("Metadata refresh failed: {error}"), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn begin_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -464,6 +593,7 @@ impl Shell {
     fn begin_create_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let title = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
         let year = cx.new(|cx| InputState::new(window, cx).placeholder("Year"));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search by title"));
         let focus = title.read(cx).focus_handle(cx);
         focus.focus(window, cx);
 
@@ -482,7 +612,7 @@ impl Shell {
             kind: MediaKind::Movie,
             title,
             year,
-            search_input: None,
+            search_input: Some(search_input),
             search: SearchStatus::Idle,
             search_request: 0,
             lookup: None,
@@ -533,7 +663,7 @@ impl Shell {
         cx.notify();
     }
 
-    fn select_item_kind(&mut self, kind: MediaKind, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_item_kind(&mut self, kind: MediaKind, cx: &mut Context<Self>) {
         let Some(editor) = &mut self.item_editor else {
             return;
         };
@@ -545,11 +675,6 @@ impl Shell {
         editor.search_request += 1;
         editor.search = SearchStatus::Idle;
         editor.lookup = None;
-
-        if providers::supported(kind) && editor.id.is_none() && editor.search_input.is_none() {
-            editor.search_input =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Search by title")));
-        }
 
         cx.notify();
     }
@@ -1147,6 +1272,7 @@ impl Shell {
                         this.list_tags = loaded.list_tags;
                         this.seasons = loaded.seasons;
                         this.error = None;
+                        this.start_metadata_refresh(cx);
                     }
                     Err(error) => {
                         let message = format!("Could not update the database: {error}");
@@ -1751,9 +1877,7 @@ impl Shell {
                 Button::new(format!("item-kind-{}", kind.key()))
                     .label(kind.label())
                     .selected(editor.kind == kind)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select_item_kind(kind, window, cx)
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_item_kind(kind, cx)))
             })))
             .child(
                 Input::new(&editor.year)

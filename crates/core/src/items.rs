@@ -1,7 +1,16 @@
 use crate::providers::Source;
 use crate::{Database, Error, Result, media::MediaKind};
 use rusqlite::{OptionalExtension, Row, params, types::Type};
+use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 use uuid::Uuid;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SourceData {
+    pub title: String,
+    pub release_year: Option<i32>,
+    pub cover_url: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Item {
@@ -15,6 +24,8 @@ pub struct Item {
     pub source: Option<String>,
     pub external_id: Option<String>,
     pub cover_url: Option<String>,
+    pub source_data: Option<SourceData>,
+    pub source_refreshed_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,8 +48,21 @@ impl Item {
             source: row.get(7)?,
             external_id: row.get(8)?,
             cover_url: row.get(9)?,
+            source_data: source_data(row, 10)?,
+            source_refreshed_at: row.get(11)?,
         })
     }
+}
+
+fn source_data(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<SourceData>> {
+    let value: Option<String> = row.get(index)?;
+
+    value
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
+        })
 }
 
 fn media_kind(row: &Row<'_>, index: usize) -> rusqlite::Result<MediaKind> {
@@ -63,7 +87,7 @@ pub fn create(
                      (SELECT id FROM statuses
                       WHERE media_kind = ?2 AND category = 'planned'),
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url",
+             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at",
             params![id, media_kind.key(), title, release_year],
             Item::from_row,
         )
@@ -78,18 +102,25 @@ pub fn create_from_lookup(
     lookup: &Lookup,
 ) -> Result<Item> {
     let id = Uuid::now_v7().to_string();
+    let source_data = SourceData {
+        title: title.to_owned(),
+        release_year,
+        cover_url: lookup.cover_url.clone(),
+    };
+    let source_data_json = serde_json::to_string(&source_data)?;
+    let refreshed_at = crate::log::timestamp(SystemTime::now());
 
     database
         .connection()
         .query_row(
             "INSERT INTO items
-                 (id, media_kind, title, release_year, status_id, source, external_id, cover_url, created_at)
+                 (id, media_kind, title, release_year, status_id, source, external_id, cover_url, source_data, source_refreshed_at, created_at)
              VALUES (?1, ?2, ?3, ?4,
                      (SELECT id FROM statuses
                       WHERE media_kind = ?2 AND category = 'planned'),
-                     ?5, ?6, ?7,
+                     ?5, ?6, ?7, ?8, ?9,
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url",
+             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at",
             params![
                 id,
                 media_kind.key(),
@@ -97,7 +128,9 @@ pub fn create_from_lookup(
                 release_year,
                 lookup.source.key(),
                 lookup.external_id.as_str(),
-                lookup.cover_url.as_deref()
+                lookup.cover_url.as_deref(),
+                source_data_json,
+                refreshed_at
             ],
             Item::from_row,
         )
@@ -124,13 +157,107 @@ pub fn duplicate<'a>(items: &'a [Item], media_kind: MediaKind, title: &str) -> O
 
 pub fn all(database: &Database) -> Result<Vec<Item>> {
     let mut statement = database.connection().prepare(
-        "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url
+        "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at
          FROM items ORDER BY created_at, rowid",
     )?;
     let rows = statement.query_map([], Item::from_row)?;
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Error::from)
+}
+
+pub fn get(database: &Database, id: &str) -> Result<Option<Item>> {
+    database
+        .connection()
+        .query_row(
+            "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at
+             FROM items WHERE id = ?1",
+            [id],
+            Item::from_row,
+        )
+        .optional()
+        .map_err(Error::from)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Refresh {
+    pub title: String,
+    pub release_year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub source_data: SourceData,
+}
+
+pub fn refreshed(item: &Item, latest: SourceData) -> Refresh {
+    let previous = item.source_data.as_ref();
+
+    Refresh {
+        title: if previous.is_some_and(|old| old.title == item.title) {
+            latest.title.clone()
+        } else {
+            item.title.clone()
+        },
+        release_year: if previous.is_some_and(|old| old.release_year == item.release_year) {
+            latest.release_year
+        } else {
+            item.release_year
+        },
+        cover_url: if previous.is_some_and(|old| old.cover_url == item.cover_url) {
+            latest.cover_url.clone()
+        } else {
+            item.cover_url.clone()
+        },
+        source_data: latest,
+    }
+}
+
+pub fn apply_refresh(
+    database: &Database,
+    id: &str,
+    latest: SourceData,
+    refreshed_at: &str,
+) -> Result<bool> {
+    let Some(item) = get(database, id)? else {
+        return Ok(false);
+    };
+    if item.source.is_none() {
+        return Ok(false);
+    }
+
+    let refresh = refreshed(&item, latest);
+    let source_data = serde_json::to_string(&refresh.source_data)?;
+    let changed = database.connection().execute(
+        "UPDATE items
+         SET title = ?1,
+             release_year = ?2,
+             cover_url = ?3,
+             source_data = ?4,
+             source_refreshed_at = ?5
+         WHERE id = ?6",
+        params![
+            refresh.title,
+            refresh.release_year,
+            refresh.cover_url,
+            source_data,
+            refreshed_at,
+            id
+        ],
+    )?;
+
+    Ok(changed > 0)
+}
+
+pub fn due_for_refresh<'a>(items: &'a [Item], cutoff: &str) -> Vec<&'a Item> {
+    items
+        .iter()
+        .filter(|item| {
+            item.media_kind == MediaKind::Movie
+                && item.source.as_deref() == Some(Source::Tmdb.key())
+                && item
+                    .source_refreshed_at
+                    .as_deref()
+                    .is_none_or(|refreshed_at| refreshed_at < cutoff)
+        })
+        .collect()
 }
 
 pub fn update(
@@ -214,7 +341,8 @@ pub fn delete(database: &Database, id: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Item, Lookup, all, create, create_from_lookup, delete, duplicate, set_status, update,
+        Item, Lookup, SourceData, all, apply_refresh, create, create_from_lookup, delete,
+        due_for_refresh, duplicate, get, refreshed, set_status, update,
     };
     use crate::Database;
     use crate::Error;
@@ -359,6 +487,8 @@ mod tests {
         assert_eq!(stored[0].source, None);
         assert_eq!(stored[0].external_id, None);
         assert_eq!(stored[0].cover_url, None);
+        assert_eq!(stored[0].source_data, None);
+        assert_eq!(stored[0].source_refreshed_at, None);
     }
 
     #[test]
@@ -385,7 +515,191 @@ mod tests {
             created.cover_url.as_deref(),
             Some("https://example.test/poster.jpg")
         );
+        assert_eq!(
+            created.source_data,
+            Some(SourceData {
+                title: "A Confession".to_owned(),
+                release_year: Some(2019),
+                cover_url: Some("https://example.test/poster.jpg".to_owned()),
+            })
+        );
+        assert!(
+            created
+                .source_refreshed_at
+                .as_deref()
+                .is_some_and(|value| value.ends_with('Z'))
+        );
         assert_eq!(all(&database).unwrap(), vec![created]);
+    }
+
+    #[test]
+    fn a_refresh_updates_untouched_visible_fields() {
+        let database = database();
+        let lookup = Lookup {
+            source: crate::providers::Source::Tmdb,
+            external_id: "438631".to_owned(),
+            cover_url: Some("https://image.example/old.jpg".to_owned()),
+        };
+        let created =
+            create_from_lookup(&database, MediaKind::Movie, "Dune", Some(2021), &lookup).unwrap();
+        let latest = SourceData {
+            title: "Dune: Part One".to_owned(),
+            release_year: Some(2021),
+            cover_url: Some("https://image.example/new.jpg".to_owned()),
+        };
+
+        assert!(
+            apply_refresh(
+                &database,
+                &created.id,
+                latest.clone(),
+                "2026-11-09T00:00:00.000Z"
+            )
+            .unwrap()
+        );
+
+        let stored = get(&database, &created.id).unwrap().unwrap();
+        assert_eq!(stored.title, "Dune: Part One");
+        assert_eq!(stored.release_year, Some(2021));
+        assert_eq!(
+            stored.cover_url.as_deref(),
+            Some("https://image.example/new.jpg")
+        );
+        assert_eq!(stored.source_data, Some(latest));
+        assert_eq!(
+            stored.source_refreshed_at.as_deref(),
+            Some("2026-11-09T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn a_refresh_keeps_a_visible_field_the_user_edited() {
+        let database = database();
+        let lookup = Lookup {
+            source: crate::providers::Source::Tmdb,
+            external_id: "438631".to_owned(),
+            cover_url: Some("https://image.example/old.jpg".to_owned()),
+        };
+        let created =
+            create_from_lookup(&database, MediaKind::Movie, "Dune", Some(2021), &lookup).unwrap();
+        update(
+            &database,
+            &created.id,
+            MediaKind::Movie,
+            "My Dune",
+            Some(2021),
+        )
+        .unwrap();
+        let latest = SourceData {
+            title: "Dune: Part One".to_owned(),
+            release_year: Some(2021),
+            cover_url: Some("https://image.example/new.jpg".to_owned()),
+        };
+
+        apply_refresh(
+            &database,
+            &created.id,
+            latest.clone(),
+            "2026-11-09T00:00:00.000Z",
+        )
+        .unwrap();
+
+        let stored = get(&database, &created.id).unwrap().unwrap();
+        assert_eq!(stored.title, "My Dune");
+        assert_eq!(
+            stored.cover_url.as_deref(),
+            Some("https://image.example/new.jpg")
+        );
+        assert_eq!(stored.source_data, Some(latest));
+    }
+
+    #[test]
+    fn a_refresh_without_previous_source_data_keeps_visible_fields() {
+        let database = database();
+        let created = create(&database, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+        let latest = SourceData {
+            title: "Dune: Part One".to_owned(),
+            release_year: Some(2024),
+            cover_url: Some("https://image.example/new.jpg".to_owned()),
+        };
+
+        assert!(
+            !apply_refresh(&database, &created.id, latest, "2026-11-09T00:00:00.000Z").unwrap()
+        );
+        assert_eq!(get(&database, &created.id).unwrap().unwrap(), created);
+    }
+
+    #[test]
+    fn due_for_refresh_lists_old_tmdb_items_only() {
+        let database = database();
+        let tmdb = create_from_lookup(
+            &database,
+            MediaKind::Movie,
+            "Dune",
+            Some(2021),
+            &Lookup {
+                source: crate::providers::Source::Tmdb,
+                external_id: "438631".to_owned(),
+                cover_url: None,
+            },
+        )
+        .unwrap();
+        let fresh = create_from_lookup(
+            &database,
+            MediaKind::Movie,
+            "Dune: Part Two",
+            Some(2024),
+            &Lookup {
+                source: crate::providers::Source::Tmdb,
+                external_id: "693134".to_owned(),
+                cover_url: None,
+            },
+        )
+        .unwrap();
+        let tvmaze = create_from_lookup(
+            &database,
+            MediaKind::Show,
+            "Dark",
+            Some(2017),
+            &Lookup {
+                source: crate::providers::Source::TvMaze,
+                external_id: "42".to_owned(),
+                cover_url: None,
+            },
+        )
+        .unwrap();
+        let stale = Item {
+            source_refreshed_at: Some("2026-01-01T00:00:00.000Z".to_owned()),
+            ..tmdb
+        };
+        let fresh = Item {
+            source_refreshed_at: Some("2026-10-01T00:00:00.000Z".to_owned()),
+            ..fresh
+        };
+
+        let items = [stale, fresh, tvmaze];
+        let due = due_for_refresh(&items, "2026-06-01T00:00:00.000Z");
+
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].external_id.as_deref(), Some("438631"));
+    }
+
+    #[test]
+    fn refreshed_keeps_visible_fields_when_there_is_no_previous_source_data() {
+        let database = database();
+        let item = create(&database, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+        let latest = SourceData {
+            title: "Dune: Part One".to_owned(),
+            release_year: Some(2024),
+            cover_url: Some("https://image.example/new.jpg".to_owned()),
+        };
+
+        let result = refreshed(&item, latest.clone());
+
+        assert_eq!(result.title, "Dune");
+        assert_eq!(result.release_year, Some(2021));
+        assert_eq!(result.cover_url, None);
+        assert_eq!(result.source_data, latest);
     }
 
     #[test]
