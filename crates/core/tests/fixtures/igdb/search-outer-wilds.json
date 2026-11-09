@@ -1,0 +1,38 @@
+[
+  {
+    "id": 11737,
+    "cover": {
+      "id": 286788,
+      "image_id": "co65ac"
+    },
+    "first_release_date": 1559001600,
+    "name": "Outer Wilds"
+  },
+  {
+    "id": 146761,
+    "cover": {
+      "id": 181861,
+      "image_id": "co3wbp"
+    },
+    "first_release_date": 1632787200,
+    "name": "Outer Wilds: Echoes of the Eye"
+  },
+  {
+    "id": 173172,
+    "cover": {
+      "id": 184733,
+      "image_id": "co3yjh"
+    },
+    "first_release_date": 1632787200,
+    "name": "Outer Wilds: Archaeologist Edition"
+  },
+  {
+    "id": 304188,
+    "cover": {
+      "id": 603252,
+      "image_id": "cocxh0"
+    },
+    "first_release_date": 1716854400,
+    "name": "​Outer Wilds: A Thrilling Graphical Text Adventure"
+  }
+]
