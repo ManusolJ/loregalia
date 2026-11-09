@@ -4,7 +4,7 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Pixels, Point, Result, Role, Size, TestAppContext,
     WindowBounds, WindowOptions, px, size,
 };
-use loregalia_app::shell::{MetadataSearch, Shell};
+use loregalia_app::shell::{MetadataDetails, MetadataSearch, Shell};
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
@@ -95,6 +95,34 @@ fn open_shell_with_theme(
     })
 }
 
+fn open_shell_with_services(
+    cx: &mut TestAppContext,
+    window_size: Size<Pixels>,
+    storage: StorageState,
+    search: MetadataSearch,
+    details: MetadataDetails,
+) -> Result<AnyWindowHandle> {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        theme::apply_choice(settings::Theme::Dark, cx);
+
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Point::default(),
+                size: window_size,
+            })),
+            ..Default::default()
+        };
+        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|cx| {
+                Shell::new_with_services(storage, None, settings::Theme::Dark, search, details, cx)
+            })
+        })?;
+
+        Ok(window)
+    })
+}
+
 fn open_shell_with_http(
     cx: &mut TestAppContext,
     window_size: Size<Pixels>,
@@ -146,6 +174,28 @@ fn found_book() -> Candidate {
         cover_url: Some(
             "https://covers.openlibrary.org/b/id/10226290-M.jpg?default=false".to_owned(),
         ),
+    }
+}
+
+fn found_movie() -> Candidate {
+    Candidate {
+        source: Source::Tmdb,
+        external_id: "438631".to_owned(),
+        title: "Dune".to_owned(),
+        release_year: Some(2021),
+        cover_url: Some(
+            "https://image.tmdb.org/t/p/w342/v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg".to_owned(),
+        ),
+    }
+}
+
+fn refreshed_movie() -> Candidate {
+    Candidate {
+        source: Source::Tmdb,
+        external_id: "438631".to_owned(),
+        title: "Dune: Part One".to_owned(),
+        release_year: Some(2021),
+        cover_url: Some("https://image.tmdb.org/t/p/w342/refreshed.jpg".to_owned()),
     }
 }
 
@@ -983,6 +1033,158 @@ fn searching_open_library_adds_the_chosen_book(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn searching_tmdb_adds_the_chosen_movie(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let search: MetadataSearch = Arc::new(|kind: MediaKind, query: &str| {
+        if kind == MediaKind::Movie && query == "dune" {
+            Ok(vec![found_movie()])
+        } else {
+            Ok(Vec::new())
+        }
+    });
+
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-movie", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dune");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-metadata", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("search-result-tmdb-438631").label(),
+            Some("Dune (2021)")
+        );
+        window.click("search-result-tmdb-438631", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].media_kind, MediaKind::Movie);
+    assert_eq!(stored[0].title, "Dune");
+    assert_eq!(stored[0].release_year, Some(2021));
+    assert_eq!(stored[0].source.as_deref(), Some(Source::Tmdb.key()));
+    assert_eq!(stored[0].external_id.as_deref(), Some("438631"));
+    assert_eq!(
+        stored[0].cover_url.as_deref(),
+        Some("https://image.tmdb.org/t/p/w342/v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg")
+    );
+    assert_eq!(
+        stored[0].source_data,
+        Some(items::SourceData {
+            title: "Dune".to_owned(),
+            release_year: Some(2021),
+            cover_url: Some(
+                "https://image.tmdb.org/t/p/w342/v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg".to_owned()
+            ),
+        })
+    );
+    assert!(
+        stored[0]
+            .source_refreshed_at
+            .as_deref()
+            .is_some_and(|value| value.ends_with('Z'))
+    );
+}
+
+#[gpui_kit::test]
+fn a_stale_tmdb_item_refreshes_in_the_background(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let database = Database::open(&path).unwrap();
+    let item = items::create_from_lookup(
+        &database,
+        MediaKind::Movie,
+        "Dune",
+        Some(2021),
+        &items::Lookup {
+            source: Source::Tmdb,
+            external_id: "438631".to_owned(),
+            cover_url: Some("https://image.example/old.jpg".to_owned()),
+        },
+    )
+    .unwrap();
+    let old_data = item.source_data.clone().unwrap();
+    items::apply_refresh(&database, &item.id, old_data, "2026-01-01T00:00:00.000Z").unwrap();
+    drop(database);
+
+    let search: MetadataSearch = Arc::new(|_, _| Ok(Vec::new()));
+    let details: MetadataDetails = Arc::new(|source: Source, external_id: String| {
+        if source == Source::Tmdb && external_id == "438631" {
+            Ok(refreshed_movie())
+        } else {
+            Err(Error::UnsupportedLookup)
+        }
+    });
+    let handle = open_shell_with_services(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        search,
+        details,
+    )
+    .unwrap();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].title, "Dune: Part One");
+    assert_eq!(
+        stored[0].cover_url.as_deref(),
+        Some("https://image.tmdb.org/t/p/w342/refreshed.jpg")
+    );
+    assert_ne!(
+        stored[0].source_refreshed_at.as_deref(),
+        Some("2026-01-01T00:00:00.000Z")
+    );
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(format!("item-row-{}", item.id)).label(),
+            Some("Dune: Part One")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn an_empty_show_search_is_not_a_failure(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let search: MetadataSearch = Arc::new(|_, _| Ok(Vec::new()));
@@ -1210,7 +1412,7 @@ fn the_metadata_search_appears_only_for_supported_new_items(cx: &mut TestAppCont
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("metadata-search").is_none());
+        assert!(window.find("metadata-search").visible());
         window.click("item-kind-show", cx);
     })
     .unwrap();
@@ -1225,6 +1427,12 @@ fn the_metadata_search_appears_only_for_supported_new_items(cx: &mut TestAppCont
         window.render_frame(cx);
         assert!(window.find("metadata-search").visible());
         window.click("item-kind-movie", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("metadata-search").visible());
+        window.click("item-kind-game", cx);
     })
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
@@ -1286,7 +1494,7 @@ fn switching_away_from_shows_clears_the_lookup(cx: &mut TestAppContext) {
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("item-kind-movie", cx);
+        window.click("item-kind-game", cx);
     })
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
@@ -1299,7 +1507,7 @@ fn switching_away_from_shows_clears_the_lookup(cx: &mut TestAppContext) {
 
     let stored = items::all(&Database::open(&path).unwrap()).unwrap();
     assert_eq!(stored.len(), 1);
-    assert_eq!(stored[0].media_kind, MediaKind::Movie);
+    assert_eq!(stored[0].media_kind, MediaKind::Game);
     assert_eq!(stored[0].title, "Dark");
     assert_eq!(stored[0].source, None);
     assert_eq!(stored[0].external_id, None);

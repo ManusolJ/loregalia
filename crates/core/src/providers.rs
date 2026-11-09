@@ -1,5 +1,6 @@
 pub mod open_library;
 pub mod relay;
+pub mod tmdb;
 pub mod tvmaze;
 
 use crate::media::MediaKind;
@@ -57,16 +58,18 @@ pub fn supported(media_kind: MediaKind) -> bool {
 pub fn source(media_kind: MediaKind) -> Option<Source> {
     match media_kind {
         MediaKind::Show => Some(Source::TvMaze),
+        MediaKind::Movie => Some(Source::Tmdb),
         MediaKind::Book => Some(Source::OpenLibrary),
-        MediaKind::Movie | MediaKind::Game => None,
+        MediaKind::Game => None,
     }
 }
 
-pub fn search(media_kind: MediaKind, query: &str) -> Result<Vec<Candidate>> {
+pub fn search(media_kind: MediaKind, query: &str, relay_url: &str) -> Result<Vec<Candidate>> {
     match media_kind {
         MediaKind::Show => tvmaze::search_candidates(query),
+        MediaKind::Movie => relay::search_movies(relay_url, query),
         MediaKind::Book => open_library::search(query),
-        MediaKind::Movie | MediaKind::Game => Err(Error::UnsupportedLookup),
+        MediaKind::Game => Err(Error::UnsupportedLookup),
     }
 }
 
@@ -96,7 +99,7 @@ mod tests {
     fn only_sources_that_exist_are_supported() {
         assert!(supported(MediaKind::Show));
         assert!(supported(MediaKind::Book));
-        assert!(!supported(MediaKind::Movie));
+        assert!(supported(MediaKind::Movie));
         assert!(!supported(MediaKind::Game));
     }
 
@@ -104,18 +107,14 @@ mod tests {
     fn a_supported_kind_maps_to_its_source() {
         assert_eq!(source(MediaKind::Show), Some(Source::TvMaze));
         assert_eq!(source(MediaKind::Book), Some(Source::OpenLibrary));
-        assert_eq!(source(MediaKind::Movie), None);
+        assert_eq!(source(MediaKind::Movie), Some(Source::Tmdb));
         assert_eq!(source(MediaKind::Game), None);
     }
 
     #[test]
     fn a_kind_without_a_source_fails_before_any_request() {
         assert!(matches!(
-            super::search(MediaKind::Movie, "dune"),
-            Err(crate::Error::UnsupportedLookup)
-        ));
-        assert!(matches!(
-            super::search(MediaKind::Game, "outer wilds"),
+            super::search(MediaKind::Game, "outer wilds", "http://127.0.0.1:1"),
             Err(crate::Error::UnsupportedLookup)
         ));
     }

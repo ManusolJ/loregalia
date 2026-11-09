@@ -117,6 +117,8 @@ const MIGRATIONS: &[&str] = &[
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     ) STRICT;",
+    "ALTER TABLE items ADD COLUMN source_data TEXT;
+     ALTER TABLE items ADD COLUMN source_refreshed_at TEXT;",
 ];
 
 fn latest_version() -> u32 {
@@ -292,7 +294,7 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 9);
+        assert_eq!(schema_version(database.connection()), 10);
     }
 
     #[test]
@@ -328,7 +330,42 @@ mod tests {
             })
             .unwrap();
         assert_eq!(title, "Dune");
-        assert_eq!(schema_version(database.connection()), 9);
+        assert_eq!(schema_version(database.connection()), 10);
+    }
+
+    #[test]
+    fn a_database_from_before_source_data_gets_the_columns() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("before-source-data.db");
+
+        {
+            let connection = Connection::open(&path).unwrap();
+            for migration in &MIGRATIONS[..9] {
+                connection.execute_batch(migration).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 9).unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO items (id, media_kind, title, source, external_id, created_at, status_id)
+                     VALUES ('movie-1', 'movie', 'Dune', 'tmdb', '438631',
+                             '2026-11-05T00:00:00Z', 'movie-planned');",
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+
+        let (source_data, refreshed_at): (Option<String>, Option<String>) = database
+            .connection()
+            .query_row(
+                "SELECT source_data, source_refreshed_at FROM items WHERE id = 'movie-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(source_data, None);
+        assert_eq!(refreshed_at, None);
+        assert_eq!(schema_version(database.connection()), 10);
     }
 
     #[test]
@@ -585,20 +622,20 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 10;")
+                .execute_batch("PRAGMA user_version = 11;")
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 10,
-                supported: 9
+                found: 11,
+                supported: 10
             })
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 10);
+        assert_eq!(schema_version(&connection), 11);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",

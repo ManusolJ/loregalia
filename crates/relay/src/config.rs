@@ -28,6 +28,7 @@ impl fmt::Debug for Secret {
 pub struct Config {
     pub bind_address: SocketAddr,
     pub database_path: PathBuf,
+    pub trust_proxy: bool,
     pub tmdb_token: Option<Secret>,
     pub igdb_client_id: Option<Secret>,
     pub igdb_client_secret: Option<Secret>,
@@ -52,10 +53,19 @@ impl Config {
                 .filter(|value| non_empty(value))
                 .unwrap_or_else(|| DEFAULT_DATABASE.to_owned()),
         );
+        let trust_proxy = lookup("LOREGALIA_RELAY_TRUST_PROXY")
+            .filter(|value| non_empty(value))
+            .is_some_and(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            });
 
         Ok(Self {
             bind_address,
             database_path,
+            trust_proxy,
             tmdb_token: lookup("TMDB_TOKEN")
                 .filter(|value| non_empty(value))
                 .map(Secret::new),
@@ -123,6 +133,7 @@ mod tests {
         );
         assert!(!config.tmdb_configured());
         assert!(!config.igdb_configured());
+        assert!(!config.trust_proxy);
     }
 
     #[test]
@@ -130,6 +141,7 @@ mod tests {
         let config = config(&[
             ("LOREGALIA_RELAY_BIND", "0.0.0.0:9000"),
             ("LOREGALIA_RELAY_DATABASE", "/tmp/relay.db"),
+            ("LOREGALIA_RELAY_TRUST_PROXY", "true"),
             ("TMDB_TOKEN", "tmdb-secret"),
             ("IGDB_CLIENT_ID", "igdb-id"),
             ("IGDB_CLIENT_SECRET", "igdb-secret"),
@@ -138,6 +150,7 @@ mod tests {
 
         assert_eq!(config.bind_address.to_string(), "0.0.0.0:9000");
         assert_eq!(config.database_path.to_string_lossy(), "/tmp/relay.db");
+        assert!(config.trust_proxy);
         assert!(config.tmdb_configured());
         assert!(config.igdb_configured());
         assert_eq!(config.tmdb_token.unwrap().expose(), "tmdb-secret");

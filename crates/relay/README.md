@@ -9,6 +9,7 @@ binary and is not part of the Windows installer.
 | ------------------------- | -------------------- | ------------------------------------ |
 | `LOREGALIA_RELAY_BIND`    | `127.0.0.1:8080`     | Address the relay listens on          |
 | `LOREGALIA_RELAY_DATABASE`| `relay-cache.db`     | SQLite cache file                     |
+| `LOREGALIA_RELAY_TRUST_PROXY` | unset            | Trust `X-Forwarded-For` from loopback |
 | `TMDB_TOKEN`              | unset                | TMDB v4 read access token             |
 | `IGDB_CLIENT_ID`          | unset                | Twitch application client ID          |
 | `IGDB_CLIENT_SECRET`      | unset                | Twitch application client secret      |
@@ -30,16 +31,18 @@ Current endpoints:
 
 ```text
 GET /healthz
+GET /v1/movies/search?q=...
+GET /v1/movies/{id}
 ```
 
-`/healthz` reports the relay version and whether TMDB and IGDB credentials are configured. TMDB and
-IGDB search endpoints arrive in the next provider steps.
+`/healthz` reports the relay version and whether TMDB and IGDB credentials are configured. IGDB
+search endpoints arrive in the next provider step.
 
 ## Cache
 
-The cache is a `STRICT` SQLite table with one body per key and an expiry time. TMDB entries must not
-live longer than six months; IGDB entries must not live longer than 24 hours. The provider steps set
-those limits.
+The cache is a `STRICT` SQLite table with one body per key and an expiry time. TMDB searches live
+for one hour and TMDB details for 30 days, both within TMDB's six-month limit. IGDB entries will use
+24 hours when that provider lands.
 
 ## Tests
 
