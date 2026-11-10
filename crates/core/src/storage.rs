@@ -1,5 +1,5 @@
 use crate::{Error, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, Params, Row, types::Type};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -170,12 +170,34 @@ impl Database {
         &self.connection
     }
 
+    pub(crate) fn select<T>(
+        &self,
+        sql: &str,
+        params: impl Params,
+        map: impl FnMut(&Row<'_>) -> rusqlite::Result<T>,
+    ) -> Result<Vec<T>> {
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(params, map)?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Error::from)
+    }
+
     fn from_connection(mut connection: Connection) -> Result<Self> {
         connection.pragma_update(None, "foreign_keys", true)?;
         migrate(&mut connection)?;
 
         Ok(Self { connection })
     }
+}
+
+pub(crate) fn keyed_column<T>(
+    row: &Row<'_>,
+    index: usize,
+    from_key: impl Fn(&str) -> Option<T>,
+) -> rusqlite::Result<T> {
+    let value: String = row.get(index)?;
+    from_key(&value).ok_or_else(|| rusqlite::Error::InvalidColumnType(index, value, Type::Text))
 }
 
 fn migrate(connection: &mut Connection) -> Result<()> {
@@ -208,10 +230,11 @@ fn migrate(connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        APP_FOLDER, DATABASE_FILE, Database, MIGRATIONS, data_directory, database_in,
+        APP_FOLDER, DATABASE_FILE, Database, MIGRATIONS, data_directory, database_in, keyed_column,
         latest_version,
     };
     use crate::Error;
+    use crate::media::MediaKind;
     use rusqlite::Connection;
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -644,6 +667,51 @@ mod tests {
             )
             .unwrap();
         assert_eq!(list_tables, 0);
+    }
+
+    #[test]
+    fn select_collects_mapped_rows() {
+        let database = Database::open_in_memory().unwrap();
+
+        let ids = database
+            .select(
+                "SELECT id FROM statuses WHERE media_kind = ?1 ORDER BY position",
+                ["book"],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+
+        assert_eq!(ids.len(), 5);
+        assert_eq!(ids[0], "book-planned");
+    }
+
+    #[test]
+    fn a_keyed_column_rejects_unknown_keys() {
+        let database = Database::open_in_memory().unwrap();
+        database
+            .connection()
+            .execute(
+                "INSERT INTO statuses (id, media_kind, category, label, position)
+                 VALUES ('odd', 'comic', 'planned', 'To read', 0)",
+                [],
+            )
+            .unwrap();
+
+        let known = database
+            .select(
+                "SELECT media_kind FROM statuses WHERE id = 'book-done'",
+                [],
+                |row| keyed_column(row, 0, MediaKind::from_key),
+            )
+            .unwrap();
+        let unknown = database.select(
+            "SELECT media_kind FROM statuses WHERE id = 'odd'",
+            [],
+            |row| keyed_column(row, 0, MediaKind::from_key),
+        );
+
+        assert_eq!(known, [MediaKind::Book]);
+        assert!(unknown.is_err());
     }
 
     #[test]

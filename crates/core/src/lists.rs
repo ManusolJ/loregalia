@@ -35,13 +35,11 @@ pub fn create(database: &Database, name: &str) -> Result<List> {
 }
 
 pub fn all(database: &Database) -> Result<Vec<List>> {
-    let mut statement = database
-        .connection()
-        .prepare("SELECT id, name, created_at FROM lists ORDER BY created_at, rowid")?;
-    let rows = statement.query_map([], List::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        "SELECT id, name, created_at FROM lists ORDER BY created_at, rowid",
+        [],
+        List::from_row,
+    )
 }
 
 pub fn rename(database: &Database, id: &str, name: &str) -> Result<bool> {

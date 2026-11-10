@@ -33,13 +33,7 @@ impl Tagging {
 }
 
 pub fn all(database: &Database) -> Result<Vec<Tag>> {
-    let mut statement = database
-        .connection()
-        .prepare("SELECT id, name FROM tags ORDER BY name")?;
-    let rows = statement.query_map([], Tag::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select("SELECT id, name FROM tags ORDER BY name", [], Tag::from_row)
 }
 
 fn by_name(database: &Database, name: &str) -> Result<Option<Tag>> {
@@ -102,47 +96,39 @@ pub fn delete(database: &Database, id: &str) -> Result<bool> {
 }
 
 pub fn for_item(database: &Database, item_id: &str) -> Result<Vec<Tag>> {
-    let mut statement = database.connection().prepare(
-        "SELECT t.id, t.name FROM item_tags link
-         JOIN tags t ON t.id = link.tag_id
-         WHERE link.item_id = ?1 ORDER BY t.name",
-    )?;
-    let rows = statement.query_map([item_id], Tag::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        "SELECT tags.id, tags.name FROM item_tags
+         JOIN tags ON tags.id = item_tags.tag_id
+         WHERE item_tags.item_id = ?1 ORDER BY tags.name",
+        [item_id],
+        Tag::from_row,
+    )
 }
 
 pub fn for_list(database: &Database, list_id: &str) -> Result<Vec<Tag>> {
-    let mut statement = database.connection().prepare(
-        "SELECT t.id, t.name FROM list_tags link
-         JOIN tags t ON t.id = link.tag_id
-         WHERE link.list_id = ?1 ORDER BY t.name",
-    )?;
-    let rows = statement.query_map([list_id], Tag::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        "SELECT tags.id, tags.name FROM list_tags
+         JOIN tags ON tags.id = list_tags.tag_id
+         WHERE list_tags.list_id = ?1 ORDER BY tags.name",
+        [list_id],
+        Tag::from_row,
+    )
 }
 
 pub fn item_taggings(database: &Database) -> Result<Vec<Tagging>> {
-    let mut statement = database
-        .connection()
-        .prepare("SELECT item_id, tag_id FROM item_tags ORDER BY item_id, tag_id")?;
-    let rows = statement.query_map([], Tagging::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        "SELECT item_id, tag_id FROM item_tags ORDER BY item_id, tag_id",
+        [],
+        Tagging::from_row,
+    )
 }
 
 pub fn list_taggings(database: &Database) -> Result<Vec<Tagging>> {
-    let mut statement = database
-        .connection()
-        .prepare("SELECT list_id, tag_id FROM list_tags ORDER BY list_id, tag_id")?;
-    let rows = statement.query_map([], Tagging::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        "SELECT list_id, tag_id FROM list_tags ORDER BY list_id, tag_id",
+        [],
+        Tagging::from_row,
+    )
 }
 
 pub fn attach_to_item(database: &Database, item_id: &str, tag_id: &str) -> Result<bool> {

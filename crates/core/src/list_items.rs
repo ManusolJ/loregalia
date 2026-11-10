@@ -1,4 +1,5 @@
-use crate::{Database, Error, Result, items::Item};
+use crate::items::{self, Item};
+use crate::{Database, Result};
 use rusqlite::{OptionalExtension, Row, params};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,6 +26,26 @@ pub enum Sort {
     Year,
 }
 
+impl Sort {
+    pub const ALL: [Self; 3] = [Self::Manual, Self::Title, Self::Year];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Title => "title",
+            Self::Year => "year",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Manual => "Manual",
+            Self::Title => "Title",
+            Self::Year => "Year",
+        }
+    }
+}
+
 pub fn sort_items(items: &mut [&Item], sort: Sort) {
     match sort {
         Sort::Manual => {}
@@ -37,13 +58,11 @@ pub fn sort_items(items: &mut [&Item], sort: Sort) {
 }
 
 pub fn memberships(database: &Database) -> Result<Vec<Membership>> {
-    let mut statement = database
-        .connection()
-        .prepare("SELECT list_id, item_id, position FROM list_items ORDER BY list_id, position")?;
-    let rows = statement.query_map([], Membership::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        "SELECT list_id, item_id, position FROM list_items ORDER BY list_id, position",
+        [],
+        Membership::from_row,
+    )
 }
 
 fn position(database: &Database, list_id: &str, item_id: &str) -> Result<Option<i32>> {
@@ -172,18 +191,17 @@ pub fn remove(database: &Database, list_id: &str, item_id: &str) -> Result<bool>
 }
 
 pub fn all(database: &Database, list_id: &str) -> Result<Vec<Item>> {
-    let mut statement = database.connection().prepare(
-        "SELECT i.id, i.title, i.media_kind, i.release_year, i.release_date, i.finished_at, i.status_id,
-                i.source, i.external_id, i.cover_url, i.source_data, i.source_refreshed_at
-         FROM list_items li
-         JOIN items i ON i.id = li.item_id
-         WHERE li.list_id = ?1
-         ORDER BY li.position, li.rowid",
-    )?;
-    let rows = statement.query_map([list_id], Item::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        &format!(
+            "SELECT {} FROM list_items
+             JOIN items ON items.id = list_items.item_id
+             WHERE list_items.list_id = ?1
+             ORDER BY list_items.position, list_items.rowid",
+            items::COLUMNS
+        ),
+        [list_id],
+        Item::from_row,
+    )
 }
 
 #[cfg(test)]
@@ -334,6 +352,14 @@ mod tests {
 
     fn view_titles(items: &[&items::Item]) -> Vec<String> {
         items.iter().map(|item| item.title.clone()).collect()
+    }
+
+    #[test]
+    fn every_sort_has_a_stable_key_and_a_label() {
+        let keys: Vec<&str> = Sort::ALL.iter().map(|sort| sort.key()).collect();
+
+        assert_eq!(keys, ["manual", "title", "year"]);
+        assert!(Sort::ALL.iter().all(|sort| !sort.label().is_empty()));
     }
 
     #[test]

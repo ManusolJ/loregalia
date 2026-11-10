@@ -1,5 +1,8 @@
-use crate::{Database, Error, Result, media::MediaKind};
-use rusqlite::{Row, types::Type};
+use crate::storage::keyed_column;
+use crate::{Database, Result, media::MediaKind};
+use rusqlite::Row;
+
+const COLUMNS: &str = "id, media_kind, category, label, position";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Status {
@@ -14,46 +17,28 @@ impl Status {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
-            media_kind: media_kind(row, 1)?,
-            category: category(row, 2)?,
+            media_kind: keyed_column(row, 1, MediaKind::from_key)?,
+            category: keyed_column(row, 2, Category::from_key)?,
             label: row.get(3)?,
             position: row.get(4)?,
         })
     }
 }
 
-fn media_kind(row: &Row<'_>, index: usize) -> rusqlite::Result<MediaKind> {
-    let value: String = row.get(index)?;
-    MediaKind::from_key(&value)
-        .ok_or_else(|| rusqlite::Error::InvalidColumnType(index, value, Type::Text))
-}
-
-fn category(row: &Row<'_>, index: usize) -> rusqlite::Result<Category> {
-    let value: String = row.get(index)?;
-    Category::from_key(&value)
-        .ok_or_else(|| rusqlite::Error::InvalidColumnType(index, value, Type::Text))
-}
-
 pub fn all(database: &Database) -> Result<Vec<Status>> {
-    let mut statement = database.connection().prepare(
-        "SELECT id, media_kind, category, label, position
-         FROM statuses ORDER BY media_kind, position",
-    )?;
-    let rows = statement.query_map([], Status::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        &format!("SELECT {COLUMNS} FROM statuses ORDER BY media_kind, position"),
+        [],
+        Status::from_row,
+    )
 }
 
 pub fn for_kind(database: &Database, kind: MediaKind) -> Result<Vec<Status>> {
-    let mut statement = database.connection().prepare(
-        "SELECT id, media_kind, category, label, position
-         FROM statuses WHERE media_kind = ?1 ORDER BY position",
-    )?;
-    let rows = statement.query_map([kind.key()], Status::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        &format!("SELECT {COLUMNS} FROM statuses WHERE media_kind = ?1 ORDER BY position"),
+        [kind.key()],
+        Status::from_row,
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
