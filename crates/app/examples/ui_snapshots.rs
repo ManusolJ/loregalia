@@ -87,7 +87,7 @@ fn main() -> Result<()> {
             step: Step::None,
         },
         Shot {
-            name: "item-status-picker-dark",
+            name: "item-detail-dark",
             size: size(px(1280.0), px(800.0)),
             mode: ThemeMode::Dark,
             storage: with_items.clone(),
@@ -393,7 +393,7 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
         Step::StatusPicker => {
             if let Some(id) = first_item {
                 cx.update_window(handle, |_, window, cx| {
-                    window.click(format!("item-status-{id}"), cx);
+                    window.click(format!("item-row-{id}"), cx);
                     window.render_frame(cx);
                 })?;
             }
@@ -437,6 +437,8 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
         Step::ItemTags => {
             if let Some(id) = first_item {
                 cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("item-row-{id}"), cx);
+                    window.render_frame(cx);
                     window.click(format!("item-tags-{id}"), cx);
                     window.render_frame(cx);
                 })?;
@@ -445,6 +447,8 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
         Step::Seasons => {
             if let Some(id) = first_item {
                 cx.update_window(handle, |_, window, cx| {
+                    window.click(format!("item-row-{id}"), cx);
+                    window.render_frame(cx);
                     window.click(format!("item-seasons-{id}"), cx);
                     window.render_frame(cx);
                 })?;

@@ -18,6 +18,15 @@ impl MediaKind {
         }
     }
 
+    pub const fn plural_label(self) -> &'static str {
+        match self {
+            Self::Movie => "Movies",
+            Self::Show => "Shows",
+            Self::Book => "Books",
+            Self::Game => "Games",
+        }
+    }
+
     pub const fn key(self) -> &'static str {
         match self {
             Self::Movie => "movie",
@@ -55,6 +64,13 @@ mod tests {
         for kind in MediaKind::ALL {
             assert!(!kind.label().is_empty());
         }
+    }
+
+    #[test]
+    fn every_kind_has_a_plural_label() {
+        let plurals = MediaKind::ALL.map(MediaKind::plural_label);
+
+        assert_eq!(plurals, ["Movies", "Shows", "Books", "Games"]);
     }
 
     #[test]

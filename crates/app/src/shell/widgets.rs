@@ -7,12 +7,21 @@ use gpui_kit::{
 use loregalia_core::{items, media::MediaKind, statuses, tags};
 
 use super::Shell;
-use crate::theme::Palette;
+use crate::theme::{Palette, SELECTED_ALPHA};
+
+pub(super) const ROW_COVER_WIDTH: f32 = 40.0;
+pub(super) const TILE_COVER_WIDTH: f32 = 112.0;
 
 pub(super) struct Confirmation {
     pub(super) id: &'static str,
     pub(super) cancel_id: &'static str,
     pub(super) confirm_id: &'static str,
+}
+
+pub(super) struct Cover<'a> {
+    pub(super) prefix: &'static str,
+    pub(super) item: &'a items::Item,
+    pub(super) width: f32,
 }
 
 impl Shell {
@@ -52,6 +61,15 @@ impl Shell {
             .into_any_element()
     }
 
+    pub(super) fn section_label(label: &'static str, palette: &Palette) -> AnyElement {
+        div()
+            .text_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(palette.muted))
+            .child(label)
+            .into_any_element()
+    }
+
     pub(super) fn tags_for<'a>(
         &'a self,
         links: &'a [tags::Tagging],
@@ -64,6 +82,10 @@ impl Shell {
             .collect();
         attached.sort_by(|left, right| left.name.cmp(&right.name));
         attached
+    }
+
+    pub(super) fn status_of(&self, status_id: &str) -> Option<&statuses::Status> {
+        self.statuses.iter().find(|status| status.id == status_id)
     }
 
     pub(super) fn category_color(palette: &Palette, category: statuses::Category) -> u32 {
@@ -86,6 +108,27 @@ impl Shell {
         }
     }
 
+    fn status_content(status: &statuses::Status, palette: &Palette) -> gpui_kit::Div {
+        let color = rgb(Self::category_color(palette, status.category));
+
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Icon::new(Self::category_icon(status.category))
+                    .with_size(px(14.0))
+                    .text_color(color),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(rgb(palette.content))
+                    .child(status.label.clone()),
+            )
+    }
+
     pub(super) fn status_chip(status: &statuses::Status, id: String, palette: &Palette) -> Button {
         let color = rgb(Self::category_color(palette, status.category));
 
@@ -94,26 +137,31 @@ impl Shell {
             .h(px(24.0))
             .px_2()
             .rounded(px(6.0))
-            .bg(color.alpha(0.15))
+            .bg(color.alpha(SELECTED_ALPHA))
             .accessibility_label(status.label.clone())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        Icon::new(Self::category_icon(status.category))
-                            .with_size(px(16.0))
-                            .text_color(color),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(rgb(palette.content))
-                            .child(status.label.clone()),
-                    ),
-            )
+            .child(Self::status_content(status, palette))
+    }
+
+    pub(super) fn status_badge(
+        status: &statuses::Status,
+        id: String,
+        palette: &Palette,
+    ) -> AnyElement {
+        let color = rgb(Self::category_color(palette, status.category));
+
+        div()
+            .id(id)
+            .test_support()
+            .aria_label(status.label.clone())
+            .flex_none()
+            .h(px(24.0))
+            .px_2()
+            .flex()
+            .items_center()
+            .rounded(px(6.0))
+            .bg(color.alpha(SELECTED_ALPHA))
+            .child(Self::status_content(status, palette))
+            .into_any_element()
     }
 
     pub(super) fn tag_chip(id: String, tag: &tags::Tag, palette: &Palette) -> AnyElement {
@@ -121,16 +169,15 @@ impl Shell {
             .id(id)
             .test_support()
             .aria_label(tag.name.clone())
-            .h(px(24.0))
-            .px_2()
+            .h(px(26.0))
+            .px_3()
             .flex()
             .items_center()
-            .rounded(px(6.0))
-            .bg(rgb(palette.raised))
+            .rounded(px(13.0))
             .border_1()
             .border_color(rgb(palette.line))
             .text_xs()
-            .text_color(rgb(palette.muted))
+            .text_color(rgb(palette.content))
             .child(tag.name.clone())
             .into_any_element()
     }
@@ -144,24 +191,34 @@ impl Shell {
         }
     }
 
-    pub(super) fn cover_element(item: &items::Item, palette: &Palette) -> AnyElement {
-        let mut cover = div()
-            .id(format!("cover-{}", item.id))
+    pub(super) fn cover_element(cover: Cover<'_>, palette: &Palette) -> AnyElement {
+        let Cover {
+            prefix,
+            item,
+            width,
+        } = cover;
+        let icon_size = if width >= TILE_COVER_WIDTH {
+            28.0
+        } else {
+            16.0
+        };
+        let mut element = div()
+            .id(format!("{prefix}-{}", item.id))
             .role(Role::Image)
             .test_support()
             .aria_label(format!("Cover for {}", item.title))
             .relative()
-            .w(px(32.0))
-            .h(px(48.0))
+            .w(px(width))
+            .h(px(width * 1.5))
             .flex_none()
             .rounded(px(6.0))
             .border_1()
             .border_color(rgb(palette.line))
             .overflow_hidden()
-            .bg(rgb(palette.surface))
+            .bg(rgb(palette.sunken))
             .child(
                 div()
-                    .id(format!("cover-fallback-{}", item.id))
+                    .id(format!("{prefix}-fallback-{}", item.id))
                     .test_support()
                     .size_full()
                     .flex()
@@ -169,15 +226,15 @@ impl Shell {
                     .justify_center()
                     .child(
                         Icon::new(Self::media_kind_icon(item.media_kind))
-                            .with_size(px(16.0))
+                            .with_size(px(icon_size))
                             .text_color(rgb(palette.muted)),
                     ),
             );
 
         if let Some(url) = &item.cover_url {
-            cover = cover.child(
+            element = element.child(
                 img(url.clone())
-                    .id(format!("cover-image-{}", item.id))
+                    .id(format!("{prefix}-image-{}", item.id))
                     .absolute()
                     .top_0()
                     .left_0()
@@ -187,6 +244,13 @@ impl Shell {
             );
         }
 
-        cover.into_any_element()
+        element.into_any_element()
+    }
+
+    pub(super) fn item_metadata(item: &items::Item) -> String {
+        match item.release_year {
+            Some(year) => format!("{} · {year}", item.media_kind.label()),
+            None => item.media_kind.label().to_owned(),
+        }
     }
 }

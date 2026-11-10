@@ -449,7 +449,7 @@ fn rail_shows_every_list_and_create_with_labels(cx: &mut TestAppContext) {
             .bounds()
             .origin
             .y;
-        assert_eq!(second_top - first_top, px(36.0));
+        assert_eq!(second_top - first_top, px(34.0));
 
         let create = window.find("create-list");
         assert!(create.visible());
@@ -809,6 +809,8 @@ fn editing_an_item_updates_it(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
         window.render_frame(cx);
         window.click(format!("item-edit-{}", item.id), cx);
     })
@@ -1395,6 +1397,8 @@ fn the_metadata_search_appears_only_for_supported_new_items(cx: &mut TestAppCont
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
         window.click(format!("item-edit-{}", item.id), cx);
     })
     .unwrap();
@@ -1937,7 +1941,7 @@ fn the_status_picker_offers_only_the_items_media_kind(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn clicking_the_chip_again_closes_the_status_picker(cx: &mut TestAppContext) {
+fn closing_the_detail_panel_hides_its_status_picker(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
     let item = seed_item(&path, MediaKind::Game, "Outer Wilds", None).unwrap();
@@ -1953,18 +1957,21 @@ fn clicking_the_chip_again_closes_the_status_picker(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(format!("item-status-{}", item.id), cx);
+        window.click(format!("item-row-{}", item.id), cx);
     })
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(window.find("detail-panel").visible());
         assert!(window.find(format!("status-picker-{}", item.id)).visible());
-        window.click(format!("item-status-{}", item.id), cx);
+        assert_eq!(window.find("detail-title").label(), Some("Outer Wilds"));
+        window.click("detail-close", cx);
     })
     .unwrap();
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(window.try_find("detail-panel").is_none());
         assert!(
             window
                 .try_find(format!("status-picker-{}", item.id))
@@ -1991,6 +1998,8 @@ fn deleting_an_item_asks_for_confirmation(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
         window.click(format!("item-delete-{}", item.id), cx);
     })
     .unwrap();
@@ -2005,6 +2014,8 @@ fn deleting_an_item_asks_for_confirmation(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("item-delete-confirmation").is_none());
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
         window.click(format!("item-delete-{}", item.id), cx);
     })
     .unwrap();
@@ -2230,6 +2241,8 @@ fn removing_an_item_from_a_list_keeps_the_item(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
         window.click(format!("remove-from-list-{}", item.id), cx);
     })
     .unwrap();
@@ -2424,6 +2437,8 @@ fn editing_an_item_from_a_list_returns_to_the_list(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
         window.click(format!("item-edit-{}", item.id), cx);
     })
     .unwrap();
@@ -2524,6 +2539,8 @@ fn adding_a_tag_to_an_item_shows_a_chip(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
         window.render_frame(cx);
         window.click(format!("item-tags-{}", item.id), cx);
     })
@@ -2626,6 +2643,8 @@ fn toggling_an_existing_tag_on_an_item_attaches_and_detaches_it(cx: &mut TestApp
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
         window.render_frame(cx);
         window.click(format!("item-tags-{}", item.id), cx);
     })
@@ -3060,7 +3079,7 @@ fn selecting_a_list_leaves_the_settings_screen(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_show_row_offers_seasons_and_other_kinds_do_not(cx: &mut TestAppContext) {
+fn the_detail_of_a_show_offers_seasons_and_other_kinds_do_not(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
     let show = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
@@ -3077,8 +3096,13 @@ fn a_show_row_offers_seasons_and_other_kinds_do_not(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-
+        window.click(format!("item-row-{}", show.id), cx);
+        window.render_frame(cx);
         assert!(window.find(format!("item-seasons-{}", show.id)).visible());
+
+        window.click(format!("item-row-{}", movie.id), cx);
+        window.render_frame(cx);
+        assert!(window.find("detail-panel").visible());
         assert!(
             window
                 .try_find(format!("item-seasons-{}", movie.id))
@@ -3104,6 +3128,8 @@ fn adding_a_season_shows_it_with_a_status(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
         window.render_frame(cx);
         window.click(format!("item-seasons-{}", show.id), cx);
     })
@@ -3163,6 +3189,8 @@ fn seasons_are_shown_in_number_order(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
+        window.render_frame(cx);
         window.click(format!("item-seasons-{}", show.id), cx);
     })
     .unwrap();
@@ -3202,6 +3230,8 @@ fn changing_a_season_status_updates_the_chip(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
         window.render_frame(cx);
         window.click(format!("item-seasons-{}", show.id), cx);
     })
@@ -3257,6 +3287,8 @@ fn deleting_a_season_asks_for_confirmation(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
         window.render_frame(cx);
         window.click(format!("item-seasons-{}", show.id), cx);
     })
@@ -3509,6 +3541,8 @@ fn renaming_a_tag_updates_its_chip(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
         window.click(format!("item-tags-{}", item.id), cx);
     })
     .unwrap();
@@ -3568,6 +3602,8 @@ fn deleting_a_tag_asks_for_confirmation(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
         window.render_frame(cx);
         window.click(format!("item-tags-{}", item.id), cx);
     })
@@ -3855,10 +3891,11 @@ fn content_starts_at_the_top_left_of_the_main_area(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let items = window.find("items").bounds();
-        let add_item = window.find("add-item").bounds();
+        let title = window.find("page-title").bounds();
+        let header = window.find("page-header").bounds();
 
-        assert_eq!(items.origin.x, add_item.origin.x);
-        assert!(items.origin.y - (add_item.origin.y + add_item.size.height) <= px(24.0));
+        assert_eq!(items.origin.x, title.origin.x);
+        assert!(items.origin.y - (header.origin.y + header.size.height) <= px(24.0));
     })
     .unwrap();
 }
@@ -3885,6 +3922,266 @@ fn a_long_library_scrolls_instead_of_overflowing(cx: &mut TestAppContext) {
 
         assert!(viewport.origin.y + viewport.size.height <= px(800.0));
         assert!(window.find("items").bounds().size.height > viewport.size.height);
+    })
+    .unwrap();
+}
+
+fn seed_status(path: &Path, item_id: &str, status_id: &str) -> CoreResult<()> {
+    let database = Database::open(path)?;
+    items::set_status(&database, item_id, status_id)?;
+
+    Ok(())
+}
+
+#[gpui_kit::test]
+fn shelves_show_their_items_and_counts(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let active = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
+    let done = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let planned = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    seed_status(&path, &active.id, "show-active").unwrap();
+    seed_status(&path, &done.id, "movie-done").unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("page-title").label(), Some("All items"));
+        assert_eq!(window.find("page-count").label(), Some("3"));
+        window.click("shelf-up-next", cx);
+        window.render_frame(cx);
+
+        assert_eq!(window.find("page-title").label(), Some("Up next"));
+        assert_eq!(window.find("page-count").label(), Some("1"));
+        assert!(window.find(format!("item-row-{}", active.id)).visible());
+        assert!(
+            window
+                .try_find(format!("item-row-{}", planned.id))
+                .is_none()
+        );
+
+        window.click("shelf-finished", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("page-title").label(), Some("Finished"));
+        assert!(window.find(format!("item-row-{}", done.id)).visible());
+        assert!(window.try_find(format!("item-row-{}", active.id)).is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_empty_shelf_says_what_it_holds(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Book, "Piranesi", None).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("shelf-finished", cx);
+        window.render_frame(cx);
+
+        let empty = window.find("empty-state");
+        assert_eq!(empty.label(), Some("Nothing finished yet"));
+        assert_eq!(empty.role(), Some(Role::Status));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_kind_filter_narrows_the_library(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let movie = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let book = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("filter-book", cx);
+        window.render_frame(cx);
+
+        assert_eq!(window.find("page-count").label(), Some("1"));
+        assert!(window.find(format!("item-row-{}", book.id)).visible());
+        assert!(window.try_find(format!("item-row-{}", movie.id)).is_none());
+
+        window.click("filter-all", cx);
+        window.render_frame(cx);
+        assert!(window.find(format!("item-row-{}", movie.id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn up_next_tiles_lead_the_library_and_open_details(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let active = seed_item(&path, MediaKind::Game, "Outer Wilds", Some(2019)).unwrap();
+    let planned = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    seed_status(&path, &active.id, "game-active").unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let shelf = window.find("up-next").bounds();
+        let items = window.find("items").bounds();
+
+        assert!(shelf.origin.y < items.origin.y);
+        assert!(window.find(format!("up-next-{}", active.id)).visible());
+        assert!(window.try_find(format!("up-next-{}", planned.id)).is_none());
+
+        window.click(format!("up-next-{}", active.id), cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Outer Wilds"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_list_title_and_count_head_the_page(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let list = seed_lists(&path, &["Winter reading"]).unwrap().remove(0);
+    let book = seed_item(&path, MediaKind::Book, "Piranesi", None).unwrap();
+    add_membership(&path, &list.id, &book.id).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("list-row-{}", list.id), cx);
+        window.render_frame(cx);
+
+        let title = window.find("page-title");
+        assert_eq!(title.label(), Some("Winter reading"));
+        assert_eq!(title.role(), Some(Role::Heading));
+        assert_eq!(window.find("page-count").label(), Some("1"));
+        assert!(window.find("rename-list").visible());
+        assert!(window.find("add-item").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_detail_panel_docks_beside_the_list_on_a_wide_window(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
+
+        let panel = window.find("detail-panel").bounds();
+        let main = window.find("main-scroll").bounds();
+        assert_eq!(panel.size.width, px(360.0));
+        assert_eq!(panel.origin.x + panel.size.width, px(1280.0));
+        assert!(main.origin.x + main.size.width <= panel.origin.x);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_detail_panel_is_a_drawer_over_the_list_below_1280(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1100.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let main_before = window.find("main-scroll").bounds();
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
+
+        let main_after = window.find("main-scroll").bounds();
+        assert_eq!(main_after.size.width, main_before.size.width);
+        assert!(window.find("detail-panel").visible());
+        assert!(window.find("detail-close").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn clicking_a_row_selects_it_for_the_detail_panel(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let first = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let second = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", first.id), cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Dune"));
+
+        window.click(format!("item-row-{}", second.id), cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Piranesi"));
+        assert!(window.find(format!("item-delete-{}", second.id)).visible());
+        assert!(
+            window
+                .try_find(format!("item-delete-{}", first.id))
+                .is_none()
+        );
     })
     .unwrap();
 }
