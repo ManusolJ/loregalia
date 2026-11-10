@@ -18,8 +18,8 @@ path = "src/main.rs"
 axum.workspace = true
 loregalia-core.workspace = true
 rusqlite.workspace = true
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
 
 [dev-dependencies]

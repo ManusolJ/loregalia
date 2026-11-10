@@ -11,8 +11,8 @@ of what you have finished. It brings movies, shows, books and games together in 
 
 ## Status
 
-**Early development: not ready to use yet.** There is a window with the app's layout and theme, but
-no features and no installer. See the [roadmap](docs/ROADMAP.md).
+**Early development: not ready to use yet.** Lists, items, statuses, tags, seasons and lookup for
+shows, books and movies work, but there is no installer yet. See the [roadmap](docs/ROADMAP.md).
 
 ## Planned features
 
@@ -36,7 +36,7 @@ The full scope, including what is deliberately left out, is in [PRODUCT.md](docs
 | -------- | ----------------------------------------------------------------------- |
 | Language | Rust                                                                    |
 | UI       | [GPUI](https://www.gpui.rs/), through [gpui-kit](https://gpui-kit.com/) |
-| Storage  | SQLite (planned)                                                        |
+| Storage  | SQLite                                                                  |
 | Platform | Windows; Linux is built and tested for development, but not shipped     |
 
 ## Getting started
@@ -73,6 +73,7 @@ quick version.
 ```text
 crates/app    GPUI views, theme and window
 crates/core   Domain logic, storage and metadata providers, with no UI dependency
+crates/relay  The metadata relay server that holds the TMDB and IGDB keys
 xtask         The gate and project rules
 docs/         Product, architecture, design, decisions and roadmap
 scripts/      Linux and sandbox setup

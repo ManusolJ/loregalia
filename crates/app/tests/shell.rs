@@ -1,8 +1,8 @@
 use gpui_kit::http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Bounds, Pixels, Point, Result, Role, Size, TestAppContext,
-    WindowBounds, WindowOptions, px, size,
+    AnyWindowHandle, AppContext, Bounds, Context, Pixels, Point, Result, Role, Size,
+    TestAppContext, WindowBounds, WindowOptions, px, size,
 };
 use loregalia_app::shell::{MetadataDetails, MetadataSearch, Shell};
 use loregalia_app::startup::StorageState;
@@ -17,15 +17,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-fn open_shell(
+fn open_window(
     cx: &mut TestAppContext,
     window_size: Size<Pixels>,
-    storage: StorageState,
-    log_path: Option<PathBuf>,
+    choice: settings::Theme,
+    client: Option<Arc<dyn HttpClient>>,
+    build: impl FnOnce(&mut Context<Shell>) -> Shell,
 ) -> Result<AnyWindowHandle> {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        theme::apply_choice(settings::Theme::Dark, cx);
+        theme::apply_choice(choice, cx);
+        if let Some(client) = client {
+            cx.set_http_client(client);
+        }
 
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -34,11 +38,20 @@ fn open_shell(
             })),
             ..Default::default()
         };
-        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new(storage, log_path, settings::Theme::Dark, cx))
-        })?;
+        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| cx.new(build))?;
 
         Ok(window)
+    })
+}
+
+fn open_shell(
+    cx: &mut TestAppContext,
+    window_size: Size<Pixels>,
+    storage: StorageState,
+    log_path: Option<PathBuf>,
+) -> Result<AnyWindowHandle> {
+    open_window(cx, window_size, settings::Theme::Dark, None, |cx| {
+        Shell::new(storage, log_path, settings::Theme::Dark, cx)
     })
 }
 
@@ -49,24 +62,8 @@ fn open_shell_with_search(
     log_path: Option<PathBuf>,
     search: MetadataSearch,
 ) -> Result<AnyWindowHandle> {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        theme::apply_choice(settings::Theme::Dark, cx);
-
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::default(),
-                size: window_size,
-            })),
-            ..Default::default()
-        };
-        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| {
-                Shell::new_with_search(storage, log_path, settings::Theme::Dark, search, cx)
-            })
-        })?;
-
-        Ok(window)
+    open_window(cx, window_size, settings::Theme::Dark, None, |cx| {
+        Shell::new_with_search(storage, log_path, settings::Theme::Dark, search, cx)
     })
 }
 
@@ -76,22 +73,8 @@ fn open_shell_with_theme(
     storage: StorageState,
     choice: settings::Theme,
 ) -> Result<AnyWindowHandle> {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        theme::apply_choice(choice, cx);
-
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::default(),
-                size: window_size,
-            })),
-            ..Default::default()
-        };
-        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new(storage, None, choice, cx))
-        })?;
-
-        Ok(window)
+    open_window(cx, window_size, choice, None, |cx| {
+        Shell::new(storage, None, choice, cx)
     })
 }
 
@@ -102,24 +85,8 @@ fn open_shell_with_services(
     search: MetadataSearch,
     details: MetadataDetails,
 ) -> Result<AnyWindowHandle> {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        theme::apply_choice(settings::Theme::Dark, cx);
-
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::default(),
-                size: window_size,
-            })),
-            ..Default::default()
-        };
-        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| {
-                Shell::new_with_services(storage, None, settings::Theme::Dark, search, details, cx)
-            })
-        })?;
-
-        Ok(window)
+    open_window(cx, window_size, settings::Theme::Dark, None, |cx| {
+        Shell::new_with_services(storage, None, settings::Theme::Dark, search, details, cx)
     })
 }
 
@@ -129,23 +96,8 @@ fn open_shell_with_http(
     storage: StorageState,
     client: Arc<dyn HttpClient>,
 ) -> Result<AnyWindowHandle> {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        theme::apply_choice(settings::Theme::Dark, cx);
-        cx.set_http_client(client);
-
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::default(),
-                size: window_size,
-            })),
-            ..Default::default()
-        };
-        let (window, _) = gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new(storage, None, settings::Theme::Dark, cx))
-        })?;
-
-        Ok(window)
+    open_window(cx, window_size, settings::Theme::Dark, Some(client), |cx| {
+        Shell::new(storage, None, settings::Theme::Dark, cx)
     })
 }
 
@@ -3664,4 +3616,275 @@ fn deleting_a_tag_asks_for_confirmation(cx: &mut TestAppContext) {
     let database = Database::open(&path).unwrap();
     assert!(tags::all(&database).unwrap().is_empty());
     assert!(tags::for_item(&database, &item.id).unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+fn pressing_enter_saves_the_list_name(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("create-list", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Queue");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("list-editor").is_none());
+        assert!(window.find_by_label("Queue").visible());
+    })
+    .unwrap();
+    let names: Vec<String> = lists::all(&Database::open(&path).unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|list| list.name)
+        .collect();
+    assert_eq!(names, ["Queue"]);
+}
+
+#[gpui_kit::test]
+fn pressing_enter_in_the_search_box_searches(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: MetadataSearch = Arc::new(|kind: MediaKind, query: &str| {
+        if kind == MediaKind::Show && query == "dark" {
+            Ok(vec![found_show()])
+        } else {
+            Ok(Vec::new())
+        }
+    });
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+        assert_eq!(
+            window.find("search-result-tvmaze-42").label(),
+            Some("Dark (2017)")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn all_items_returns_from_a_list_or_the_about_screen(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_lists(&path, &["Queue"]).unwrap();
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let all_items = window.find("all-items");
+        assert_eq!(all_items.label(), Some("All items"));
+        window.click(format!("list-row-{}", seeded[0].id), cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("list-panel").visible());
+        window.click("all-items", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("list-panel").is_none());
+        assert!(window.find(format!("item-row-{}", item.id)).visible());
+        window.click("about-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("about-screen").visible());
+        window.click("all-items", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("about-screen").is_none());
+        assert!(window.find(format!("item-row-{}", item.id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn all_items_is_reachable_in_the_rail(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(960.0), px(600.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let all_items = window.find("all-items");
+        assert!(all_items.visible());
+        assert_eq!(all_items.label(), Some("All items"));
+        assert_eq!(all_items.bounds().size, size(px(32.0), px(32.0)));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_database_error_can_be_dismissed(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let database_path = temporary.path().join("loregalia.db");
+    std::fs::create_dir_all(&database_path).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(database_path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("lists-error").visible());
+        window.click("dismiss-error", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("lists-error").is_none());
+        assert!(window.find("empty-state").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn add_item_appears_only_in_the_library(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("add-item").visible());
+        window.click("about-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("about-screen").visible());
+        assert!(window.try_find("add-item").is_none());
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-screen").visible());
+        assert!(window.try_find("add-item").is_none());
+        window.click("all-items", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("add-item").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn content_starts_at_the_top_left_of_the_main_area(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let items = window.find("items").bounds();
+        let add_item = window.find("add-item").bounds();
+
+        assert_eq!(items.origin.x, add_item.origin.x);
+        assert!(items.origin.y - (add_item.origin.y + add_item.size.height) <= px(24.0));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_long_library_scrolls_instead_of_overflowing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for number in 0..30 {
+        seed_item(&path, MediaKind::Book, &format!("Book {number}"), None).unwrap();
+    }
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let viewport = window.find("main-scroll").bounds();
+
+        assert!(viewport.origin.y + viewport.size.height <= px(800.0));
+        assert!(window.find("items").bounds().size.height > viewport.size.height);
+    })
+    .unwrap();
 }

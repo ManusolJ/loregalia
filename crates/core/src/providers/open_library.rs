@@ -1,5 +1,6 @@
+use crate::Result;
+use crate::http;
 use crate::providers::{Candidate, Source};
-use crate::{Error, Result};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -7,12 +8,6 @@ const BASE_URL: &str = "https://openlibrary.org";
 const SEARCH_PATH: &str = "/search.json";
 const COVER_BASE_URL: &str = "https://covers.openlibrary.org/b/id";
 const LIMIT: &str = "20";
-const USER_AGENT: &str = concat!(
-    "Loregalia/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/ManusolJ/loregalia)"
-);
-const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize)]
 struct ApiSearch {
@@ -48,37 +43,17 @@ impl ApiDoc {
 }
 
 pub fn search(query: &str) -> Result<Vec<Candidate>> {
-    search_at(BASE_URL, query, TIMEOUT)
+    search_at(BASE_URL, query, http::TIMEOUT)
 }
 
 fn search_at(base_url: &str, query: &str, timeout: Duration) -> Result<Vec<Candidate>> {
-    let body = search_json_at(base_url, query, timeout)?;
+    let body = http::get_text(
+        &format!("{base_url}{SEARCH_PATH}"),
+        &[("q", query), ("limit", LIMIT)],
+        None,
+        timeout,
+    )?;
     parse_search(&body)
-}
-
-fn search_json_at(base_url: &str, query: &str, timeout: Duration) -> Result<String> {
-    let url = format!("{base_url}{SEARCH_PATH}");
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
-        .build();
-    let agent: ureq::Agent = config.into();
-    let mut response = agent
-        .get(&url)
-        .header("User-Agent", USER_AGENT)
-        .query("q", query)
-        .query("limit", LIMIT)
-        .call()
-        .map_err(classify)?;
-
-    response.body_mut().read_to_string().map_err(classify)
-}
-
-fn classify(error: ureq::Error) -> Error {
-    match error {
-        ureq::Error::StatusCode(429) => Error::RateLimited,
-        ureq::Error::StatusCode(code) => Error::HttpStatus { code },
-        _ => Error::ConnectionFailed,
-    }
 }
 
 pub fn parse_search(body: &str) -> Result<Vec<Candidate>> {
@@ -93,30 +68,9 @@ pub fn parse_search(body: &str) -> Result<Vec<Candidate>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, Source, parse_search, search_at};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::time::Duration;
-
-    const TEST_TIMEOUT: Duration = Duration::from_millis(250);
-
-    fn serve(status: &str, body: &str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
-            let _ = stream.write_all(response.as_bytes());
-        });
-
-        format!("http://{address}")
-    }
+    use super::{Source, parse_search, search_at};
+    use crate::Error;
+    use crate::http::test_server::{TEST_TIMEOUT, refuse, serve};
 
     #[test]
     fn maps_a_saved_search_response() {
@@ -176,7 +130,7 @@ mod tests {
 
     #[test]
     fn http_429_is_rate_limited() {
-        let base = serve("429 Too Many Requests", "");
+        let base = serve("429 Too Many Requests", b"");
 
         let error = search_at(&base, "piranesi", TEST_TIMEOUT).unwrap_err();
 
@@ -185,7 +139,7 @@ mod tests {
 
     #[test]
     fn http_500_reports_its_status_code() {
-        let base = serve("500 Internal Server Error", "");
+        let base = serve("500 Internal Server Error", b"");
 
         let error = search_at(&base, "piranesi", TEST_TIMEOUT).unwrap_err();
 
@@ -194,11 +148,7 @@ mod tests {
 
     #[test]
     fn a_refused_connection_is_a_connection_failure() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-
-        let error = search_at(&format!("http://{address}"), "piranesi", TEST_TIMEOUT).unwrap_err();
+        let error = search_at(&refuse(), "piranesi", TEST_TIMEOUT).unwrap_err();
 
         assert!(matches!(error, Error::ConnectionFailed));
     }

@@ -30,6 +30,9 @@ impl IntoResponse for RelayError {
             Self::Upstream(CoreError::RateLimited) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "upstream_rate_limited")
             }
+            Self::Upstream(CoreError::HttpStatus { code: 404 }) => {
+                (StatusCode::NOT_FOUND, "not_found")
+            }
             Self::Upstream(_) => (StatusCode::BAD_GATEWAY, "upstream_unavailable"),
         };
 
@@ -70,6 +73,22 @@ mod tests {
         );
         assert_eq!(
             RelayError::Upstream(CoreError::Unauthorized)
+                .into_response()
+                .status(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
+
+    #[test]
+    fn a_movie_tmdb_does_not_know_is_not_found() {
+        assert_eq!(
+            RelayError::Upstream(CoreError::HttpStatus { code: 404 })
+                .into_response()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            RelayError::Upstream(CoreError::HttpStatus { code: 500 })
                 .into_response()
                 .status(),
             StatusCode::BAD_GATEWAY

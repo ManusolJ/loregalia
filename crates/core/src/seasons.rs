@@ -2,6 +2,8 @@ use crate::{Database, Error, Result};
 use rusqlite::{OptionalExtension, Row, params};
 use uuid::Uuid;
 
+const COLUMNS: &str = "id, show_id, season_number, status_id, finished_at";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Season {
     pub id: String,
@@ -55,11 +57,13 @@ pub fn create(database: &Database, show_id: &str, season_number: i32) -> Result<
     database
         .connection()
         .query_row(
-            "INSERT INTO seasons (id, show_id, season_number, status_id)
-             VALUES (?1, ?2, ?3,
-                     (SELECT id FROM statuses
-                      WHERE media_kind = 'show' AND category = 'planned'))
-             RETURNING id, show_id, season_number, status_id, finished_at",
+            &format!(
+                "INSERT INTO seasons (id, show_id, season_number, status_id)
+                 VALUES (?1, ?2, ?3,
+                         (SELECT id FROM statuses
+                          WHERE media_kind = 'show' AND category = 'planned'))
+                 RETURNING {COLUMNS}"
+            ),
             params![id, show_id, season_number],
             Season::from_row,
         )
@@ -67,25 +71,19 @@ pub fn create(database: &Database, show_id: &str, season_number: i32) -> Result<
 }
 
 pub fn all(database: &Database, show_id: &str) -> Result<Vec<Season>> {
-    let mut statement = database.connection().prepare(
-        "SELECT id, show_id, season_number, status_id, finished_at
-         FROM seasons WHERE show_id = ?1 ORDER BY season_number",
-    )?;
-    let rows = statement.query_map([show_id], Season::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        &format!("SELECT {COLUMNS} FROM seasons WHERE show_id = ?1 ORDER BY season_number"),
+        [show_id],
+        Season::from_row,
+    )
 }
 
 pub fn all_for_every_show(database: &Database) -> Result<Vec<Season>> {
-    let mut statement = database.connection().prepare(
-        "SELECT id, show_id, season_number, status_id, finished_at
-         FROM seasons ORDER BY show_id, season_number",
-    )?;
-    let rows = statement.query_map([], Season::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        &format!("SELECT {COLUMNS} FROM seasons ORDER BY show_id, season_number"),
+        [],
+        Season::from_row,
+    )
 }
 
 pub fn set_status(database: &Database, season_id: &str, status_id: &str) -> Result<bool> {

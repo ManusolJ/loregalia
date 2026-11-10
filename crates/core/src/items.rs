@@ -1,15 +1,28 @@
-use crate::providers::Source;
+﻿use crate::providers::{Candidate, Source};
+use crate::storage::keyed_column;
 use crate::{Database, Error, Result, media::MediaKind};
 use rusqlite::{OptionalExtension, Row, params, types::Type};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use uuid::Uuid;
 
+pub(crate) const COLUMNS: &str = "items.id, items.title, items.media_kind, items.release_year, items.release_date, items.finished_at, items.status_id, items.source, items.external_id, items.cover_url, items.source_data, items.source_refreshed_at";
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceData {
     pub title: String,
     pub release_year: Option<i32>,
     pub cover_url: Option<String>,
+}
+
+impl From<Candidate> for SourceData {
+    fn from(candidate: Candidate) -> Self {
+        Self {
+            title: candidate.title,
+            release_year: candidate.release_year,
+            cover_url: candidate.cover_url,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,7 +53,7 @@ impl Item {
         Ok(Self {
             id: row.get(0)?,
             title: row.get(1)?,
-            media_kind: media_kind(row, 2)?,
+            media_kind: keyed_column(row, 2, MediaKind::from_key)?,
             release_year: row.get(3)?,
             release_date: row.get(4)?,
             finished_at: row.get(5)?,
@@ -65,12 +78,6 @@ fn source_data(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<SourceDat
         })
 }
 
-fn media_kind(row: &Row<'_>, index: usize) -> rusqlite::Result<MediaKind> {
-    let value: String = row.get(index)?;
-    MediaKind::from_key(&value)
-        .ok_or_else(|| rusqlite::Error::InvalidColumnType(index, value, Type::Text))
-}
-
 pub fn create(
     database: &Database,
     media_kind: MediaKind,
@@ -82,12 +89,14 @@ pub fn create(
     database
         .connection()
         .query_row(
-            "INSERT INTO items (id, media_kind, title, release_year, status_id, created_at)
-             VALUES (?1, ?2, ?3, ?4,
-                     (SELECT id FROM statuses
-                      WHERE media_kind = ?2 AND category = 'planned'),
-                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at",
+            &format!(
+                "INSERT INTO items (id, media_kind, title, release_year, status_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4,
+                         (SELECT id FROM statuses
+                          WHERE media_kind = ?2 AND category = 'planned'),
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 RETURNING {COLUMNS}"
+            ),
             params![id, media_kind.key(), title, release_year],
             Item::from_row,
         )
@@ -113,14 +122,16 @@ pub fn create_from_lookup(
     database
         .connection()
         .query_row(
-            "INSERT INTO items
-                 (id, media_kind, title, release_year, status_id, source, external_id, cover_url, source_data, source_refreshed_at, created_at)
-             VALUES (?1, ?2, ?3, ?4,
-                     (SELECT id FROM statuses
-                      WHERE media_kind = ?2 AND category = 'planned'),
-                     ?5, ?6, ?7, ?8, ?9,
-                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-             RETURNING id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at",
+            &format!(
+                "INSERT INTO items
+                     (id, media_kind, title, release_year, status_id, source, external_id, cover_url, source_data, source_refreshed_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4,
+                         (SELECT id FROM statuses
+                          WHERE media_kind = ?2 AND category = 'planned'),
+                         ?5, ?6, ?7, ?8, ?9,
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 RETURNING {COLUMNS}"
+            ),
             params![
                 id,
                 media_kind.key(),
@@ -156,22 +167,18 @@ pub fn duplicate<'a>(items: &'a [Item], media_kind: MediaKind, title: &str) -> O
 }
 
 pub fn all(database: &Database) -> Result<Vec<Item>> {
-    let mut statement = database.connection().prepare(
-        "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at
-         FROM items ORDER BY created_at, rowid",
-    )?;
-    let rows = statement.query_map([], Item::from_row)?;
-
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Error::from)
+    database.select(
+        &format!("SELECT {COLUMNS} FROM items ORDER BY created_at, rowid"),
+        [],
+        Item::from_row,
+    )
 }
 
 pub fn get(database: &Database, id: &str) -> Result<Option<Item>> {
     database
         .connection()
         .query_row(
-            "SELECT id, title, media_kind, release_year, release_date, finished_at, status_id, source, external_id, cover_url, source_data, source_refreshed_at
-             FROM items WHERE id = ?1",
+            &format!("SELECT {COLUMNS} FROM items WHERE id = ?1"),
             [id],
             Item::from_row,
         )
@@ -352,12 +359,28 @@ mod tests {
         Database::open_in_memory().unwrap()
     }
 
-    fn status_of(database: &Database, id: &str) -> Item {
-        all(database)
-            .unwrap()
-            .into_iter()
-            .find(|item| item.id == id)
-            .unwrap()
+    fn stored_item(database: &Database, id: &str) -> Item {
+        get(database, id).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_candidate_becomes_source_data() {
+        let candidate = crate::providers::Candidate {
+            source: crate::providers::Source::Tmdb,
+            external_id: "438631".to_owned(),
+            title: "Dune".to_owned(),
+            release_year: Some(2021),
+            cover_url: Some("https://image.example/dune.jpg".to_owned()),
+        };
+
+        assert_eq!(
+            SourceData::from(candidate),
+            SourceData {
+                title: "Dune".to_owned(),
+                release_year: Some(2021),
+                cover_url: Some("https://image.example/dune.jpg".to_owned()),
+            }
+        );
     }
 
     #[test]
@@ -382,13 +405,13 @@ mod tests {
 
         assert!(set_status(&database, &item.id, "movie-done").unwrap());
 
-        let stored = status_of(&database, &item.id);
+        let stored = stored_item(&database, &item.id);
         assert_eq!(stored.status_id, "movie-done");
         let finished_at = stored.finished_at.unwrap();
         assert!(finished_at.ends_with('Z'));
 
         assert!(set_status(&database, &item.id, "movie-active").unwrap());
-        assert_eq!(status_of(&database, &item.id).finished_at, None);
+        assert_eq!(stored_item(&database, &item.id).finished_at, None);
     }
 
     #[test]
@@ -396,11 +419,11 @@ mod tests {
         let database = database();
         let item = create(&database, MediaKind::Book, "Piranesi", None).unwrap();
         set_status(&database, &item.id, "book-done").unwrap();
-        let first = status_of(&database, &item.id).finished_at.unwrap();
+        let first = stored_item(&database, &item.id).finished_at.unwrap();
 
         set_status(&database, &item.id, "book-done").unwrap();
 
-        assert_eq!(status_of(&database, &item.id).finished_at, Some(first));
+        assert_eq!(stored_item(&database, &item.id).finished_at, Some(first));
     }
 
     #[test]
@@ -411,7 +434,7 @@ mod tests {
         let error = set_status(&database, &item.id, "book-done").unwrap_err();
 
         assert!(matches!(error, Error::StatusKindMismatch));
-        let stored = status_of(&database, &item.id);
+        let stored = stored_item(&database, &item.id);
         assert_eq!(stored.status_id, "movie-planned");
         assert_eq!(stored.finished_at, None);
     }
@@ -443,7 +466,7 @@ mod tests {
 
         assert!(update(&database, &item.id, MediaKind::Book, "Dune", None).unwrap());
 
-        let stored = status_of(&database, &item.id);
+        let stored = stored_item(&database, &item.id);
         assert_eq!(stored.status_id, "book-planned");
         assert_eq!(stored.finished_at, None);
     }
@@ -453,7 +476,7 @@ mod tests {
         let database = database();
         let item = create(&database, MediaKind::Movie, "Dune", Some(1984)).unwrap();
         set_status(&database, &item.id, "movie-done").unwrap();
-        let finished_at = status_of(&database, &item.id).finished_at;
+        let finished_at = stored_item(&database, &item.id).finished_at;
 
         assert!(
             update(
@@ -466,7 +489,7 @@ mod tests {
             .unwrap()
         );
 
-        let stored = status_of(&database, &item.id);
+        let stored = stored_item(&database, &item.id);
         assert_eq!(stored.status_id, "movie-done");
         assert_eq!(stored.finished_at, finished_at);
     }

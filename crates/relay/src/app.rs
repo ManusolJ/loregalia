@@ -178,7 +178,7 @@ fn client_ip(peer: SocketAddr, headers: &HeaderMap, trust_proxy: bool) -> IpAddr
             .get("x-forwarded-for")
             .and_then(|value| value.to_str().ok())
         && let Some(client) = value
-            .split(',')
+            .rsplit(',')
             .next()
             .and_then(|value| value.trim().parse::<IpAddr>().ok())
     {
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn a_proxy_header_is_used_only_when_trusted() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.7, 10.0.0.1".parse().unwrap());
+        headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
         let peer = SocketAddr::from(([127, 0, 0, 1], 1234));
 
         assert_eq!(
@@ -446,6 +446,30 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7))
         );
         assert_eq!(client_ip(peer, &headers, false), peer.ip());
+    }
+
+    #[test]
+    fn only_the_address_the_proxy_appended_is_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "198.51.100.9, 203.0.113.7".parse().unwrap(),
+        );
+        let peer = SocketAddr::from(([127, 0, 0, 1], 1234));
+
+        assert_eq!(
+            client_ip(peer, &headers, true),
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7))
+        );
+    }
+
+    #[test]
+    fn a_malformed_proxy_header_falls_back_to_the_peer() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "not-an-address".parse().unwrap());
+        let peer = SocketAddr::from(([127, 0, 0, 1], 1234));
+
+        assert_eq!(client_ip(peer, &headers, true), peer.ip());
     }
 
     #[test]

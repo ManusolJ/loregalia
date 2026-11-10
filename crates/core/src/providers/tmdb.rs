@@ -1,16 +1,12 @@
-use crate::providers::{Candidate, Source};
+use crate::http;
+use crate::providers::{Candidate, Source, year_of};
 use crate::{Error, Result};
 use serde::Deserialize;
 use std::time::Duration;
 
 const BASE_URL: &str = "https://api.themoviedb.org/3";
 const IMAGE_BASE_URL: &str = "https://image.tmdb.org/t/p/w342";
-const USER_AGENT: &str = concat!(
-    "Loregalia/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/ManusolJ/loregalia)"
-);
-const TIMEOUT: Duration = Duration::from_secs(10);
+const LANGUAGE: (&str, &str) = ("language", "en-US");
 
 #[derive(Deserialize)]
 struct ApiSearch {
@@ -36,7 +32,7 @@ impl ApiMovie {
             source: Source::Tmdb,
             external_id: self.id.to_string(),
             title,
-            release_year: release_year(self.release_date.as_deref()),
+            release_year: year_of(self.release_date.as_deref()),
             cover_url: self
                 .poster_path
                 .map(|path| format!("{IMAGE_BASE_URL}{path}")),
@@ -44,16 +40,12 @@ impl ApiMovie {
     }
 }
 
-fn release_year(release_date: Option<&str>) -> Option<i32> {
-    release_date?.get(..4)?.parse().ok()
-}
-
 pub fn search(token: &str, query: &str) -> Result<Vec<Candidate>> {
-    search_at(BASE_URL, token, query, TIMEOUT)
+    search_at(BASE_URL, token, query, http::TIMEOUT)
 }
 
 pub fn details(token: &str, id: &str) -> Result<Candidate> {
-    details_at(BASE_URL, token, id, TIMEOUT)
+    details_at(BASE_URL, token, id, http::TIMEOUT)
 }
 
 fn search_at(
@@ -62,54 +54,23 @@ fn search_at(
     query: &str,
     timeout: Duration,
 ) -> Result<Vec<Candidate>> {
-    let body = get_at(
+    let body = http::get_text(
         &format!("{base_url}/search/movie"),
-        token,
-        &[
-            ("query", query),
-            ("include_adult", "false"),
-            ("language", "en-US"),
-        ],
+        &[("query", query), ("include_adult", "false"), LANGUAGE],
+        Some(token),
         timeout,
     )?;
     parse_search(&body)
 }
 
 fn details_at(base_url: &str, token: &str, id: &str, timeout: Duration) -> Result<Candidate> {
-    let body = get_at(
+    let body = http::get_text(
         &format!("{base_url}/movie/{id}"),
-        token,
-        &[("language", "en-US")],
+        &[LANGUAGE],
+        Some(token),
         timeout,
     )?;
     parse_details(&body)
-}
-
-fn get_at(url: &str, token: &str, query: &[(&str, &str)], timeout: Duration) -> Result<String> {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
-        .build();
-    let agent: ureq::Agent = config.into();
-    let mut request = agent
-        .get(url)
-        .header("User-Agent", USER_AGENT)
-        .header("Authorization", &format!("Bearer {token}"));
-
-    for (name, value) in query {
-        request = request.query(name, value);
-    }
-
-    let mut response = request.call().map_err(classify)?;
-    response.body_mut().read_to_string().map_err(classify)
-}
-
-fn classify(error: ureq::Error) -> Error {
-    match error {
-        ureq::Error::StatusCode(401 | 403) => Error::Unauthorized,
-        ureq::Error::StatusCode(429) => Error::RateLimited,
-        ureq::Error::StatusCode(code) => Error::HttpStatus { code },
-        _ => Error::ConnectionFailed,
-    }
 }
 
 pub fn parse_search(body: &str) -> Result<Vec<Candidate>> {
@@ -133,29 +94,7 @@ pub fn parse_details(body: &str) -> Result<Candidate> {
 #[cfg(test)]
 mod tests {
     use super::{Error, Source, details_at, parse_details, parse_search, search_at};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::time::Duration;
-
-    const TEST_TIMEOUT: Duration = Duration::from_millis(250);
-
-    fn serve(status: &str, body: &str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
-            let _ = stream.write_all(response.as_bytes());
-        });
-
-        format!("http://{address}")
-    }
+    use crate::http::test_server::{TEST_TIMEOUT, refuse, serve};
 
     #[test]
     fn maps_a_saved_search_response() {
@@ -215,7 +154,7 @@ mod tests {
 
     #[test]
     fn a_rejected_token_is_unauthorized() {
-        let base = serve("401 Unauthorized", "");
+        let base = serve("401 Unauthorized", b"");
 
         let error = search_at(&base, "bad-token", "dune", TEST_TIMEOUT).unwrap_err();
 
@@ -224,7 +163,7 @@ mod tests {
 
     #[test]
     fn http_429_is_rate_limited() {
-        let base = serve("429 Too Many Requests", "");
+        let base = serve("429 Too Many Requests", b"");
 
         let error = search_at(&base, "token", "dune", TEST_TIMEOUT).unwrap_err();
 
@@ -233,7 +172,7 @@ mod tests {
 
     #[test]
     fn http_500_reports_its_status_code() {
-        let base = serve("500 Internal Server Error", "");
+        let base = serve("500 Internal Server Error", b"");
 
         let error = search_at(&base, "token", "dune", TEST_TIMEOUT).unwrap_err();
 
@@ -242,7 +181,7 @@ mod tests {
 
     #[test]
     fn a_missing_movie_is_a_404() {
-        let base = serve("404 Not Found", "");
+        let base = serve("404 Not Found", b"");
 
         let error = details_at(&base, "token", "1", TEST_TIMEOUT).unwrap_err();
 
@@ -251,12 +190,7 @@ mod tests {
 
     #[test]
     fn a_refused_connection_is_a_connection_failure() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-
-        let error =
-            search_at(&format!("http://{address}"), "token", "dune", TEST_TIMEOUT).unwrap_err();
+        let error = search_at(&refuse(), "token", "dune", TEST_TIMEOUT).unwrap_err();
 
         assert!(matches!(error, Error::ConnectionFailed));
     }

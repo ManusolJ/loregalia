@@ -1,36 +1,11 @@
-use crate::providers::{Candidate, Source};
-use crate::{Error, Result};
+use crate::Result;
+use crate::http;
+use crate::providers::{Candidate, Source, year_of};
 use serde::Deserialize;
 use std::time::Duration;
 
 const BASE_URL: &str = "https://api.tvmaze.com";
 const SEARCH_PATH: &str = "/search/shows";
-const USER_AGENT: &str = concat!(
-    "Loregalia/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/ManusolJ/loregalia)"
-);
-const TIMEOUT: Duration = Duration::from_secs(10);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Show {
-    pub external_id: i64,
-    pub title: String,
-    pub release_year: Option<i32>,
-    pub cover_url: Option<String>,
-}
-
-impl From<Show> for Candidate {
-    fn from(show: Show) -> Self {
-        Self {
-            source: Source::TvMaze,
-            external_id: show.external_id.to_string(),
-            title: show.title,
-            release_year: show.release_year,
-            cover_url: show.cover_url,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 struct ApiSearchResult {
@@ -52,109 +27,53 @@ struct ApiImage {
 }
 
 impl ApiShow {
-    fn into_show(self) -> Show {
-        Show {
-            external_id: self.id,
-            release_year: release_year(self.premiered.as_deref()),
+    fn into_candidate(self) -> Candidate {
+        Candidate {
+            source: Source::TvMaze,
+            external_id: self.id.to_string(),
             title: self.name,
+            release_year: year_of(self.premiered.as_deref()),
             cover_url: self.image.and_then(|image| image.medium.or(image.original)),
         }
     }
 }
 
-fn release_year(premiered: Option<&str>) -> Option<i32> {
-    premiered?.get(..4)?.parse().ok()
-}
-
-pub fn search(query: &str) -> Result<Vec<Show>> {
-    search_at(BASE_URL, query, TIMEOUT)
-}
-
-pub fn search_candidates(query: &str) -> Result<Vec<Candidate>> {
-    Ok(search(query)?.into_iter().map(Candidate::from).collect())
+pub fn search(query: &str) -> Result<Vec<Candidate>> {
+    search_at(BASE_URL, query, http::TIMEOUT)
 }
 
 pub fn search_json(query: &str) -> Result<String> {
-    search_json_at(BASE_URL, query, TIMEOUT)
+    search_json_at(BASE_URL, query, http::TIMEOUT)
 }
 
-fn search_at(base_url: &str, query: &str, timeout: Duration) -> Result<Vec<Show>> {
+fn search_at(base_url: &str, query: &str, timeout: Duration) -> Result<Vec<Candidate>> {
     let body = search_json_at(base_url, query, timeout)?;
     parse_search(&body)
 }
 
 fn search_json_at(base_url: &str, query: &str, timeout: Duration) -> Result<String> {
-    let url = format!("{base_url}{SEARCH_PATH}");
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
-        .build();
-    let agent: ureq::Agent = config.into();
-    let mut response = agent
-        .get(&url)
-        .header("User-Agent", USER_AGENT)
-        .query("q", query)
-        .call()
-        .map_err(classify)?;
-
-    response.body_mut().read_to_string().map_err(classify)
+    http::get_text(
+        &format!("{base_url}{SEARCH_PATH}"),
+        &[("q", query)],
+        None,
+        timeout,
+    )
 }
 
-fn classify(error: ureq::Error) -> Error {
-    match error {
-        ureq::Error::StatusCode(429) => Error::RateLimited,
-        ureq::Error::StatusCode(code) => Error::HttpStatus { code },
-        _ => Error::ConnectionFailed,
-    }
-}
-
-pub fn parse_search(body: &str) -> Result<Vec<Show>> {
+pub fn parse_search(body: &str) -> Result<Vec<Candidate>> {
     let results: Vec<ApiSearchResult> = serde_json::from_str(body)?;
 
     Ok(results
         .into_iter()
-        .map(|result| result.show.into_show())
+        .map(|result| result.show.into_candidate())
         .collect())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, Show, parse_search, search_at};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::time::Duration;
-
-    const TEST_TIMEOUT: Duration = Duration::from_millis(250);
-
-    fn serve(status: &str, body: &str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-
-        std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
-            let _ = stream.write_all(response.as_bytes());
-        });
-
-        format!("http://{address}")
-    }
-
-    fn serve_silently() -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-
-        std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            std::thread::sleep(Duration::from_millis(750));
-            drop(stream);
-        });
-
-        format!("http://{address}")
-    }
+    use super::{Candidate, Source, parse_search, search_at};
+    use crate::Error;
+    use crate::http::test_server::{TEST_TIMEOUT, refuse, serve, serve_silently};
 
     #[test]
     fn maps_a_saved_search_response() {
@@ -164,12 +83,13 @@ mod tests {
 
         let show = shows
             .iter()
-            .find(|show| show.external_id == 39235)
+            .find(|show| show.external_id == "39235")
             .expect("fixture contains A Confession");
         assert_eq!(
             show,
-            &Show {
-                external_id: 39235,
+            &Candidate {
+                source: Source::TvMaze,
+                external_id: "39235".to_owned(),
                 title: "A Confession".to_owned(),
                 release_year: Some(2019),
                 cover_url: Some(
@@ -181,27 +101,6 @@ mod tests {
     }
 
     #[test]
-    fn a_show_becomes_a_tvmaze_candidate() {
-        let show = Show {
-            external_id: 42,
-            title: "Dark".to_owned(),
-            release_year: Some(2017),
-            cover_url: Some("https://example.test/dark.jpg".to_owned()),
-        };
-
-        let candidate: crate::providers::Candidate = show.into();
-
-        assert_eq!(candidate.source, crate::providers::Source::TvMaze);
-        assert_eq!(candidate.external_id, "42");
-        assert_eq!(candidate.title, "Dark");
-        assert_eq!(candidate.release_year, Some(2017));
-        assert_eq!(
-            candidate.cover_url.as_deref(),
-            Some("https://example.test/dark.jpg")
-        );
-    }
-
-    #[test]
     fn the_saved_response_keeps_shows_without_details() {
         let body = include_str!("../../tests/fixtures/tvmaze/search-a.json");
 
@@ -209,7 +108,7 @@ mod tests {
 
         let show = shows
             .iter()
-            .find(|show| show.external_id == 67073)
+            .find(|show| show.external_id == "67073")
             .expect("fixture contains A Lot");
         assert_eq!(show.title, "A Lot");
         assert_eq!(show.release_year, None);
@@ -224,8 +123,9 @@ mod tests {
 
         assert_eq!(
             shows,
-            vec![Show {
-                external_id: 7,
+            vec![Candidate {
+                source: Source::TvMaze,
+                external_id: "7".to_owned(),
                 title: "Bare".to_owned(),
                 release_year: None,
                 cover_url: None,
@@ -240,7 +140,7 @@ mod tests {
 
     #[test]
     fn an_empty_result_is_not_an_error() {
-        assert_eq!(parse_search("[]").unwrap(), Vec::<Show>::new());
+        assert_eq!(parse_search("[]").unwrap(), Vec::<Candidate>::new());
     }
 
     #[test]
@@ -257,7 +157,7 @@ mod tests {
 
     #[test]
     fn http_429_is_rate_limited() {
-        let base = serve("429 Too Many Requests", "");
+        let base = serve("429 Too Many Requests", b"");
 
         let error = search_at(&base, "a", TEST_TIMEOUT).unwrap_err();
 
@@ -266,7 +166,7 @@ mod tests {
 
     #[test]
     fn http_500_reports_its_status_code() {
-        let base = serve("500 Internal Server Error", "");
+        let base = serve("500 Internal Server Error", b"");
 
         let error = search_at(&base, "a", TEST_TIMEOUT).unwrap_err();
 
@@ -275,27 +175,21 @@ mod tests {
 
     #[test]
     fn a_refused_connection_is_a_connection_failure() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-
-        let error = search_at(&format!("http://{address}"), "a", TEST_TIMEOUT).unwrap_err();
+        let error = search_at(&refuse(), "a", TEST_TIMEOUT).unwrap_err();
 
         assert!(matches!(error, Error::ConnectionFailed));
     }
 
     #[test]
     fn a_silent_server_times_out() {
-        let base = serve_silently();
-
-        let error = search_at(&base, "a", TEST_TIMEOUT).unwrap_err();
+        let error = search_at(&serve_silently(), "a", TEST_TIMEOUT).unwrap_err();
 
         assert!(matches!(error, Error::ConnectionFailed));
     }
 
     #[test]
     fn invalid_json_after_a_200_is_a_json_error() {
-        let base = serve("200 OK", "{");
+        let base = serve("200 OK", b"{");
 
         let error = search_at(&base, "a", TEST_TIMEOUT).unwrap_err();
 
@@ -304,11 +198,11 @@ mod tests {
 
     #[test]
     fn an_empty_result_after_a_200_is_not_an_error() {
-        let base = serve("200 OK", "[]");
+        let base = serve("200 OK", b"[]");
 
         assert_eq!(
             search_at(&base, "a", TEST_TIMEOUT).unwrap(),
-            Vec::<Show>::new()
+            Vec::<Candidate>::new()
         );
     }
 }
