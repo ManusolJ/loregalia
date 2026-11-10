@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 gpui-kit.workspace = true
+interprocess = "2.4.8"
 loregalia-core.workspace = true
 
 [dev-dependencies]
@@ -24,3 +25,18 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.packager]
+product-name = "Loregalia"
+identifier = "com.manu.loregalia"
+description = "Plan what to watch, read and play next"
+publisher = "Manu"
+homepage = "https://github.com/ManusolJ/loregalia"
+license-file = "../../LICENSE"
+formats = ["nsis"]
+out-dir = "../../target/installer"
+before-packaging-command = "cargo build --release --locked -p loregalia"
+binaries = [{ path = "loregalia", main = true }]
+
+[package.metadata.packager.nsis]
+appdata-paths = ["$APPDATA/$IDENTIFIER"]

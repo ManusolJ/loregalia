@@ -1,11 +1,16 @@
 pub mod http;
 pub mod shell;
+pub mod single_instance;
 pub mod startup;
 pub mod theme;
 
 use std::sync::Arc;
 
-use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px,
+    size,
+};
+use interprocess::local_socket::Listener;
 use loregalia_core::settings::Theme;
 use loregalia_core::storage::APP_FOLDER;
 
@@ -17,6 +22,32 @@ pub fn init(cx: &mut App, theme: Theme) {
     cx.set_http_client(Arc::new(http::ImageHttpClient::new(
         cx.background_executor().clone(),
     )));
+}
+
+pub fn focus_on_request(window: AnyWindowHandle, listener: Listener, cx: &mut App) {
+    let executor = cx.background_executor().clone();
+
+    cx.spawn(async move |cx| {
+        let mut listener = listener;
+        loop {
+            let (returned, request) = executor
+                .spawn(async move {
+                    let request = single_instance::wait_for_focus_request(&listener);
+                    (listener, request)
+                })
+                .await;
+            listener = returned;
+
+            match request {
+                Ok(true) => {
+                    let _ = cx.update_window(window, |_, window, _| window.activate_window());
+                }
+                Ok(false) => {}
+                Err(_) => break,
+            }
+        }
+    })
+    .detach();
 }
 
 pub fn window_options(cx: &App) -> WindowOptions {

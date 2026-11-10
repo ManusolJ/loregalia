@@ -68,6 +68,23 @@ cargo xtask gate
 This runs the project rules, formatting, clippy and all tests. Use `cargo xtask gate --fast` for the
 quick version.
 
+### Build the installer
+
+Install the packager once, then build from the app crate:
+
+```powershell
+cargo install cargo-packager --locked
+cd crates/app
+cargo packager --release
+```
+
+The installer lands in `target/installer`. It installs for the current user without administrator
+rights. Its uninstaller offers to delete the app's data folder, unticked by default. Starting
+Loregalia while it is already open brings the open window to the front instead.
+
+Movie search goes to the relay at the address `LOREGALIA_RELAY_URL` held when the app was built,
+or to `http://127.0.0.1:8080` if it was not set.
+
 ## Project layout
 
 ```text
