@@ -35,16 +35,20 @@ followed by `cx.notify()`.
 
 ## Data
 
-- One SQLite file in `%APPDATA%\com.manu.loregalia\`, never beside the executable, which is
-  read-only under Program Files.
+- One SQLite file in `%APPDATA%\loregalia\`, never beside an installed executable (D-29).
+- **Portable mode (D-30):** a file named `portable` next to the `.exe` keeps the data in a `data`
+  folder beside it instead. `scripts/package-portable.ps1` builds that zip.
 - Access through `rusqlite` with the `bundled` feature (D-01). Add it with the first storage task.
 - `PRAGMA foreign_keys = ON` on every connection, because SQLite ships with it off and
   `ON DELETE CASCADE` silently does nothing without it.
 - Tables are `STRICT`, or an `INTEGER` column will happily store text.
 - Migrations are append-only and run at startup, before the first window opens. A wrong migration
   gets a new one that fixes it. Test on a database the previous version wrote, not only a fresh one.
-- The app identifier `com.manu.loregalia` names the data folder. Changing it after real data exists
-  starts the app on an empty database.
+- The data folder was `com.manu.loregalia` before D-29. At startup an old folder is renamed to
+  `loregalia` when the new one does not exist yet; if the rename fails, the app keeps using the old
+  folder and logs why. Renaming the folder again needs the same care, or the app starts empty.
+- `com.manu.loregalia` stays the app's identity: the window's app ID and the installer's
+  identifier.
 
 ## Data model
 

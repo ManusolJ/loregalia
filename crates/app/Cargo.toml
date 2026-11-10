@@ -39,4 +39,4 @@ before-packaging-command = "cargo build --release --locked -p loregalia"
 binaries = [{ path = "loregalia", main = true }]
 
 [package.metadata.packager.nsis]
-appdata-paths = ["$APPDATA/$IDENTIFIER"]
+appdata-paths = ["$APPDATA/loregalia"]

@@ -3,8 +3,11 @@ use rusqlite::{Connection, Params, Row, types::Type};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-pub const APP_FOLDER: &str = "com.manu.loregalia";
+pub const APP_FOLDER: &str = "loregalia";
+pub const LEGACY_APP_FOLDER: &str = "com.manu.loregalia";
 pub const DATABASE_FILE: &str = "loregalia.db";
+pub const PORTABLE_MARKER: &str = "portable";
+pub const PORTABLE_DATA_FOLDER: &str = "data";
 
 const MIGRATIONS: &[&str] = &[
     "CREATE TABLE lists (
@@ -125,16 +128,91 @@ fn latest_version() -> u32 {
     MIGRATIONS.len() as u32
 }
 
-pub fn data_directory(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    let base = non_empty(env("APPDATA"))
+fn data_base(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    non_empty(env("APPDATA"))
         .or_else(|| non_empty(env("XDG_DATA_HOME")))
-        .or_else(|| non_empty(env("HOME")).map(|home| home.join(".local").join("share")));
-
-    base.map(|base| base.join(APP_FOLDER))
+        .or_else(|| non_empty(env("HOME")).map(|home| home.join(".local").join("share")))
 }
 
-pub fn default_data_directory() -> Result<PathBuf> {
-    data_directory(|name| std::env::var_os(name)).ok_or(Error::DataDirectoryUnavailable)
+pub fn data_directory(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    data_base(env).map(|base| base.join(APP_FOLDER))
+}
+
+pub fn legacy_data_directory(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    data_base(env).map(|base| base.join(LEGACY_APP_FOLDER))
+}
+
+pub fn portable_data_directory(executable_directory: &Path) -> Option<PathBuf> {
+    executable_directory
+        .join(PORTABLE_MARKER)
+        .is_file()
+        .then(|| executable_directory.join(PORTABLE_DATA_FOLDER))
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct DataLocation {
+    pub directory: PathBuf,
+    pub note: Option<String>,
+}
+
+pub fn adopt_legacy_directory(current: &Path, legacy: &Path) -> DataLocation {
+    if current.exists() || !legacy.is_dir() {
+        let note = (current.exists() && legacy.is_dir()).then(|| {
+            format!(
+                "an older data folder at {} was left as it is; Loregalia uses {}",
+                legacy.display(),
+                current.display()
+            )
+        });
+
+        return DataLocation {
+            directory: current.to_path_buf(),
+            note,
+        };
+    }
+
+    match std::fs::rename(legacy, current) {
+        Ok(()) => DataLocation {
+            directory: current.to_path_buf(),
+            note: Some(format!(
+                "moved the data folder from {} to {}",
+                legacy.display(),
+                current.display()
+            )),
+        },
+        Err(error) => DataLocation {
+            directory: legacy.to_path_buf(),
+            note: Some(format!(
+                "could not move the data folder from {} to {} ({error}); using the old folder",
+                legacy.display(),
+                current.display()
+            )),
+        },
+    }
+}
+
+pub fn locate_data_directory() -> Result<DataLocation> {
+    let portable = std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+        .and_then(|directory| portable_data_directory(&directory));
+    if let Some(directory) = portable {
+        return Ok(DataLocation {
+            note: Some(format!("portable mode, data in {}", directory.display())),
+            directory,
+        });
+    }
+
+    let environment = |name: &str| std::env::var_os(name);
+    let current = data_directory(environment).ok_or(Error::DataDirectoryUnavailable)?;
+
+    Ok(match legacy_data_directory(environment) {
+        Some(legacy) => adopt_legacy_directory(&current, &legacy),
+        None => DataLocation {
+            directory: current,
+            note: None,
+        },
+    })
 }
 
 pub fn database_in(directory: &Path) -> PathBuf {
@@ -230,9 +308,104 @@ fn migrate(connection: &mut Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        APP_FOLDER, DATABASE_FILE, Database, MIGRATIONS, data_directory, database_in, keyed_column,
-        latest_version,
+        APP_FOLDER, DATABASE_FILE, Database, LEGACY_APP_FOLDER, MIGRATIONS, PORTABLE_MARKER,
+        adopt_legacy_directory, data_directory, database_in, keyed_column, latest_version,
+        legacy_data_directory, portable_data_directory,
     };
+
+    #[test]
+    fn the_data_folder_is_named_loregalia() {
+        let directory =
+            data_directory(environment(&[("APPDATA", r"C:\Users\me\AppData\Roaming")])).unwrap();
+        let legacy =
+            legacy_data_directory(environment(&[("APPDATA", r"C:\Users\me\AppData\Roaming")]))
+                .unwrap();
+
+        assert_eq!(directory.file_name().unwrap(), "loregalia");
+        assert_eq!(legacy.file_name().unwrap(), "com.manu.loregalia");
+        assert_eq!(directory.parent(), legacy.parent());
+    }
+
+    #[test]
+    fn the_old_folder_moves_to_the_new_name_with_its_data() {
+        let temporary = TempDir::new().unwrap();
+        let legacy = temporary.path().join(LEGACY_APP_FOLDER);
+        let current = temporary.path().join(APP_FOLDER);
+        std::fs::create_dir_all(&legacy).unwrap();
+        {
+            let database = Database::open(database_in(&legacy)).unwrap();
+            crate::lists::create(&database, "Watchlist").unwrap();
+        }
+
+        let location = adopt_legacy_directory(&current, &legacy);
+
+        assert_eq!(location.directory, current);
+        assert!(location.note.unwrap().starts_with("moved the data folder"));
+        assert!(!legacy.exists());
+        let database = Database::open(database_in(&current)).unwrap();
+        let names: Vec<String> = crate::lists::all(&database)
+            .unwrap()
+            .into_iter()
+            .map(|list| list.name)
+            .collect();
+        assert_eq!(names, ["Watchlist"]);
+    }
+
+    #[test]
+    fn a_fresh_install_uses_the_new_folder_silently() {
+        let temporary = TempDir::new().unwrap();
+
+        let location = adopt_legacy_directory(
+            &temporary.path().join(APP_FOLDER),
+            &temporary.path().join(LEGACY_APP_FOLDER),
+        );
+
+        assert_eq!(location.directory, temporary.path().join(APP_FOLDER));
+        assert_eq!(location.note, None);
+    }
+
+    #[test]
+    fn an_existing_new_folder_wins_and_the_old_one_is_left_alone() {
+        let temporary = TempDir::new().unwrap();
+        let legacy = temporary.path().join(LEGACY_APP_FOLDER);
+        let current = temporary.path().join(APP_FOLDER);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(legacy.join("keep.txt"), "old").unwrap();
+
+        let location = adopt_legacy_directory(&current, &legacy);
+
+        assert_eq!(location.directory, current);
+        assert!(location.note.unwrap().contains("left as it is"));
+        assert!(legacy.join("keep.txt").is_file());
+    }
+
+    #[test]
+    fn a_failed_move_keeps_using_the_old_folder() {
+        let temporary = TempDir::new().unwrap();
+        let legacy = temporary.path().join(LEGACY_APP_FOLDER);
+        let current = temporary.path().join("missing-parent").join(APP_FOLDER);
+        std::fs::create_dir_all(&legacy).unwrap();
+
+        let location = adopt_legacy_directory(&current, &legacy);
+
+        assert_eq!(location.directory, legacy);
+        assert!(location.note.unwrap().starts_with("could not move"));
+        assert!(legacy.is_dir());
+    }
+
+    #[test]
+    fn a_portable_marker_keeps_data_beside_the_executable() {
+        let temporary = TempDir::new().unwrap();
+        assert_eq!(portable_data_directory(temporary.path()), None);
+
+        std::fs::write(temporary.path().join(PORTABLE_MARKER), "").unwrap();
+
+        assert_eq!(
+            portable_data_directory(temporary.path()),
+            Some(temporary.path().join("data"))
+        );
+    }
     use crate::Error;
     use crate::media::MediaKind;
     use rusqlite::Connection;
@@ -624,7 +797,7 @@ mod tests {
         let temporary = TempDir::new().unwrap();
         let path = temporary
             .path()
-            .join("com.manu.loregalia")
+            .join("loregalia")
             .join("nested")
             .join("loregalia.db");
 
