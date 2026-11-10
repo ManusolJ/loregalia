@@ -44,6 +44,7 @@ const EMPTY_MESSAGE: &str = "Nothing planned yet";
 const LOADING_MESSAGE: &str = "Loading lists";
 
 const LOADING_BLOCK_WIDTH: f32 = 320.0;
+const CONTENT_WIDTH: f32 = 720.0;
 
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
@@ -334,7 +335,7 @@ impl Shell {
                 .aria_label(message.clone())
                 .flex()
                 .flex_col()
-                .items_center()
+                .items_start()
                 .gap_3()
                 .text_color(rgb(palette.danger))
                 .text_xs()
@@ -562,9 +563,10 @@ impl Render for Shell {
                     .h_full()
                     .flex()
                     .flex_col()
+                    .min_w_0()
                     .gap_6()
                     .p_6()
-                    .when(can_create, |main| {
+                    .when(can_create && self.screen == Screen::Library, |main| {
                         main.child(
                             div().flex().child(
                                 Button::new("add-item")
@@ -578,11 +580,12 @@ impl Render for Shell {
                     })
                     .child(
                         div()
+                            .id("main-scroll")
+                            .test_support()
                             .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(main_element),
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(div().w_full().max_w(px(CONTENT_WIDTH)).child(main_element)),
                     ),
             )
     }

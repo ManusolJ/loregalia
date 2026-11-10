@@ -3804,3 +3804,87 @@ fn a_database_error_can_be_dismissed(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn add_item_appears_only_in_the_library(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("add-item").visible());
+        window.click("about-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("about-screen").visible());
+        assert!(window.try_find("add-item").is_none());
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-screen").visible());
+        assert!(window.try_find("add-item").is_none());
+        window.click("all-items", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("add-item").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn content_starts_at_the_top_left_of_the_main_area(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let items = window.find("items").bounds();
+        let add_item = window.find("add-item").bounds();
+
+        assert_eq!(items.origin.x, add_item.origin.x);
+        assert!(items.origin.y - (add_item.origin.y + add_item.size.height) <= px(24.0));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_long_library_scrolls_instead_of_overflowing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for number in 0..30 {
+        seed_item(&path, MediaKind::Book, &format!("Book {number}"), None).unwrap();
+    }
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let viewport = window.find("main-scroll").bounds();
+
+        assert!(viewport.origin.y + viewport.size.height <= px(800.0));
+        assert!(window.find("items").bounds().size.height > viewport.size.height);
+    })
+    .unwrap();
+}

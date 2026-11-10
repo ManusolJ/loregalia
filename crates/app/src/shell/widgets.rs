@@ -30,7 +30,7 @@ impl Shell {
             .aria_label(message.clone())
             .flex()
             .flex_col()
-            .items_center()
+            .items_start()
             .gap_3()
             .child(message)
             .child(
