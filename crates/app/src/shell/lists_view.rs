@@ -1,3 +1,4 @@
+use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable, Selectable, button::Button, button::ButtonVariants};
 use gpui_kit::prelude::*;
@@ -47,6 +48,7 @@ impl Shell {
     pub(super) fn select_list(&mut self, id: String, cx: &mut Context<Self>) {
         self.show(Screen::Library);
         self.sort = list_items::Sort::Manual;
+        self.kind_filter = None;
         self.selected = Some(id);
         cx.notify();
     }
@@ -222,7 +224,7 @@ impl Shell {
 
     pub(super) fn editor_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let Some(editor) = &self.editor else {
-            return Self::empty_element(palette);
+            return Self::empty_element(self.shelf, palette);
         };
         let (title, input) = match editor {
             Editor::Create(input) => ("New list", input),
@@ -336,6 +338,71 @@ impl Shell {
             .into_any_element()
     }
 
+    pub(super) fn list_actions(list: &lists::List, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(Self::tags_button(
+                TagTarget::List(list.id.clone()),
+                "list-tags".to_owned(),
+                cx,
+            ))
+            .child(
+                Button::new("rename-list")
+                    .ghost()
+                    .icon(IconName::Pencil)
+                    .label("Rename")
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_rename(window, cx))),
+            )
+            .child(
+                Button::new("delete-list")
+                    .ghost()
+                    .danger()
+                    .icon(IconName::Trash)
+                    .label("Delete")
+                    .on_click(cx.listener(|this, _, _, cx| this.begin_delete(cx))),
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn list_toolbar(
+        &self,
+        list: &lists::List,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let list_id = list.id.clone();
+
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Button::new("add-existing-item")
+                    .ghost()
+                    .icon(IconName::Plus)
+                    .label("Add existing item")
+                    .selected(self.add_picker.as_deref() == Some(list.id.as_str()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_add_picker(list_id.clone(), cx)
+                    })),
+            )
+            .child(div().flex_1())
+            .child(div().text_xs().text_color(rgb(palette.muted)).child("Sort"))
+            .child(Self::segmented(
+                list_items::Sort::ALL.map(|sort| {
+                    Button::new(format!("sort-{}", sort.key()))
+                        .ghost()
+                        .label(sort.label())
+                        .selected(self.sort == sort)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_sort(sort, cx)))
+                }),
+                palette,
+            ))
+            .into_any_element()
+    }
+
     pub(super) fn list_panel(
         &self,
         list: &lists::List,
@@ -345,13 +412,13 @@ impl Shell {
         let mut members = self.items_in_list(&list.id);
         list_items::sort_items(&mut members, self.sort);
         let adding = self.add_picker.as_deref() == Some(list.id.as_str());
-        let list_id = list.id.clone();
         let tag_picker = match &self.tag_editor {
             Some(editor) if matches!(&editor.target, TagTarget::List(id) if id == &list.id) => {
                 Some(self.tag_picker_element(editor, cx))
             }
             _ => None,
         };
+        let tags = self.tags_for(&self.list_tags, &list.id);
 
         div()
             .id("list-panel")
@@ -360,77 +427,23 @@ impl Shell {
             .aria_label(list.name.clone())
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_4()
             .w_full()
-            .h_full()
-            .max_w(px(640.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(list.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(Self::tags_button(
-                                TagTarget::List(list.id.clone()),
-                                "list-tags".to_owned(),
-                                cx,
-                            ))
-                            .child(Button::new("rename-list").label("Rename").on_click(
-                                cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
-                            ))
-                            .child(
-                                Button::new("delete-list")
-                                    .label("Delete")
-                                    .danger()
-                                    .on_click(cx.listener(|this, _, _, cx| this.begin_delete(cx))),
-                            ),
-                    ),
-            )
-            .child(
-                div().flex().flex_wrap().gap_1().children(
-                    self.tags_for(&self.list_tags, &list.id)
-                        .into_iter()
-                        .map(|tag| {
+            .when(!tags.is_empty(), |panel| {
+                panel.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(tags.into_iter().map(|tag| {
                             Self::tag_chip(format!("list-tag-{}-{}", list.id, tag.id), tag, palette)
-                        }),
-                ),
-            )
-            .child(
-                div().flex().gap_2().child(
-                    Button::new("add-existing-item")
-                        .label("Add existing item")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.toggle_add_picker(list_id.clone(), cx)
                         })),
-                ),
-            )
+                )
+            })
             .when(adding, |panel| {
                 panel.child(self.add_picker_element(&list.id, palette, cx))
             })
             .children(tag_picker)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().text_xs().text_color(rgb(palette.muted)).child("Sort"))
-                    .children(list_items::Sort::ALL.map(|sort| {
-                        Button::new(format!("sort-{}", sort.key()))
-                            .label(sort.label())
-                            .selected(self.sort == sort)
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_sort(sort, cx)))
-                    })),
-            )
             .child(if members.is_empty() {
                 Self::list_empty_element(palette)
             } else {

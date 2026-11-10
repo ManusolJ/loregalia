@@ -1,4 +1,5 @@
 mod about_view;
+mod detail_view;
 mod items_view;
 mod lists_view;
 mod metadata_view;
@@ -12,20 +13,24 @@ use std::path::PathBuf;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::{Disableable, Selectable, button::Button, button::ButtonVariants};
+use gpui_kit::component::{
+    Disableable, Selectable, Sizable, button::Button, button::ButtonVariants,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, FontWeight, Pixels, Role, TestSupportExt, Window, div,
     px, rgb,
 };
+use loregalia_core::library::{self, Shelf};
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, log, seasons, settings, statuses,
-    tags,
+    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, seasons,
+    settings, statuses, tags,
 };
 
 use crate::startup::StorageState;
-use crate::theme::Palette;
+use crate::theme::{DISPLAY_FONT, Palette};
 
+use detail_view::DOCKED_FROM;
 use items_view::ItemEditor;
 use lists_view::Editor;
 pub use metadata_view::{MetadataDetails, MetadataSearch};
@@ -34,17 +39,12 @@ use seasons_view::SeasonEditor;
 use tags_view::{TagEditor, TagRename};
 
 const RAIL_WIDTH: f32 = 64.0;
-
 const SIDEBAR_WIDTH: f32 = 240.0;
-
 const SIDEBAR_LABELS_FROM: f32 = 1024.0;
-
-const EMPTY_MESSAGE: &str = "Nothing planned yet";
-
+const NAV_HEIGHT: f32 = 34.0;
 const LOADING_MESSAGE: &str = "Loading lists";
-
 const LOADING_BLOCK_WIDTH: f32 = 320.0;
-const CONTENT_WIDTH: f32 = 720.0;
+const CONTENT_WIDTH: f32 = 760.0;
 
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
@@ -52,6 +52,10 @@ pub fn sidebar_width(window_width: Pixels) -> Pixels {
     } else {
         px(SIDEBAR_WIDTH)
     }
+}
+
+pub fn detail_docks(window_width: Pixels) -> bool {
+    window_width >= px(DOCKED_FROM)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,13 +84,15 @@ pub struct Shell {
     error: Option<String>,
     loading: bool,
     screen: Screen,
+    shelf: Shelf,
+    kind_filter: Option<MediaKind>,
     sort: list_items::Sort,
     selected: Option<String>,
+    detail: Option<String>,
     editor: Option<Editor>,
     confirm_delete: Option<String>,
     item_editor: Option<ItemEditor>,
     confirm_delete_item: Option<String>,
-    status_picker: Option<String>,
     add_picker: Option<String>,
     tag_editor: Option<TagEditor>,
     renaming_tag: Option<TagRename>,
@@ -118,6 +124,14 @@ fn load(database: &Database) -> CoreResult<Snapshot> {
         list_tags: tags::list_taggings(database)?,
         seasons: seasons::all_for_every_show(database)?,
     })
+}
+
+struct NavRow {
+    id: String,
+    icon: IconName,
+    label: String,
+    count: Option<usize>,
+    selected: bool,
 }
 
 impl Shell {
@@ -182,13 +196,15 @@ impl Shell {
             error: None,
             loading,
             screen: Screen::Library,
+            shelf: Shelf::All,
+            kind_filter: None,
             sort: list_items::Sort::Manual,
             selected: None,
+            detail: None,
             editor: None,
             confirm_delete: None,
             item_editor: None,
             confirm_delete_item: None,
-            status_picker: None,
             add_picker: None,
             tag_editor: None,
             renaming_tag: None,
@@ -204,11 +220,18 @@ impl Shell {
     fn show(&mut self, screen: Screen) {
         self.screen = screen;
         self.selected = None;
+        self.detail = None;
         self.close_editors();
     }
 
-    fn show_all_items(&mut self, cx: &mut Context<Self>) {
+    fn show_shelf(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
         self.show(Screen::Library);
+        self.shelf = shelf;
+        cx.notify();
+    }
+
+    fn set_kind_filter(&mut self, kind: Option<MediaKind>, cx: &mut Context<Self>) {
+        self.kind_filter = kind;
         cx.notify();
     }
 
@@ -221,7 +244,6 @@ impl Shell {
     }
 
     fn close_inline_panels(&mut self) {
-        self.status_picker = None;
         self.add_picker = None;
         self.tag_editor = None;
         self.close_tag_panels();
@@ -293,6 +315,11 @@ impl Shell {
                             this.selected = None;
                             this.close_editors();
                         }
+                        if let Some(id) = this.detail.clone()
+                            && !snapshot.items.iter().any(|item| item.id == id)
+                        {
+                            this.detail = None;
+                        }
                         this.lists = snapshot.lists;
                         this.items = snapshot.items;
                         this.statuses = snapshot.statuses;
@@ -314,6 +341,26 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    fn selected_list(&self) -> Option<&lists::List> {
+        let id = self.selected.as_deref()?;
+        self.lists.iter().find(|list| list.id == id)
+    }
+
+    fn shelved(&self, shelf: Shelf) -> Vec<&items::Item> {
+        library::shelve(&self.items, &self.statuses, shelf, self.kind_filter)
+    }
+
+    fn shelf_count(&self, shelf: Shelf) -> usize {
+        library::shelve(&self.items, &self.statuses, shelf, None).len()
+    }
+
+    fn list_count(&self, list_id: &str) -> usize {
+        self.memberships
+            .iter()
+            .filter(|membership| membership.list_id == list_id)
+            .count()
     }
 
     fn main_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -363,27 +410,48 @@ impl Shell {
             self.item_editor_element(palette, cx)
         } else if let Some(id) = &self.confirm_delete_item {
             self.delete_item_element(id, cx)
-        } else if let Some(id) = &self.selected {
-            match self.lists.iter().find(|list| &list.id == id) {
+        } else if self.selected.is_some() {
+            match self.selected_list() {
                 Some(list) => self.list_panel(list, palette, cx),
-                None => Self::empty_element(palette),
+                None => Self::empty_element(self.shelf, palette),
             }
-        } else if self.items.is_empty() {
-            Self::empty_element(palette)
         } else {
-            let items: Vec<&items::Item> = self.items.iter().collect();
-            self.items_element(&items, None, palette, cx)
+            self.shelf_element(palette, cx)
         }
     }
 
-    fn empty_element(palette: &Palette) -> AnyElement {
+    fn shelf_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let shelved = self.shelved(self.shelf);
+        if shelved.is_empty() {
+            return Self::empty_element(self.shelf, palette);
+        }
+        let up_next = if self.shelf == Shelf::All {
+            self.shelved(Shelf::UpNext)
+        } else {
+            Vec::new()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .when(!up_next.is_empty(), |content| {
+                content.child(self.up_next_element(&up_next, palette, cx))
+            })
+            .child(self.items_element(&shelved, None, palette, cx))
+            .into_any_element()
+    }
+
+    fn empty_element(shelf: Shelf, palette: &Palette) -> AnyElement {
+        let message = shelf.empty_message();
+
         div()
             .id("empty-state")
             .role(Role::Status)
             .test_support()
-            .aria_label(EMPTY_MESSAGE)
+            .aria_label(message)
             .text_color(rgb(palette.muted))
-            .child(EMPTY_MESSAGE)
+            .child(message)
             .into_any_element()
     }
 
@@ -408,155 +476,396 @@ impl Shell {
             .into_any_element()
     }
 
-    fn list_rows(&self, shows_labels: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn segmented(buttons: impl IntoIterator<Item = Button>, palette: &Palette) -> AnyElement {
         div()
-            .id("lists")
-            .role(Role::List)
+            .flex()
+            .gap_0p5()
+            .p_0p5()
+            .rounded(px(8.0))
+            .bg(rgb(palette.sunken))
+            .children(buttons)
+            .into_any_element()
+    }
+
+    fn header_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let list = self.selected_list();
+        let (title, count) = match list {
+            Some(list) => (list.name.clone(), self.list_count(&list.id)),
+            None => (
+                self.shelf.label().to_owned(),
+                self.shelved(self.shelf).len(),
+            ),
+        };
+
+        let title_row = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .id("page-title")
+                    .role(Role::Heading)
+                    .test_support()
+                    .aria_label(title.clone())
+                    .min_w_0()
+                    .truncate()
+                    .font_family(DISPLAY_FONT)
+                    .text_size(px(28.0))
+                    .line_height(px(34.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .id("page-count")
+                    .test_support()
+                    .aria_label(count.to_string())
+                    .text_color(rgb(palette.muted))
+                    .child(count.to_string()),
+            )
+            .child(div().flex_1())
+            .children(list.map(|list| Self::list_actions(list, cx)))
+            .child(
+                Button::new("add-item")
+                    .primary()
+                    .icon(IconName::Plus)
+                    .label("Add item")
+                    .disabled(self.loading)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.begin_create_item(window, cx)),
+                    ),
+            );
+
+        let toolbar = match list {
+            Some(list) => self.list_toolbar(list, palette, cx),
+            None => {
+                let mut filters = vec![
+                    Button::new("filter-all")
+                        .ghost()
+                        .label("All")
+                        .selected(self.kind_filter.is_none())
+                        .on_click(cx.listener(|this, _, _, cx| this.set_kind_filter(None, cx))),
+                ];
+                filters.extend(MediaKind::ALL.map(|kind| {
+                    Button::new(format!("filter-{}", kind.key()))
+                        .ghost()
+                        .label(kind.plural_label())
+                        .selected(self.kind_filter == Some(kind))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.set_kind_filter(Some(kind), cx)),
+                        )
+                }));
+                div()
+                    .flex()
+                    .child(Self::segmented(filters, palette))
+                    .into_any_element()
+            }
+        };
+
+        div()
+            .id("page-header")
             .test_support()
             .flex()
             .flex_col()
-            .when(!shows_labels, |lists| lists.gap_1())
-            .children(self.lists.iter().map(|list| {
-                let selected = self.selected.as_deref() == Some(list.id.as_str());
-                let id = list.id.clone();
+            .gap_4()
+            .px_8()
+            .pt_6()
+            .pb_4()
+            .child(title_row)
+            .child(toolbar)
+            .into_any_element()
+    }
 
+    fn nav_row(
+        row: NavRow,
+        shows_labels: bool,
+        palette: &Palette,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let button = Button::new(row.id.clone())
+            .ghost()
+            .role(Role::ListItem)
+            .accessibility_label(row.label.clone())
+            .selected(row.selected)
+            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
+
+        if !shows_labels {
+            return button.icon(row.icon).tooltip(row.label).into_any_element();
+        }
+
+        button
+            .w_full()
+            .h(px(NAV_HEIGHT))
+            .px_2()
+            .justify_start()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        gpui_kit::component::Icon::new(row.icon)
+                            .with_size(px(18.0))
+                            .text_color(rgb(if row.selected {
+                                palette.accent
+                            } else {
+                                palette.muted
+                            })),
+                    )
+                    .child(div().flex_1().min_w_0().truncate().child(row.label))
+                    .children(row.count.map(|count| {
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.muted))
+                            .child(count.to_string())
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn group_label(label: &'static str, palette: &Palette) -> AnyElement {
+        div()
+            .px_2()
+            .pb_1()
+            .text_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(palette.muted))
+            .child(label)
+            .into_any_element()
+    }
+
+    fn sidebar_element(
+        &self,
+        width: Pixels,
+        shows_labels: bool,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let can_create = matches!(&self.storage, StorageState::Ready(_));
+        let in_library = self.screen == Screen::Library && self.selected.is_none();
+
+        let shelves: Vec<AnyElement> = Shelf::ALL
+            .into_iter()
+            .map(|shelf| {
+                let id = if shelf == Shelf::All {
+                    "all-items".to_owned()
+                } else {
+                    format!("shelf-{}", shelf.key())
+                };
+                let icon = match shelf {
+                    Shelf::All => IconName::Library,
+                    Shelf::UpNext => IconName::ArrowRight,
+                    Shelf::Finished => IconName::Check,
+                };
+                Self::nav_row(
+                    NavRow {
+                        id,
+                        icon,
+                        label: shelf.label().to_owned(),
+                        count: Some(self.shelf_count(shelf)),
+                        selected: in_library && self.shelf == shelf,
+                    },
+                    shows_labels,
+                    palette,
+                    move |this, cx| this.show_shelf(shelf, cx),
+                    cx,
+                )
+            })
+            .collect();
+
+        let list_rows: Vec<AnyElement> = self
+            .lists
+            .iter()
+            .map(|list| {
+                let id = list.id.clone();
+                let row = Self::nav_row(
+                    NavRow {
+                        id: if shows_labels {
+                            format!("list-row-{}", list.id)
+                        } else {
+                            format!("list-button-{}", list.id)
+                        },
+                        icon: IconName::Inbox,
+                        label: list.name.clone(),
+                        count: Some(self.list_count(&list.id)),
+                        selected: self.selected.as_deref() == Some(list.id.as_str()),
+                    },
+                    shows_labels,
+                    palette,
+                    move |this, cx| this.select_list(id.clone(), cx),
+                    cx,
+                );
                 if shows_labels {
-                    Button::new(format!("list-row-{}", list.id))
-                        .ghost()
-                        .w_full()
-                        .h(px(36.0))
-                        .px_3()
-                        .justify_start()
-                        .role(Role::ListItem)
-                        .accessibility_label(list.name.clone())
-                        .selected(selected)
-                        .child(div().w_full().child(list.name.clone()))
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.select_list(id.clone(), cx)),
-                        )
-                        .into_any_element()
+                    row
                 } else {
                     div()
                         .id(format!("list-row-{}", list.id))
                         .role(Role::ListItem)
                         .test_support()
                         .aria_label(list.name.clone())
-                        .child(
-                            Button::new(format!("list-button-{}", list.id))
-                                .icon(IconName::Inbox)
-                                .tooltip(list.name.clone())
-                                .accessibility_label(list.name.clone())
-                                .selected(selected)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.select_list(id.clone(), cx)
-                                })),
-                        )
+                        .child(row)
                         .into_any_element()
                 }
-            }))
-    }
-}
+            })
+            .collect();
 
-impl Render for Shell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = *cx.global::<Palette>();
-        let width = sidebar_width(window.viewport_size().width);
-        let shows_labels = width > px(RAIL_WIDTH);
-        let can_create = matches!(&self.storage, StorageState::Ready(_));
-        let main_element = self.main_element(&palette, cx);
         let create = Button::new("create-list")
+            .ghost()
+            .icon(IconName::Plus)
+            .tooltip("Create list")
+            .accessibility_label("Create list")
             .disabled(self.loading)
             .on_click(cx.listener(|this, _, window, cx| this.begin_create(window, cx)));
-        let create = if shows_labels {
-            create.label("Create list")
-        } else {
-            create
-                .icon(IconName::Plus)
-                .tooltip("Create list")
-                .accessibility_label("Create list")
-        };
-        let about = Button::new("about-button")
-            .ghost()
-            .on_click(cx.listener(|this, _, _, cx| this.begin_about(cx)));
-        let about = if shows_labels {
-            about.label("About")
-        } else {
-            about
-                .icon(IconName::Info)
-                .tooltip("About")
-                .accessibility_label("About")
-        };
-        let settings = Button::new("settings-button")
-            .ghost()
-            .on_click(cx.listener(|this, _, _, cx| this.begin_settings(cx)));
-        let settings = if shows_labels {
-            settings.label("Settings")
-        } else {
-            settings
-                .icon(IconName::Settings)
-                .tooltip("Settings")
-                .accessibility_label("Settings")
-        };
-        let all_items = Button::new("all-items")
-            .ghost()
-            .accessibility_label("All items")
-            .selected(self.screen == Screen::Library && self.selected.is_none())
-            .on_click(cx.listener(|this, _, _, cx| this.show_all_items(cx)));
-        let all_items = if shows_labels {
-            all_items
-                .w_full()
-                .h(px(36.0))
-                .px_3()
-                .justify_start()
-                .child(div().w_full().child("All items"))
-        } else {
-            all_items.icon(IconName::Library).tooltip("All items")
-        };
+
+        let footer: Vec<AnyElement> = vec![
+            Self::nav_row(
+                NavRow {
+                    id: "settings-button".to_owned(),
+                    icon: IconName::Settings,
+                    label: "Settings".to_owned(),
+                    count: None,
+                    selected: self.screen == Screen::Settings,
+                },
+                shows_labels,
+                palette,
+                |this, cx| this.begin_settings(cx),
+                cx,
+            ),
+            Self::nav_row(
+                NavRow {
+                    id: "about-button".to_owned(),
+                    icon: IconName::Info,
+                    label: "About".to_owned(),
+                    count: None,
+                    selected: self.screen == Screen::About,
+                },
+                shows_labels,
+                palette,
+                |this, cx| this.begin_about(cx),
+                cx,
+            ),
+        ];
 
         div()
-            .size_full()
+            .id("sidebar")
+            .test_support()
+            .w(width)
+            .h_full()
+            .flex_none()
             .flex()
-            .bg(rgb(palette.bg))
-            .text_color(rgb(palette.content))
-            .text_sm()
+            .flex_col()
+            .gap_5()
+            .px_3()
+            .py_4()
+            .when(!shows_labels, |sidebar| sidebar.items_center())
+            .bg(rgb(palette.surface))
+            .border_r_1()
+            .border_color(rgb(palette.line))
             .child(
                 div()
-                    .id("sidebar")
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(
+                        div()
+                            .size(px(22.0))
+                            .flex_none()
+                            .rounded(px(6.0))
+                            .bg(rgb(palette.accent)),
+                    )
+                    .when(shows_labels, |brand| {
+                        brand.child(
+                            div()
+                                .font_family(DISPLAY_FONT)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_base()
+                                .child("Loregalia"),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .id("library-nav")
+                    .role(Role::List)
                     .test_support()
-                    .w(width)
-                    .h_full()
-                    .flex_none()
                     .flex()
                     .flex_col()
-                    .p_3()
-                    .when(!shows_labels, |sidebar| sidebar.items_center())
-                    .bg(rgb(palette.surface))
-                    .border_r_1()
-                    .border_color(rgb(palette.line))
-                    .child(div().mb_3().child(all_items))
-                    .when(shows_labels, |sidebar| {
-                        sidebar.child(
-                            div()
-                                .text_color(rgb(palette.muted))
-                                .font_weight(FontWeight::MEDIUM)
-                                .child("Lists"),
-                        )
+                    .gap_0p5()
+                    .when(shows_labels, |group| {
+                        group.child(Self::group_label("Library", palette))
                     })
+                    .children(shelves),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .when(shows_labels, |row| {
+                                row.child(Self::group_label("Lists", palette))
+                            })
+                            .when(can_create, |row| row.child(create)),
+                    )
                     .child(
                         div()
                             .id("list-scroll")
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .when(shows_labels, |lists| lists.mt_3())
-                            .child(self.list_rows(shows_labels, cx)),
-                    )
-                    .when(can_create, |sidebar| {
-                        sidebar.child(div().mt_3().child(create))
-                    })
-                    .child(div().mt_3().child(settings))
-                    .child(div().mt_2().child(about)),
+                            .child(
+                                div()
+                                    .id("lists")
+                                    .role(Role::List)
+                                    .test_support()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .when(!shows_labels, |lists| lists.items_center())
+                                    .children(list_rows),
+                            ),
+                    ),
             )
+            .child(div().flex().flex_col().gap_0p5().children(footer))
+            .into_any_element()
+    }
+}
+
+impl Render for Shell {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = *cx.global::<Palette>();
+        let window_width = window.viewport_size().width;
+        let width = sidebar_width(window_width);
+        let shows_labels = width > px(RAIL_WIDTH);
+        let docked = detail_docks(window_width);
+        let show_header = matches!(&self.storage, StorageState::Ready(_))
+            && self.screen == Screen::Library
+            && self.error.is_none();
+        let sidebar = self.sidebar_element(width, shows_labels, &palette, cx);
+        let header = show_header.then(|| self.header_element(&palette, cx));
+        let main_element = self.main_element(&palette, cx);
+        let detail = (self.screen == Screen::Library)
+            .then(|| self.detail_item())
+            .flatten()
+            .map(|item| self.detail_element(item, docked, &palette, cx));
+
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .bg(rgb(palette.bg))
+            .text_color(rgb(palette.content))
+            .text_sm()
+            .child(sidebar)
             .child(
                 div()
                     .flex_1()
@@ -564,20 +873,7 @@ impl Render for Shell {
                     .flex()
                     .flex_col()
                     .min_w_0()
-                    .gap_6()
-                    .p_6()
-                    .when(can_create && self.screen == Screen::Library, |main| {
-                        main.child(
-                            div().flex().child(
-                                Button::new("add-item")
-                                    .label("Add item")
-                                    .disabled(self.loading)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.begin_create_item(window, cx)
-                                    })),
-                            ),
-                        )
-                    })
+                    .children(header)
                     .child(
                         div()
                             .id("main-scroll")
@@ -585,9 +881,13 @@ impl Render for Shell {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
+                            .px_8()
+                            .pb_6()
+                            .when(!show_header, |scroll| scroll.pt_8())
                             .child(div().w_full().max_w(px(CONTENT_WIDTH)).child(main_element)),
                     ),
             )
+            .children(detail)
     }
 }
 
@@ -595,7 +895,7 @@ impl Render for Shell {
 mod tests {
     use gpui_kit::px;
 
-    use super::sidebar_width;
+    use super::{detail_docks, sidebar_width};
 
     #[test]
     fn sidebar_becomes_a_rail_below_1024() {
@@ -603,5 +903,11 @@ mod tests {
         assert_eq!(sidebar_width(px(1023.0)), px(64.0));
         assert_eq!(sidebar_width(px(1024.0)), px(240.0));
         assert_eq!(sidebar_width(px(1280.0)), px(240.0));
+    }
+
+    #[test]
+    fn the_detail_panel_docks_from_1280() {
+        assert!(!detail_docks(px(1279.0)));
+        assert!(detail_docks(px(1280.0)));
     }
 }

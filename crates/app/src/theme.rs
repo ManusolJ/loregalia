@@ -1,12 +1,17 @@
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Global, WindowAppearance, rgb};
+use gpui_kit::{App, Global, Hsla, WindowAppearance, rgb};
 use loregalia_core::settings::Theme as ThemeChoice;
+
+pub const DISPLAY_FONT: &str = "Segoe UI Variable Display";
+pub const SELECTED_ALPHA: f32 = 0.15;
+pub const HOVER_ALPHA: f32 = 0.05;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Palette {
     pub bg: u32,
     pub surface: u32,
     pub raised: u32,
+    pub sunken: u32,
     pub content: u32,
     pub muted: u32,
     pub line: u32,
@@ -24,39 +29,41 @@ pub struct Palette {
 impl Global for Palette {}
 
 pub const DARK: Palette = Palette {
-    bg: 0x111315,
-    surface: 0x181b1e,
-    raised: 0x202427,
-    content: 0xe9ecea,
-    muted: 0xa3aaa6,
-    line: 0x272b2e,
-    line_strong: 0x737a76,
-    accent: 0x34d399,
-    on_accent: 0x04261a,
-    danger: 0xf87171,
-    status_planned: 0xa3aaa6,
-    status_active: 0x38bdf8,
-    status_paused: 0xfbbf24,
-    status_done: 0x34d399,
-    status_dropped: 0xfb7185,
+    bg: 0x121420,
+    surface: 0x181b29,
+    raised: 0x20243a,
+    sunken: 0x0d0f18,
+    content: 0xeceaf4,
+    muted: 0xa3a6bd,
+    line: 0x2a2e44,
+    line_strong: 0x6e7391,
+    accent: 0xf0a742,
+    on_accent: 0x241503,
+    danger: 0xff7a8a,
+    status_planned: 0xa3a6bd,
+    status_active: 0x6cb6ff,
+    status_paused: 0xb49cff,
+    status_done: 0x4fd1a5,
+    status_dropped: 0xff7a8a,
 };
 
 pub const LIGHT: Palette = Palette {
-    bg: 0xeceeed,
-    surface: 0xf7f8f7,
+    bg: 0xf4f5fa,
+    surface: 0xffffff,
     raised: 0xffffff,
-    content: 0x14201b,
-    muted: 0x4f5c56,
-    line: 0xd5dad7,
-    line_strong: 0x7d8782,
-    accent: 0x047857,
+    sunken: 0xeceef5,
+    content: 0x1b1d2b,
+    muted: 0x5b5f78,
+    line: 0xe2e4ee,
+    line_strong: 0x7a7f99,
+    accent: 0x9a5405,
     on_accent: 0xffffff,
-    danger: 0xb91c1c,
-    status_planned: 0x4f5c56,
-    status_active: 0x0369a1,
-    status_paused: 0xb45309,
-    status_done: 0x047857,
-    status_dropped: 0xbe123c,
+    danger: 0xb82d42,
+    status_planned: 0x5b5f78,
+    status_active: 0x1f6fd1,
+    status_paused: 0x7a5bd6,
+    status_done: 0x12805c,
+    status_dropped: 0xc8364a,
 };
 
 pub fn apply(mode: ThemeMode, cx: &mut App) {
@@ -68,7 +75,7 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
         theme.foreground = rgb(palette.content).into();
         theme.border = rgb(palette.line).into();
         theme.input = rgb(palette.line_strong).into();
-        theme.muted = rgb(palette.surface).into();
+        theme.muted = rgb(palette.sunken).into();
         theme.muted_foreground = rgb(palette.muted).into();
         theme.popover = rgb(palette.raised).into();
         theme.popover_foreground = rgb(palette.content).into();
@@ -78,6 +85,20 @@ pub fn apply(mode: ThemeMode, cx: &mut App) {
         theme.danger = rgb(palette.danger).into();
         theme.sidebar = rgb(palette.surface).into();
         theme.link = rgb(palette.accent).into();
+
+        let accent: Hsla = rgb(palette.accent).into();
+        let content: Hsla = rgb(palette.content).into();
+        theme.accent = accent.opacity(SELECTED_ALPHA);
+        theme.accent_foreground = content;
+        theme.secondary_active = accent.opacity(SELECTED_ALPHA);
+        theme.secondary_hover = content.opacity(HOVER_ALPHA);
+        theme.button_active = accent.opacity(SELECTED_ALPHA);
+        theme.primary_hover = accent.opacity(0.9);
+        theme.primary_active = accent.opacity(0.8);
+        theme.button_primary = accent;
+        theme.button_primary_hover = accent.opacity(0.9);
+        theme.button_primary_active = accent.opacity(0.8);
+        theme.button_primary_foreground = rgb(palette.on_accent).into();
     });
 }
 
@@ -118,7 +139,7 @@ mod tests {
     }
 
     fn assert_readable(palette: Palette) {
-        for background in [palette.bg, palette.surface, palette.raised] {
+        for background in [palette.bg, palette.surface, palette.raised, palette.sunken] {
             let requirements = [
                 ("content", palette.content, 7.0),
                 ("muted", palette.muted, 4.5),

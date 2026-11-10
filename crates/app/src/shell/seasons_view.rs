@@ -1,9 +1,11 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Disableable, Selectable, button::Button, button::ButtonVariants};
+use gpui_kit::component::{
+    Disableable, Selectable, Sizable, button::Button, button::ButtonVariants,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, Focusable, Role, TestSupportExt, Window, div, px, rgb,
+    AnyElement, AppContext, Context, Entity, Focusable, Role, TestSupportExt, Window, div, rgb,
 };
 use loregalia_core::{Database, items, media::MediaKind, seasons};
 
@@ -141,23 +143,6 @@ impl Shell {
             .collect()
     }
 
-    pub(super) fn seasons_button(item: &items::Item, cx: &mut Context<Self>) -> Option<Button> {
-        if item.media_kind != MediaKind::Show {
-            return None;
-        }
-        let id = item.id.clone();
-
-        Some(
-            Button::new(format!("item-seasons-{}", item.id))
-                .icon(IconName::ListOrdered)
-                .tooltip("Seasons")
-                .accessibility_label("Seasons")
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.toggle_seasons(id.clone(), window, cx)
-                })),
-        )
-    }
-
     pub(super) fn season_row(
         &self,
         season: &seasons::Season,
@@ -187,6 +172,9 @@ impl Shell {
             .flex()
             .flex_col()
             .gap_2()
+            .py_1p5()
+            .border_b_1()
+            .border_color(rgb(palette.line))
             .child(
                 div()
                     .flex()
@@ -195,10 +183,12 @@ impl Shell {
                     .gap_2()
                     .child(div().child(label))
                     .child(
-                        div().flex().items_center().gap_2().children(chip).child(
+                        div().flex().items_center().gap_1().children(chip).child(
                             Button::new(format!("season-delete-{}", season.id))
-                                .label("Delete")
-                                .danger()
+                                .ghost()
+                                .icon(IconName::Trash)
+                                .tooltip("Delete season")
+                                .accessibility_label("Delete season")
                                 .on_click(cx.listener({
                                     let season_id = season.id.clone();
                                     move |this, _, _, cx| {
@@ -282,18 +272,19 @@ impl Shell {
             .into_any_element()
     }
 
-    pub(super) fn season_panel_element(
+    pub(super) fn seasons_section(
         &self,
-        editor: &SeasonEditor,
+        show: &items::Item,
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let show_id = editor.show_id.clone();
-        let seasons = self.seasons_for(&show_id);
-        let typed = season_number(editor.number.read(cx).value().as_ref());
-        let can_add = typed
-            .is_some_and(|number| !seasons.iter().any(|season| season.season_number == number));
+        let seasons = self.seasons_for(&show.id);
+        let editor = self
+            .season_editor
+            .as_ref()
+            .filter(|editor| editor.show_id == show.id);
         let confirming = self.confirm_delete_season.clone();
+        let show_id = show.id.clone();
 
         div()
             .id("seasons-panel")
@@ -301,11 +292,24 @@ impl Shell {
             .flex()
             .flex_col()
             .gap_2()
-            .p_3()
-            .rounded(px(8.0))
-            .bg(rgb(palette.raised))
-            .border_1()
-            .border_color(rgb(palette.line))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(Self::section_label("Seasons", palette))
+                    .child(
+                        Button::new(format!("item-seasons-{}", show.id))
+                            .ghost()
+                            .small()
+                            .icon(IconName::Plus)
+                            .label("Add season")
+                            .selected(editor.is_some())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.toggle_seasons(show_id.clone(), window, cx)
+                            })),
+                    ),
+            )
             .child(if seasons.is_empty() {
                 div()
                     .id("seasons-empty")
@@ -323,7 +327,6 @@ impl Shell {
                     .test_support()
                     .flex()
                     .flex_col()
-                    .gap_2()
                     .children(
                         seasons
                             .iter()
@@ -331,7 +334,12 @@ impl Shell {
                     )
                     .into_any_element()
             })
-            .child(
+            .children(editor.map(|editor| {
+                let can_add =
+                    season_number(editor.number.read(cx).value().as_ref()).is_some_and(|number| {
+                        !seasons.iter().any(|season| season.season_number == number)
+                    });
+
                 div()
                     .flex()
                     .gap_2()
@@ -342,13 +350,14 @@ impl Shell {
                     )
                     .child(
                         Button::new("add-season")
-                            .label("Add season")
+                            .primary()
+                            .label("Add")
                             .disabled(!can_add)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.add_season(window, cx)),
                             ),
-                    ),
-            )
+                    )
+            }))
             .when(confirming.is_some(), |panel| {
                 panel.child(self.season_delete_element(confirming.as_deref(), cx))
             })
