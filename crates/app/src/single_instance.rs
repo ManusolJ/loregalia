@@ -82,16 +82,13 @@ mod tests {
 
     #[test]
     fn the_name_is_per_user_and_safe_for_a_pipe() {
-        assert_eq!(
-            instance_name(Some("Manu")),
-            "com.manu.loregalia.Manu.instance"
-        );
+        assert_eq!(instance_name(Some("Manu")), "loregalia.Manu.instance");
         assert_eq!(
             instance_name(Some("Ana María\\x")),
-            "com.manu.loregalia.AnaMarax.instance"
+            "loregalia.AnaMarax.instance"
         );
-        assert_eq!(instance_name(None), "com.manu.loregalia.instance");
-        assert_eq!(instance_name(Some("  ")), "com.manu.loregalia.instance");
+        assert_eq!(instance_name(None), "loregalia.instance");
+        assert_eq!(instance_name(Some("  ")), "loregalia.instance");
     }
 
     #[test]

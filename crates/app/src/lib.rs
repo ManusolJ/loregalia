@@ -12,7 +12,7 @@ use gpui_kit::{
 };
 use interprocess::local_socket::Listener;
 use loregalia_core::settings::Theme;
-use loregalia_core::storage::APP_FOLDER;
+pub const APP_ID: &str = "com.manu.loregalia";
 
 const APP_TITLE: &str = "Loregalia";
 
@@ -62,7 +62,7 @@ pub fn window_options(cx: &App) -> WindowOptions {
             title: Some(APP_TITLE.into()),
             ..Default::default()
         }),
-        app_id: Some(APP_FOLDER.to_owned()),
+        app_id: Some(APP_ID.to_owned()),
         ..Default::default()
     }
 }

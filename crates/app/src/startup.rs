@@ -20,7 +20,17 @@ pub struct Startup {
 }
 
 pub fn prepare() -> Startup {
-    prepare_with(storage::default_data_directory())
+    let location = storage::locate_data_directory();
+    let note = location
+        .as_ref()
+        .ok()
+        .and_then(|location| location.note.clone());
+    let startup = prepare_with(location.map(|location| location.directory));
+    if let Some(note) = note {
+        record(&startup.log_path, &format!("Data folder: {note}"));
+    }
+
+    startup
 }
 
 fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
@@ -130,10 +140,7 @@ mod tests {
     #[test]
     fn missing_folders_are_created_before_migrating() {
         let temporary = TempDir::new().unwrap();
-        let path = temporary
-            .path()
-            .join("com.manu.loregalia")
-            .join("loregalia.db");
+        let path = temporary.path().join("loregalia").join("loregalia.db");
 
         assert_eq!(open_at(path.clone()), StorageState::Ready(path.clone()));
         assert!(path.is_file());
