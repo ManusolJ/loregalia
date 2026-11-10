@@ -7,7 +7,7 @@ in milliseconds without a window.
 ```text
 crates/app    GPUI views, theme, window. Depends on core and gpui-kit.
 crates/core   Domain types, storage, metadata providers. No GPUI.
-crates/relay  Planned: the metadata relay server (D-27). Depends on core, never on GPUI or app.
+crates/relay  The metadata relay server (D-27). Depends on core, never on GPUI or app.
 xtask         The gate and project rules. Standard library only.
 ```
 
@@ -104,7 +104,8 @@ them.
 
 ## Relay
 
-Planned, not built (D-11, D-24). It runs on the owner's server at home for now, and moves to a VPS
+Built for TMDB search and details; IGDB comes next (D-11, D-24). Its configuration, endpoints and
+cache are in `crates/relay/README.md`. It runs on the owner's server at home for now, and moves to a VPS
 if the app grows (D-26). Its code lives in `crates/relay` (D-27), and it ships as its own binary,
 deployed separately from the app.
 
@@ -151,5 +152,6 @@ branch, because releases can include breaking changes.
 
 `crates/core` may also use `rusqlite` (D-01), `uuid`, and `ureq`, `serde` and `serde_json` (D-22).
 Tests may use `tempfile` (D-23). `crates/app` may use `interprocess` to detect a second launch
-(D-18). The relay's dependencies are not chosen yet. Any other dependency
+(D-18). The relay uses `axum` and `tokio`, plus `core`'s `rusqlite`, `serde` and `serde_json`.
+Shared versions live in the workspace `Cargo.toml`. Any other dependency
 needs a human's approval first.

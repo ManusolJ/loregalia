@@ -68,7 +68,7 @@ detail.
 | ------------ | ------------------- | ------------------------- |
 | 1280 and up  | 240 px, with labels | Docked on the right, 360 px |
 | 1024-1279    | 240 px, with labels | Drawer over the main area |
-| 960-1023     | 56 px icon rail     | Drawer over the main area |
+| 960-1023     | 64 px icon rail     | Drawer over the main area |
 
 ## Covers
 
