@@ -29,6 +29,19 @@ pub(crate) fn get_bytes(url: &str, timeout: Duration, max_bytes: u64) -> Result<
         .map_err(classify)
 }
 
+pub(crate) fn post_text(
+    url: &str,
+    query: &[(&str, &str)],
+    headers: &[(&str, &str)],
+    body: &str,
+    timeout: Duration,
+) -> Result<String> {
+    post(url, query, headers, body, timeout)?
+        .body_mut()
+        .read_to_string()
+        .map_err(classify)
+}
+
 fn send(
     url: &str,
     query: &[(&str, &str)],
@@ -49,6 +62,29 @@ fn send(
     }
 
     request.call().map_err(classify)
+}
+
+fn post(
+    url: &str,
+    query: &[(&str, &str)],
+    headers: &[(&str, &str)],
+    body: &str,
+    timeout: Duration,
+) -> Result<ureq::http::Response<ureq::Body>> {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .build();
+    let agent: ureq::Agent = config.into();
+    let mut request = agent.post(url).header("User-Agent", USER_AGENT);
+
+    for &(name, value) in headers {
+        request = request.header(name, value);
+    }
+    for &(name, value) in query {
+        request = request.query(name, value);
+    }
+
+    request.send(body).map_err(classify)
 }
 
 pub(crate) fn classify(error: ureq::Error) -> Error {
@@ -114,7 +150,7 @@ pub(crate) mod test_server {
 #[cfg(test)]
 mod tests {
     use super::test_server::{TEST_TIMEOUT, refuse, serve, serve_silently};
-    use super::{Error, get_bytes, get_text};
+    use super::{Error, get_bytes, get_text, post_text};
 
     #[test]
     fn a_rejected_token_is_unauthorized() {
@@ -172,5 +208,25 @@ mod tests {
         let base = serve("200 OK", b"image-bytes");
 
         assert!(get_bytes(&base, TEST_TIMEOUT, 4).is_err());
+    }
+
+    #[test]
+    fn a_post_returns_the_body() {
+        let base = serve("200 OK", b"posted");
+
+        assert_eq!(
+            post_text(&base, &[], &[("X-Test", "yes")], "query body", TEST_TIMEOUT).unwrap(),
+            "posted"
+        );
+    }
+
+    #[test]
+    fn a_rejected_post_is_unauthorized() {
+        let base = serve("401 Unauthorized", b"");
+
+        assert!(matches!(
+            post_text(&base, &[], &[], "", TEST_TIMEOUT),
+            Err(Error::Unauthorized)
+        ));
     }
 }

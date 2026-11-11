@@ -45,6 +45,31 @@ fn movie_details_at(base_url: &str, id: &str, timeout: Duration) -> Result<Candi
     serde_json::from_str(&body).map_err(Error::from)
 }
 
+pub fn search_games(base_url: &str, query: &str) -> Result<Vec<Candidate>> {
+    search_games_at(base_url, query, http::TIMEOUT)
+}
+
+pub fn game_details(base_url: &str, id: &str) -> Result<Candidate> {
+    game_details_at(base_url, id, http::TIMEOUT)
+}
+
+fn search_games_at(base_url: &str, query: &str, timeout: Duration) -> Result<Vec<Candidate>> {
+    let body = get(
+        &format!("{base_url}/v1/games/search"),
+        &[("q", query)],
+        timeout,
+    )?;
+    let response: SearchResponse = serde_json::from_str(&body)?;
+
+    Ok(response.results)
+}
+
+fn game_details_at(base_url: &str, id: &str, timeout: Duration) -> Result<Candidate> {
+    let body = get(&format!("{base_url}/v1/games/{id}"), &[], timeout)?;
+
+    serde_json::from_str(&body).map_err(Error::from)
+}
+
 fn get(url: &str, query: &[(&str, &str)], timeout: Duration) -> Result<String> {
     http::get_text(url, query, None, timeout).map_err(|error| match error {
         Error::HttpStatus { code: 502..=504 } => Error::RelayUnavailable,
@@ -55,7 +80,8 @@ fn get(url: &str, query: &[(&str, &str)], timeout: Duration) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Error, LOCAL_RELAY_URL, SearchResponse, base_url, movie_details_at, search_movies_at,
+        Error, LOCAL_RELAY_URL, SearchResponse, base_url, game_details_at, movie_details_at,
+        search_games_at, search_movies_at,
     };
     use crate::http::test_server::{TEST_TIMEOUT, serve};
     use crate::providers::{Candidate, Source};
@@ -162,5 +188,41 @@ mod tests {
             movie_details_at(&base, "1", TEST_TIMEOUT),
             Err(Error::Json(_))
         ));
+    }
+
+    #[test]
+    fn a_game_search_reads_relay_results() {
+        let game = Candidate {
+            source: Source::Igdb,
+            external_id: "11737".to_owned(),
+            title: "Outer Wilds".to_owned(),
+            release_year: Some(2019),
+            cover_url: None,
+        };
+        let body = serde_json::to_string(&SearchResponse {
+            results: vec![game.clone()],
+        })
+        .unwrap();
+        let base = serve("200 OK", body.as_bytes());
+
+        assert_eq!(
+            search_games_at(&base, "outer wilds", TEST_TIMEOUT).unwrap(),
+            vec![game]
+        );
+    }
+
+    #[test]
+    fn a_game_details_reads_a_candidate() {
+        let game = Candidate {
+            source: Source::Igdb,
+            external_id: "11737".to_owned(),
+            title: "Outer Wilds".to_owned(),
+            release_year: Some(2019),
+            cover_url: None,
+        };
+        let body = serde_json::to_string(&game).unwrap();
+        let base = serve("200 OK", body.as_bytes());
+
+        assert_eq!(game_details_at(&base, "11737", TEST_TIMEOUT).unwrap(), game);
     }
 }

@@ -1,3 +1,4 @@
+pub mod igdb;
 pub mod open_library;
 pub mod relay;
 pub mod tmdb;
@@ -64,12 +65,8 @@ pub fn source(media_kind: MediaKind) -> Option<Source> {
         MediaKind::Show => Some(Source::TvMaze),
         MediaKind::Movie => Some(Source::Tmdb),
         MediaKind::Book => Some(Source::OpenLibrary),
-        MediaKind::Game => None,
+        MediaKind::Game => Some(Source::Igdb),
     }
-}
-
-pub fn search(media_kind: MediaKind, query: &str, relay_url: &str) -> Result<Vec<Candidate>> {
-    search_with_key(media_kind, query, relay_url, None)
 }
 
 pub fn search_with_key(
@@ -85,12 +82,8 @@ pub fn search_with_key(
             None => relay::search_movies(relay_url, query),
         },
         MediaKind::Book => open_library::search(query),
-        MediaKind::Game => Err(Error::UnsupportedLookup),
+        MediaKind::Game => relay::search_games(relay_url, query),
     }
-}
-
-pub fn details(source: Source, external_id: &str, relay_url: &str) -> Result<Candidate> {
-    details_with_key(source, external_id, relay_url, None)
 }
 
 pub fn details_with_key(
@@ -104,16 +97,14 @@ pub fn details_with_key(
             Some(token) => tmdb::details(token, external_id),
             None => relay::movie_details(relay_url, external_id),
         },
-        Source::TvMaze | Source::OpenLibrary | Source::Igdb => Err(Error::UnsupportedLookup),
+        Source::Igdb => relay::game_details(relay_url, external_id),
+        Source::TvMaze | Source::OpenLibrary => Err(Error::UnsupportedLookup),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Candidate, Source, details, details_with_key, search, search_with_key, source, supported,
-        year_of,
-    };
+    use super::{Candidate, Source, details_with_key, search_with_key, source, supported, year_of};
     use crate::Error;
     use crate::media::MediaKind;
 
@@ -137,11 +128,10 @@ mod tests {
     }
 
     #[test]
-    fn only_sources_that_exist_are_supported() {
-        assert!(supported(MediaKind::Show));
-        assert!(supported(MediaKind::Book));
-        assert!(supported(MediaKind::Movie));
-        assert!(!supported(MediaKind::Game));
+    fn every_media_kind_has_a_supported_source() {
+        for kind in MediaKind::ALL {
+            assert!(supported(kind));
+        }
     }
 
     #[test]
@@ -149,25 +139,17 @@ mod tests {
         assert_eq!(source(MediaKind::Show), Some(Source::TvMaze));
         assert_eq!(source(MediaKind::Book), Some(Source::OpenLibrary));
         assert_eq!(source(MediaKind::Movie), Some(Source::Tmdb));
-        assert_eq!(source(MediaKind::Game), None);
-    }
-
-    #[test]
-    fn a_kind_without_a_source_fails_before_any_request() {
-        assert!(matches!(
-            search(MediaKind::Game, "outer wilds", UNREACHABLE_RELAY),
-            Err(Error::UnsupportedLookup)
-        ));
+        assert_eq!(source(MediaKind::Game), Some(Source::Igdb));
     }
 
     #[test]
     fn details_exist_only_for_sources_that_refresh() {
         assert!(matches!(
-            details(Source::TvMaze, "42", UNREACHABLE_RELAY),
+            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, None),
             Err(Error::UnsupportedLookup)
         ));
         assert!(matches!(
-            details(Source::Tmdb, "438631", UNREACHABLE_RELAY),
+            details_with_key(Source::Tmdb, "438631", UNREACHABLE_RELAY, None),
             Err(Error::ConnectionFailed)
         ));
     }
@@ -217,26 +199,34 @@ mod tests {
     }
 
     #[test]
-    fn an_unsupported_kind_with_a_key_never_makes_a_request() {
-        assert!(matches!(
-            search_with_key(
-                MediaKind::Game,
-                "outer wilds",
-                UNREACHABLE_RELAY,
-                Some("token")
-            ),
-            Err(Error::UnsupportedLookup)
-        ));
+    fn a_game_search_goes_to_the_relay() {
+        let game = Candidate {
+            source: Source::Igdb,
+            external_id: "11737".to_owned(),
+            title: "Outer Wilds".to_owned(),
+            release_year: Some(2019),
+            cover_url: None,
+        };
+        let body = serde_json::to_string(&crate::providers::relay::SearchResponse {
+            results: vec![game.clone()],
+        })
+        .unwrap();
+        let base = crate::http::test_server::serve("200 OK", body.as_bytes());
+
+        assert_eq!(
+            search_with_key(MediaKind::Game, "outer wilds", &base, None).unwrap(),
+            vec![game]
+        );
     }
 
     #[test]
-    fn details_with_a_key_are_still_limited_to_tmdb() {
+    fn details_with_a_key_are_limited_to_tmdb() {
         assert!(matches!(
             details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, Some("token")),
             Err(Error::UnsupportedLookup)
         ));
         assert!(matches!(
-            details_with_key(Source::Igdb, "42", UNREACHABLE_RELAY, Some("token")),
+            details_with_key(Source::OpenLibrary, "42", UNREACHABLE_RELAY, Some("token")),
             Err(Error::UnsupportedLookup)
         ));
     }

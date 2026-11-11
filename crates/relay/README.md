@@ -33,16 +33,17 @@ Current endpoints:
 GET /healthz
 GET /v1/movies/search?q=...
 GET /v1/movies/{id}
+GET /v1/games/search?q=...
+GET /v1/games/{id}
 ```
 
-`/healthz` reports the relay version and whether TMDB and IGDB credentials are configured. IGDB
-search endpoints arrive in the next provider step.
+`/healthz` reports the relay version and whether TMDB and IGDB credentials are configured.
 
 ## Cache
 
 The cache is a `STRICT` SQLite table with one body per key and an expiry time. TMDB searches live
-for one hour and TMDB details for 30 days, both within TMDB's six-month limit. IGDB entries will use
-24 hours when that provider lands.
+for one hour and TMDB details for 30 days, both within TMDB's six-month limit. IGDB searches and
+details live for 24 hours.
 
 ## Tests
 
