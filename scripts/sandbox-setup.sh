@@ -22,9 +22,13 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="$HOME/loregalia-target"
 EOF
 fi
+if ! grep -q 'CARGO_INCREMENTAL' "$persistent" 2>/dev/null; then
+  echo 'export CARGO_INCREMENTAL=0' | sudo tee -a "$persistent" >/dev/null
+fi
 
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_DIR="$HOME/loregalia-target"
+export CARGO_INCREMENTAL=0
 
 cd "$project_root"
 rustup toolchain install

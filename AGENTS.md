@@ -116,3 +116,4 @@ the fix.
 - gpui-kit exposes the button at gpui_kit::component::button::Button, not gpui_kit::component::Button.
 - ElementId does not implement From<(&str, String)>; use format!("row-{}", id) or ElementId::Name.
 - One intermediate test run created a gitignored crates/app/loregalia.db. It is not in any commit; it is safe to delete.
+- The sandbox disk is 20 GB. If linking fails with `Bus error` or "No space left", run `cargo clean` and retry.

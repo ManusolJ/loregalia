@@ -36,6 +36,9 @@ unwrap_used = "deny"
 [profile.dev]
 debug = "line-tables-only"
 
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = "thin"
 panic = "abort"
