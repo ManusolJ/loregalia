@@ -67,13 +67,13 @@ them.
 - **Statuses:** rows in a table, never a Rust enum of statuses, so the set can grow. Each row has one
   of the five categories, which can be a Rust enum, and each category's labels start as:
 
-| Category  | Movie and show | Book      | Game      |
-| --------- | -------------- | --------- | --------- |
-| `planned` | To watch       | To read   | To play   |
+| Category  | Movie and show | Book        | Game        |
+| --------- | -------------- | ----------- | ----------- |
+| `planned` | To watch       | To read     | To play     |
 | `active`  | In progress    | In progress | In progress |
-| `paused`  | On hold        | On hold   | On hold   |
-| `done`    | Watched        | Read      | Played    |
-| `dropped` | Dropped        | Dropped   | Dropped   |
+| `paused`  | On hold        | On hold     | On hold     |
+| `done`    | Watched        | Read        | Played      |
+| `dropped` | Dropped        | Dropped     | Dropped     |
 
 - **Release dates:** `release_year` and `release_date` are both optional. Sort by year, with unknown
   years last. Null means unknown, not unreleased.
@@ -89,14 +89,15 @@ them.
   such as status and notes, separate from what a source provided. Refresh TMDB data in the
   background before it is six months old.
 - **Settings (D-14):** a `settings` table holds preferences such as the theme. API keys a user
-  enters never go in the database.
+  enters never go in the database; they live in `api-keys.json` beside the database (D-31).
 - **Units in names:** `runtime_minutes`, `page_count`, `season_number`. Never a bare `length` or
   `size`.
 
 ## Network
 
 - Only metadata lookups use the network, from `core` providers. TVmaze and Open Library are called
-  directly. TMDB and IGDB go through the Loregalia relay, unless the user entered their own key.
+  directly. TMDB and IGDB go through the Loregalia relay, unless the user entered their own TMDB
+  key, which calls TMDB directly.
 - One trait, with one implementation per source, chosen by `MediaKind`. No API's field names travel
   beyond its provider module.
 - Every request has a timeout. Debounce search-as-you-type, respect each source's rate limit, and
@@ -159,3 +160,5 @@ Tests may use `tempfile` (D-23). `crates/app` may use `interprocess` to detect a
 (D-18). The relay uses `axum` and `tokio`, plus `core`'s `rusqlite`, `serde` and `serde_json`.
 Shared versions live in the workspace `Cargo.toml`. Any other dependency
 needs a human's approval first.
+
+`keyring`
