@@ -33,6 +33,7 @@
     { "action": "shell", "resource": "cargo clippy *", "effect": "allow" },
     { "action": "shell", "resource": "cargo fmt *", "effect": "allow" },
     { "action": "shell", "resource": "cargo tree *", "effect": "allow" },
+    { "action": "shell", "resource": "cargo clean", "effect": "allow" },
     { "action": "shell", "resource": "git status *", "effect": "allow" },
     { "action": "shell", "resource": "git diff *", "effect": "allow" },
     { "action": "shell", "resource": "git log *", "effect": "allow" },
