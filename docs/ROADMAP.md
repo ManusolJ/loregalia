@@ -25,7 +25,7 @@ Prove the painful parts while the app is still small.
 - [x] One view writes a row and reads it back, off the UI thread
 - [x] Write a log file, because the installed app has no console
 - [x] One real call to the first source from `core`, with its response saved as a fixture
-- [ ] Build an installer with `cargo-packager`, and make a second launch focus the open window
+- [x] Build an installer with `cargo-packager`, and make a second launch focus the open window
       (D-16, D-18)
 - [ ] Human check: install it, start it from the Start menu, and confirm covers and data persist
 - [x] Portable zip whose data stays beside the `.exe` (D-30)
@@ -41,14 +41,16 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Lists: create, rename, delete, membership
 - [x] Tags: on lists and items
 - [x] Shows and seasons
-- [ ] Settings: optional user API keys that bypass the relay, stored outside the database and the
+- [x] Settings: optional user API keys that bypass the relay, stored outside the database and the
       repo
-- [ ] Metadata lookup: provider trait, then each chosen source
-- [ ] Relay: build the TMDB and IGDB relay in `crates/relay`; the gate already keeps GPUI and the
+- [x] Metadata lookup: provider trait, then each chosen source
+- [x] Relay: build the TMDB and IGDB relay in `crates/relay`; the gate already keeps GPUI and the
       app crate out of it
+- [ ] Metadata lookup for games (IGDB)
+- [ ] Relay: IGDB endpoints
 - [x] About screen: attribution each source requires
-- [ ] Covers: loading, no-image tile, failure
-- [ ] Theme setting: Dark, Light, System
+- [x] Covers: loading, no-image tile, failure
+- [x] Theme setting: Dark, Light, System
 
 ## 5. Release readiness
 

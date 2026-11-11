@@ -11,8 +11,9 @@ of what you have finished. It brings movies, shows, books and games together in 
 
 ## Status
 
-**Early development: not ready to use yet.** Lists, items, statuses, tags, seasons and lookup for
-shows, books and movies work, but there is no installer yet. See the [roadmap](docs/ROADMAP.md).
+**Early development: not ready to use yet.** Lists, items, statuses, tags, seasons, lookup for
+shows, books and movies, covers, a theme setting, an installer and a portable zip work. Game
+lookup (IGDB) is next. See the [roadmap](docs/ROADMAP.md).
 
 ## Planned features
 
@@ -107,10 +108,10 @@ AGENTS.md     Instructions for coding agents
 
 ## How it's built
 
-| Who         | Does what                                                                       |
-| ----------- | ------------------------------------------------------------------------------- |
-| AI agents   | Write code and tests on `agent/*` branches, run the gate, and propose doc changes |
-| The human   | Sets direction, makes [product decisions](docs/DECISIONS.md), reviews and merges |
+| Who       | Does what                                                                         |
+| --------- | --------------------------------------------------------------------------------- |
+| AI agents | Write code and tests on `agent/*` branches, run the gate, and propose doc changes |
+| The human | Sets direction, makes [product decisions](docs/DECISIONS.md), reviews and merges  |
 
 Agents follow [AGENTS.md](AGENTS.md), and these limits are enforced rather than requested:
 
