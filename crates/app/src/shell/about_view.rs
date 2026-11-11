@@ -104,9 +104,55 @@ impl Shell {
                     )
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(rgb(palette.muted))
-                            .child("More sources will be credited here as they are added."),
+                            .id("about-tmdb")
+                            .test_support()
+                            .aria_label(
+                                "This product uses the TMDB API but is not endorsed or certified by TMDB",
+                            )
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1()
+                            .text_base()
+                            .text_color(rgb(palette.content))
+                            .child("Movie metadata from")
+                            .child(
+                                div()
+                                    .id("tmdb-link")
+                                    .test_support()
+                                    .child(
+                                        Link::new("tmdb-anchor")
+                                            .href("https://www.themoviedb.org/")
+                                            .child("TMDB"),
+                                    ),
+                            )
+                            .child(
+                                ". This product uses the TMDB API but is not endorsed or certified by TMDB.",
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("about-openlibrary")
+                            .test_support()
+                            .aria_label("Book metadata from Open Library")
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1()
+                            .text_base()
+                            .text_color(rgb(palette.content))
+                            .child("Book metadata and covers from")
+                            .child(
+                                div()
+                                    .id("openlibrary-link")
+                                    .test_support()
+                                    .child(
+                                        Link::new("openlibrary-anchor")
+                                            .href("https://openlibrary.org/")
+                                            .child("Open Library"),
+                                    ),
+                            )
+                            .child("."),
                     ),
             )
             .child(
