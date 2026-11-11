@@ -33,10 +33,12 @@ description = "Plan what to watch, read and play next"
 publisher = "Manu"
 homepage = "https://github.com/ManusolJ/loregalia"
 license-file = "../../LICENSE"
+icons = ["../../favicon.ico"]
 formats = ["nsis"]
 out-dir = "../../target/installer"
 before-packaging-command = "cargo build --release --locked -p loregalia"
 binaries = [{ path = "loregalia", main = true }]
 
 [package.metadata.packager.nsis]
+installer-icon = "../../favicon.ico"
 appdata-paths = ["$APPDATA/loregalia"]
