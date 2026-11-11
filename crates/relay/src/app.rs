@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::cache::Cache;
 use crate::config::Config;
 use crate::error::RelayError;
+use crate::igdb::{IgdbClient, IgdbUpstream};
 use crate::rate_limit::RateLimiter;
 use crate::tmdb::{TmdbClient, TmdbUpstream};
 
@@ -18,6 +19,7 @@ const CLIENT_LIMIT: u32 = 30;
 const CLIENT_WINDOW_SECONDS: i64 = 60;
 const SEARCH_TTL_SECONDS: i64 = 60 * 60;
 const DETAILS_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
+const GAMES_TTL_SECONDS: i64 = 24 * 60 * 60;
 const MAX_CACHE_ENTRIES: usize = 5_000;
 const MAX_QUERY_CHARS: usize = 100;
 
@@ -27,6 +29,7 @@ pub struct AppState {
     pub cache: Arc<Cache>,
     pub limiter: Arc<RateLimiter>,
     pub tmdb: Option<Arc<dyn TmdbUpstream>>,
+    pub igdb: Option<Arc<dyn IgdbUpstream>>,
 }
 
 impl AppState {
@@ -35,16 +38,33 @@ impl AppState {
             .tmdb_token
             .clone()
             .map(|token| Arc::new(TmdbClient::new(token)) as Arc<dyn TmdbUpstream>);
+        let igdb = config
+            .igdb_client_id
+            .clone()
+            .zip(config.igdb_client_secret.clone())
+            .map(|(client_id, client_secret)| {
+                Arc::new(IgdbClient::new(client_id, client_secret)) as Arc<dyn IgdbUpstream>
+            });
 
-        Self::with_tmdb(config, cache, tmdb)
+        Self::with_upstreams(config, cache, tmdb, igdb)
     }
 
     pub fn with_tmdb(config: Config, cache: Cache, tmdb: Option<Arc<dyn TmdbUpstream>>) -> Self {
+        Self::with_upstreams(config, cache, tmdb, None)
+    }
+
+    pub fn with_upstreams(
+        config: Config,
+        cache: Cache,
+        tmdb: Option<Arc<dyn TmdbUpstream>>,
+        igdb: Option<Arc<dyn IgdbUpstream>>,
+    ) -> Self {
         Self {
             config: Arc::new(config),
             cache: Arc::new(cache),
             limiter: Arc::new(RateLimiter::new(CLIENT_LIMIT, CLIENT_WINDOW_SECONDS)),
             tmdb,
+            igdb,
         }
     }
 }
@@ -54,6 +74,8 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(health))
         .route("/v1/movies/search", get(search_movies))
         .route("/v1/movies/{id}", get(movie_details))
+        .route("/v1/games/search", get(search_games))
+        .route("/v1/games/{id}", get(game_details))
         .with_state(state)
 }
 
@@ -163,6 +185,78 @@ async fn movie_details(
     Ok(Json(movie))
 }
 
+async fn search_games(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(params): Query<SearchParams>,
+) -> Result<Json<SearchResponse>, RelayError> {
+    let query = params.q.trim().to_owned();
+    if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
+        return Err(RelayError::BadRequest);
+    }
+
+    let now = crate::cache::now();
+    check_rate(
+        &state,
+        client_ip(peer, &headers, state.config.trust_proxy),
+        now,
+    )?;
+
+    let key = format!("igdb:search:{}", query.to_lowercase());
+    if let Some(body) = state.cache.get(&key, now).map_err(|_| RelayError::Cache)?
+        && let Ok(response) = serde_json::from_str::<SearchResponse>(&body)
+    {
+        return Ok(Json(response));
+    }
+
+    let upstream = state.igdb.as_ref().ok_or(RelayError::NotConfigured)?;
+    let results = upstream.search(query).await.map_err(RelayError::Upstream)?;
+    let response = SearchResponse { results };
+    let body = serde_json::to_string(&response).map_err(|_| RelayError::Internal)?;
+    state
+        .cache
+        .put(&key, &body, now + GAMES_TTL_SECONDS, now, MAX_CACHE_ENTRIES)
+        .map_err(|_| RelayError::Cache)?;
+
+    Ok(Json(response))
+}
+
+async fn game_details(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Candidate>, RelayError> {
+    if id.is_empty() || id.len() > 20 || !id.chars().all(|character| character.is_ascii_digit()) {
+        return Err(RelayError::BadRequest);
+    }
+
+    let now = crate::cache::now();
+    check_rate(
+        &state,
+        client_ip(peer, &headers, state.config.trust_proxy),
+        now,
+    )?;
+
+    let key = format!("igdb:game:{id}");
+    if let Some(body) = state.cache.get(&key, now).map_err(|_| RelayError::Cache)?
+        && let Ok(game) = serde_json::from_str::<Candidate>(&body)
+    {
+        return Ok(Json(game));
+    }
+
+    let upstream = state.igdb.as_ref().ok_or(RelayError::NotConfigured)?;
+    let game = upstream.details(id).await.map_err(RelayError::Upstream)?;
+    let body = serde_json::to_string(&game).map_err(|_| RelayError::Internal)?;
+    state
+        .cache
+        .put(&key, &body, now + GAMES_TTL_SECONDS, now, MAX_CACHE_ENTRIES)
+        .map_err(|_| RelayError::Cache)?;
+
+    Ok(Json(game))
+}
+
 fn check_rate(state: &AppState, client: IpAddr, now: i64) -> Result<(), RelayError> {
     if state.limiter.check(client, now) {
         Ok(())
@@ -191,12 +285,13 @@ fn client_ip(peer: SocketAddr, headers: &HeaderMap, trust_proxy: bool) -> IpAddr
 #[cfg(test)]
 mod tests {
     use super::{
-        AppState, HealthResponse, MAX_QUERY_CHARS, SearchParams, client_ip, health, movie_details,
-        search_movies,
+        AppState, HealthResponse, MAX_QUERY_CHARS, SearchParams, client_ip, game_details, health,
+        movie_details, search_games, search_movies,
     };
     use crate::cache::Cache;
     use crate::config::Config;
     use crate::error::RelayError;
+    use crate::igdb::IgdbUpstream;
     use crate::tmdb::{TmdbUpstream, UpstreamResult};
     use axum::Json;
     use axum::extract::{ConnectInfo, Path, Query, State};
@@ -479,5 +574,125 @@ mod tests {
         let peer = SocketAddr::from(([192, 0, 2, 1], 1234));
 
         assert_eq!(client_ip(peer, &headers, true), peer.ip());
+    }
+
+    fn game_candidate() -> Candidate {
+        Candidate {
+            source: Source::Igdb,
+            external_id: "11737".to_owned(),
+            title: "Outer Wilds".to_owned(),
+            release_year: Some(2019),
+            cover_url: Some(
+                "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg".to_owned(),
+            ),
+        }
+    }
+
+    struct FakeIgdb {
+        searches: Mutex<usize>,
+        details: Mutex<usize>,
+    }
+
+    impl FakeIgdb {
+        fn ok() -> Self {
+            Self {
+                searches: Mutex::new(0),
+                details: Mutex::new(0),
+            }
+        }
+    }
+
+    impl IgdbUpstream for FakeIgdb {
+        fn search(&self, _query: String) -> UpstreamResult<Vec<Candidate>> {
+            let mut calls = self.searches.lock().unwrap();
+            *calls += 1;
+            Box::pin(async move { Ok(vec![game_candidate()]) })
+        }
+
+        fn details(&self, _id: String) -> UpstreamResult<Candidate> {
+            let mut calls = self.details.lock().unwrap();
+            *calls += 1;
+            Box::pin(async move { Ok(game_candidate()) })
+        }
+    }
+
+    fn state_with_igdb(igdb: Option<Arc<dyn IgdbUpstream>>) -> AppState {
+        AppState::with_upstreams(
+            config(&[("IGDB_CLIENT_ID", "id"), ("IGDB_CLIENT_SECRET", "secret")]),
+            Cache::open_in_memory().unwrap(),
+            None,
+            igdb,
+        )
+    }
+
+    async fn game_search(state: AppState, query: &str) -> Result<SearchResponse, RelayError> {
+        search_games(
+            State(state),
+            peer(),
+            HeaderMap::new(),
+            Query(SearchParams {
+                q: query.to_owned(),
+            }),
+        )
+        .await
+        .map(|Json(response)| response)
+    }
+
+    async fn game_detail(state: AppState, id: &str) -> Result<Candidate, RelayError> {
+        game_details(State(state), peer(), HeaderMap::new(), Path(id.to_owned()))
+            .await
+            .map(|Json(candidate)| candidate)
+    }
+
+    #[tokio::test]
+    async fn a_game_search_returns_a_cached_result_and_calls_upstream_once() {
+        let fake = Arc::new(FakeIgdb::ok());
+        let state = state_with_igdb(Some(fake.clone()));
+
+        assert_eq!(
+            game_search(state.clone(), "outer wilds")
+                .await
+                .unwrap()
+                .results,
+            vec![game_candidate()]
+        );
+        assert_eq!(
+            game_search(state, "outer wilds").await.unwrap().results,
+            vec![game_candidate()]
+        );
+        assert_eq!(*fake.searches.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_game_details_returns_a_cached_candidate_and_calls_upstream_once() {
+        let fake = Arc::new(FakeIgdb::ok());
+        let state = state_with_igdb(Some(fake.clone()));
+
+        assert_eq!(
+            game_detail(state.clone(), "11737").await.unwrap(),
+            game_candidate()
+        );
+        assert_eq!(game_detail(state, "11737").await.unwrap(), game_candidate());
+        assert_eq!(*fake.details.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unconfigured_game_relay_says_so() {
+        let state = state_with_igdb(None);
+
+        assert!(matches!(
+            game_search(state, "outer wilds").await,
+            Err(RelayError::NotConfigured)
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_invalid_game_id_is_rejected() {
+        let state = state_with_igdb(Some(Arc::new(FakeIgdb::ok())));
+
+        assert!(matches!(
+            game_detail(state, "outer wilds").await,
+            Err(RelayError::BadRequest)
+        ));
     }
 }

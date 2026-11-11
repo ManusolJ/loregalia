@@ -29,6 +29,19 @@ pub(crate) fn get_bytes(url: &str, timeout: Duration, max_bytes: u64) -> Result<
         .map_err(classify)
 }
 
+pub(crate) fn post_text(
+    url: &str,
+    query: &[(&str, &str)],
+    headers: &[(&str, &str)],
+    body: &str,
+    timeout: Duration,
+) -> Result<String> {
+    post(url, query, headers, body, timeout)?
+        .body_mut()
+        .read_to_string()
+        .map_err(classify)
+}
+
 fn send(
     url: &str,
     query: &[(&str, &str)],
@@ -51,6 +64,29 @@ fn send(
     request.call().map_err(classify)
 }
 
+fn post(
+    url: &str,
+    query: &[(&str, &str)],
+    headers: &[(&str, &str)],
+    body: &str,
+    timeout: Duration,
+) -> Result<ureq::http::Response<ureq::Body>> {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .build();
+    let agent: ureq::Agent = config.into();
+    let mut request = agent.post(url).header("User-Agent", USER_AGENT);
+
+    for &(name, value) in headers {
+        request = request.header(name, value);
+    }
+    for &(name, value) in query {
+        request = request.query(name, value);
+    }
+
+    request.send(body).map_err(classify)
+}
+
 pub(crate) fn classify(error: ureq::Error) -> Error {
     match error {
         ureq::Error::StatusCode(401 | 403) => Error::Unauthorized,
@@ -63,10 +99,40 @@ pub(crate) fn classify(error: ureq::Error) -> Error {
 #[cfg(test)]
 pub(crate) mod test_server {
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::time::Duration;
 
     pub(crate) const TEST_TIMEOUT: Duration = Duration::from_millis(250);
+
+    fn declared_length(head: &[u8]) -> usize {
+        String::from_utf8_lossy(head)
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())
+                    .flatten()
+            })
+            .unwrap_or(0)
+    }
+
+    fn read_request(stream: &mut TcpStream) {
+        let mut received = Vec::new();
+        let mut chunk = [0_u8; 1024];
+
+        while let Ok(read) = stream.read(&mut chunk) {
+            if read == 0 {
+                return;
+            }
+            received.extend_from_slice(&chunk[..read]);
+            if let Some(end) = received.windows(4).position(|window| window == b"\r\n\r\n")
+                && received.len() >= end + 4 + declared_length(&received[..end])
+            {
+                return;
+            }
+        }
+    }
 
     pub(crate) fn serve(status: &str, body: &[u8]) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -80,8 +146,7 @@ pub(crate) mod test_server {
 
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
+            read_request(&mut stream);
             let _ = stream.write_all(&head);
             let _ = stream.write_all(&body);
         });
@@ -114,7 +179,7 @@ pub(crate) mod test_server {
 #[cfg(test)]
 mod tests {
     use super::test_server::{TEST_TIMEOUT, refuse, serve, serve_silently};
-    use super::{Error, get_bytes, get_text};
+    use super::{Error, get_bytes, get_text, post_text};
 
     #[test]
     fn a_rejected_token_is_unauthorized() {
@@ -172,5 +237,25 @@ mod tests {
         let base = serve("200 OK", b"image-bytes");
 
         assert!(get_bytes(&base, TEST_TIMEOUT, 4).is_err());
+    }
+
+    #[test]
+    fn a_post_returns_the_body() {
+        let base = serve("200 OK", b"posted");
+
+        assert_eq!(
+            post_text(&base, &[], &[("X-Test", "yes")], "query body", TEST_TIMEOUT).unwrap(),
+            "posted"
+        );
+    }
+
+    #[test]
+    fn a_rejected_post_is_unauthorized() {
+        let base = serve("401 Unauthorized", b"");
+
+        assert!(matches!(
+            post_text(&base, &[], &[], "", TEST_TIMEOUT),
+            Err(Error::Unauthorized)
+        ));
     }
 }

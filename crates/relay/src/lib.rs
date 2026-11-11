@@ -2,6 +2,7 @@ pub mod app;
 pub mod cache;
 pub mod config;
 pub mod error;
+pub mod igdb;
 pub mod rate_limit;
 pub mod tmdb;
 

@@ -141,6 +141,18 @@ fn found_movie() -> Candidate {
     }
 }
 
+fn found_game() -> Candidate {
+    Candidate {
+        source: Source::Igdb,
+        external_id: "11737".to_owned(),
+        title: "Outer Wilds".to_owned(),
+        release_year: Some(2019),
+        cover_url: Some(
+            "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg".to_owned(),
+        ),
+    }
+}
+
 fn refreshed_movie() -> Candidate {
     Candidate {
         source: Source::Tmdb,
@@ -1077,6 +1089,80 @@ fn searching_tmdb_adds_the_chosen_movie(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn searching_igdb_adds_the_chosen_game(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let search: MetadataSearch = Arc::new(|kind: MediaKind, query: &str| {
+        if kind == MediaKind::Game && query == "outer wilds" {
+            Ok(vec![found_game()])
+        } else {
+            Ok(Vec::new())
+        }
+    });
+
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-game", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "outer wilds");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-metadata", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("search-result-igdb-11737").label(),
+            Some("Outer Wilds (2019)")
+        );
+        window.click("search-result-igdb-11737", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = items::all(&Database::open(&path).unwrap()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].media_kind, MediaKind::Game);
+    assert_eq!(stored[0].title, "Outer Wilds");
+    assert_eq!(stored[0].release_year, Some(2019));
+    assert_eq!(stored[0].source.as_deref(), Some(Source::Igdb.key()));
+    assert_eq!(stored[0].external_id.as_deref(), Some("11737"));
+    assert_eq!(
+        stored[0].cover_url.as_deref(),
+        Some("https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg")
+    );
+}
+
+#[gpui_kit::test]
 fn a_stale_tmdb_item_refreshes_in_the_background(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
@@ -1344,7 +1430,7 @@ fn a_show_already_in_the_library_cannot_be_added_twice(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn the_metadata_search_appears_only_for_supported_new_items(cx: &mut TestAppContext) {
+fn the_metadata_search_appears_for_new_items_but_not_when_editing(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
     let item = seed_item(&path, MediaKind::Show, "Dark", Some(2017)).unwrap();
@@ -1391,7 +1477,7 @@ fn the_metadata_search_appears_only_for_supported_new_items(cx: &mut TestAppCont
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("metadata-search").is_none());
+        assert!(window.find("metadata-search").visible());
         window.click("cancel-item", cx);
     })
     .unwrap();
@@ -1455,7 +1541,8 @@ fn switching_away_from_shows_clears_the_lookup(cx: &mut TestAppContext) {
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("metadata-search").is_none());
+        assert!(window.find("metadata-search").visible());
+        assert!(window.try_find("metadata-search-results").is_none());
         window.click("save-item", cx);
     })
     .unwrap();
