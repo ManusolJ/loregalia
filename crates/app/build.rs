@@ -14,4 +14,9 @@ fn main() {
         format!("-Wl,--stack,{MAIN_THREAD_STACK}")
     };
     println!("cargo:rustc-link-arg-bins={argument}");
+
+    if let Err(error) = embed_resource::compile("icon.rc", embed_resource::NONE).manifest_optional()
+    {
+        eprintln!("warning: could not embed the app icon: {error}");
+    }
 }
