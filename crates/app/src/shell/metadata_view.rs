@@ -6,7 +6,7 @@ use gpui_kit::component::{Disableable, button::Button};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, AppContext, Context, Role, TestSupportExt, Window, div, px, rgb};
 use loregalia_core::{
-    Database, Result as CoreResult, items, log,
+    Database, Result as CoreResult, items, keys, log,
     media::MediaKind,
     providers::{self, Candidate, Source},
 };
@@ -22,24 +22,26 @@ pub type MetadataDetails = Arc<dyn Fn(Source, String) -> CoreResult<Candidate> +
 
 pub(super) const TMDB_REFRESH_AFTER_DAYS: u64 = 150;
 
-pub(super) fn default_search(tmdb_token: Option<String>) -> MetadataSearch {
+pub(super) fn default_search(keys: keys::ApiKeys) -> MetadataSearch {
     Arc::new(move |kind, query| {
         providers::search_with_key(
             kind,
             query,
             providers::relay::base_url(),
-            tmdb_token.as_deref(),
+            keys.tmdb_token(),
+            keys.igdb_credentials(),
         )
     })
 }
 
-pub(super) fn default_details(tmdb_token: Option<String>) -> MetadataDetails {
+pub(super) fn default_details(keys: keys::ApiKeys) -> MetadataDetails {
     Arc::new(move |source, external_id| {
         providers::details_with_key(
             source,
             &external_id,
             providers::relay::base_url(),
-            tmdb_token.as_deref(),
+            keys.tmdb_token(),
+            keys.igdb_credentials(),
         )
     })
 }

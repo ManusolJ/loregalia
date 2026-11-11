@@ -36,6 +36,7 @@ use lists_view::Editor;
 pub use metadata_view::{MetadataDetails, MetadataSearch};
 use metadata_view::{default_details, default_search};
 use seasons_view::SeasonEditor;
+use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
 
 const RAIL_WIDTH: f32 = 64.0;
@@ -73,8 +74,8 @@ pub struct Shell {
     refresh_started: bool,
     theme: settings::Theme,
     settings_error: Option<String>,
-    tmdb_token: Option<String>,
-    tmdb_input: Option<Entity<InputState>>,
+    api_keys: keys::ApiKeys,
+    key_inputs: Option<KeyInputs>,
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
@@ -128,15 +129,14 @@ fn load(database: &Database) -> CoreResult<Snapshot> {
     })
 }
 
-fn load_tmdb_token(storage: &StorageState) -> Option<String> {
+fn load_keys(storage: &StorageState) -> keys::ApiKeys {
     let StorageState::Ready(path) = storage else {
-        return None;
+        return keys::ApiKeys::default();
     };
-    let path = keys::file_for_database(path)?;
-    keys::ApiKeys::load(&path)
-        .ok()?
-        .tmdb_token()
-        .map(str::to_owned)
+    let Some(path) = keys::file_for_database(path) else {
+        return keys::ApiKeys::default();
+    };
+    keys::ApiKeys::load(&path).unwrap_or_default()
 }
 
 struct NavRow {
@@ -154,16 +154,16 @@ impl Shell {
         theme: settings::Theme,
         cx: &mut Context<Self>,
     ) -> Self {
-        let tmdb_token = load_tmdb_token(&storage);
+        let api_keys = load_keys(&storage);
         let mut shell = Self::new_with_services(
             storage,
             log_path,
             theme,
-            default_search(tmdb_token.clone()),
-            default_details(tmdb_token.clone()),
+            default_search(api_keys.clone()),
+            default_details(api_keys.clone()),
             cx,
         );
-        shell.tmdb_token = tmdb_token;
+        shell.api_keys = api_keys;
         shell
     }
 
@@ -179,7 +179,7 @@ impl Shell {
             log_path,
             theme,
             metadata_search,
-            default_details(None),
+            default_details(keys::ApiKeys::default()),
             cx,
         )
     }
@@ -201,8 +201,8 @@ impl Shell {
             refresh_started: false,
             theme,
             settings_error: None,
-            tmdb_token: None,
-            tmdb_input: None,
+            api_keys: keys::ApiKeys::default(),
+            key_inputs: None,
             lists: Vec::new(),
             items: Vec::new(),
             statuses: Vec::new(),

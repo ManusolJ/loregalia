@@ -2,7 +2,7 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Selectable, button::Button};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AppContext, Context, FontWeight, Role, TestSupportExt, Window, div, px, rgb,
+    AnyElement, AppContext, Context, Entity, FontWeight, Role, TestSupportExt, Window, div, px, rgb,
 };
 use loregalia_core::{Database, keys, settings};
 
@@ -11,35 +11,70 @@ use super::{Screen, Shell};
 use crate::startup::StorageState;
 use crate::theme::Palette;
 
+pub(super) struct KeyInputs {
+    tmdb: Entity<InputState>,
+    igdb_client_id: Entity<InputState>,
+    igdb_client_secret: Entity<InputState>,
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
 impl Shell {
     pub(super) fn begin_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show(Screen::Settings);
         self.settings_error = None;
-        let value = self.tmdb_token.clone().unwrap_or_default();
-        self.tmdb_input = Some(cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("TMDB API key")
-                .default_value(value)
-        }));
+        self.key_inputs = Some(KeyInputs {
+            tmdb: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("TMDB API key")
+                    .default_value(self.api_keys.tmdb_token.clone().unwrap_or_default())
+            }),
+            igdb_client_id: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("IGDB Client ID")
+                    .default_value(self.api_keys.igdb_client_id.clone().unwrap_or_default())
+            }),
+            igdb_client_secret: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("IGDB Client Secret")
+                    .default_value(self.api_keys.igdb_client_secret.clone().unwrap_or_default())
+            }),
+        });
         cx.notify();
     }
 
-    pub(super) fn save_tmdb_key(&mut self, cx: &mut Context<Self>) {
-        let Some(input) = &self.tmdb_input else {
-            return;
+    pub(super) fn save_keys(&mut self, cx: &mut Context<Self>) {
+        let keys = {
+            let Some(inputs) = &self.key_inputs else {
+                return;
+            };
+            keys::ApiKeys {
+                tmdb_token: non_empty(inputs.tmdb.read(cx).value().trim()),
+                igdb_client_id: non_empty(inputs.igdb_client_id.read(cx).value().trim()),
+                igdb_client_secret: non_empty(inputs.igdb_client_secret.read(cx).value().trim()),
+            }
         };
-        let value = input.read(cx).value().trim().to_owned();
-        let token = if value.is_empty() { None } else { Some(value) };
-        self.persist_tmdb_key(token, cx);
+        self.persist_keys(keys, cx);
     }
 
-    pub(super) fn remove_tmdb_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.tmdb_input =
-            Some(cx.new(|cx| InputState::new(window, cx).placeholder("TMDB API key")));
-        self.persist_tmdb_key(None, cx);
+    pub(super) fn remove_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.key_inputs = Some(KeyInputs {
+            tmdb: cx.new(|cx| InputState::new(window, cx).placeholder("TMDB API key")),
+            igdb_client_id: cx.new(|cx| InputState::new(window, cx).placeholder("IGDB Client ID")),
+            igdb_client_secret: cx
+                .new(|cx| InputState::new(window, cx).placeholder("IGDB Client Secret")),
+        });
+        self.persist_keys(keys::ApiKeys::default(), cx);
     }
 
-    fn persist_tmdb_key(&mut self, token: Option<String>, cx: &mut Context<Self>) {
+    fn persist_keys(&mut self, keys: keys::ApiKeys, cx: &mut Context<Self>) {
         let StorageState::Ready(path) = self.storage.clone() else {
             self.settings_error = Some("Keys need a working data folder.".to_owned());
             cx.notify();
@@ -51,21 +86,20 @@ impl Shell {
             return;
         };
 
-        let saved = token.clone();
-        let task = cx
-            .background_spawn(async move { keys::ApiKeys { tmdb_token: token }.save(&keys_path) });
+        let saved = keys.clone();
+        let task = cx.background_spawn(async move { keys.save(&keys_path) });
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(()) => {
-                        this.tmdb_token = saved;
-                        this.apply_tmdb_token();
+                        this.api_keys = saved;
+                        this.apply_keys();
                         this.settings_error = None;
                     }
                     Err(error) => {
-                        let message = format!("Could not save the TMDB key: {error}");
+                        let message = format!("Could not save the keys: {error}");
                         this.record(&message, cx);
                         this.settings_error = Some(message);
                     }
@@ -78,10 +112,10 @@ impl Shell {
         cx.notify();
     }
 
-    fn apply_tmdb_token(&mut self) {
-        let token = self.tmdb_token.clone();
-        self.metadata_search = default_search(token.clone());
-        self.metadata_details = default_details(token);
+    fn apply_keys(&mut self) {
+        let keys = self.api_keys.clone();
+        self.metadata_search = default_search(keys.clone());
+        self.metadata_details = default_details(keys);
     }
 
     fn keys_section(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -101,29 +135,44 @@ impl Shell {
                     .text_sm()
                     .text_color(rgb(palette.muted))
                     .child(
-                        "Enter your own TMDB key to call TMDB directly and skip the Loregalia \
-                         service. Leave it empty to use the service.",
+                        "Enter your own keys to call each source directly and skip the Loregalia \
+                         service. IGDB needs both a client ID and a secret. Leave fields empty to \
+                         use the service.",
                     ),
             );
 
-        if let Some(input) = &self.tmdb_input {
+        if let Some(inputs) = &self.key_inputs {
             let mut actions = div().flex().gap_2().child(
-                Button::new("save-tmdb-key")
-                    .label("Save key")
-                    .on_click(cx.listener(|this, _, _, cx| this.save_tmdb_key(cx))),
+                Button::new("save-keys")
+                    .label("Save keys")
+                    .on_click(cx.listener(|this, _, _, cx| this.save_keys(cx))),
             );
-            if self.tmdb_token.is_some() {
-                actions =
-                    actions.child(Button::new("remove-tmdb-key").label("Remove").on_click(
-                        cx.listener(|this, _, window, cx| this.remove_tmdb_key(window, cx)),
-                    ));
+            if self.api_keys.tmdb_token.is_some()
+                || self.api_keys.igdb_client_id.is_some()
+                || self.api_keys.igdb_client_secret.is_some()
+            {
+                actions = actions.child(
+                    Button::new("remove-keys")
+                        .label("Remove")
+                        .on_click(cx.listener(|this, _, window, cx| this.remove_keys(window, cx))),
+                );
             }
 
             section = section
                 .child(
-                    Input::new(input)
+                    Input::new(&inputs.tmdb)
                         .id("tmdb-key-input")
                         .aria_label("TMDB API key"),
+                )
+                .child(
+                    Input::new(&inputs.igdb_client_id)
+                        .id("igdb-client-id-input")
+                        .aria_label("IGDB Client ID"),
+                )
+                .child(
+                    Input::new(&inputs.igdb_client_secret)
+                        .id("igdb-client-secret-input")
+                        .aria_label("IGDB Client Secret"),
                 )
                 .child(actions);
         }

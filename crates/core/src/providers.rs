@@ -74,6 +74,7 @@ pub fn search_with_key(
     query: &str,
     relay_url: &str,
     tmdb_token: Option<&str>,
+    igdb_credentials: Option<(&str, &str)>,
 ) -> Result<Vec<Candidate>> {
     match media_kind {
         MediaKind::Show => tvmaze::search(query),
@@ -82,7 +83,13 @@ pub fn search_with_key(
             None => relay::search_movies(relay_url, query),
         },
         MediaKind::Book => open_library::search(query),
-        MediaKind::Game => relay::search_games(relay_url, query),
+        MediaKind::Game => match igdb_credentials {
+            Some((client_id, client_secret)) => {
+                let token = igdb::token(client_id, client_secret)?;
+                igdb::search(client_id, &token.value, query)
+            }
+            None => relay::search_games(relay_url, query),
+        },
     }
 }
 
@@ -91,13 +98,20 @@ pub fn details_with_key(
     external_id: &str,
     relay_url: &str,
     tmdb_token: Option<&str>,
+    igdb_credentials: Option<(&str, &str)>,
 ) -> Result<Candidate> {
     match source {
         Source::Tmdb => match tmdb_token {
             Some(token) => tmdb::details(token, external_id),
             None => relay::movie_details(relay_url, external_id),
         },
-        Source::Igdb => relay::game_details(relay_url, external_id),
+        Source::Igdb => match igdb_credentials {
+            Some((client_id, client_secret)) => {
+                let token = igdb::token(client_id, client_secret)?;
+                igdb::details(client_id, &token.value, external_id)
+            }
+            None => relay::game_details(relay_url, external_id),
+        },
         Source::TvMaze | Source::OpenLibrary => Err(Error::UnsupportedLookup),
     }
 }
@@ -145,11 +159,11 @@ mod tests {
     #[test]
     fn details_exist_only_for_sources_that_refresh() {
         assert!(matches!(
-            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, None),
+            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, None, None),
             Err(Error::UnsupportedLookup)
         ));
         assert!(matches!(
-            details_with_key(Source::Tmdb, "438631", UNREACHABLE_RELAY, None),
+            details_with_key(Source::Tmdb, "438631", UNREACHABLE_RELAY, None, None),
             Err(Error::ConnectionFailed)
         ));
     }
@@ -182,7 +196,7 @@ mod tests {
         let base = crate::http::test_server::serve("200 OK", body.as_bytes());
 
         assert_eq!(
-            search_with_key(MediaKind::Movie, "dune", &base, None).unwrap(),
+            search_with_key(MediaKind::Movie, "dune", &base, None, None).unwrap(),
             vec![tmdb_candidate()]
         );
     }
@@ -193,7 +207,7 @@ mod tests {
         let base = crate::http::test_server::serve("200 OK", body.as_bytes());
 
         assert_eq!(
-            details_with_key(Source::Tmdb, "438631", &base, None).unwrap(),
+            details_with_key(Source::Tmdb, "438631", &base, None, None).unwrap(),
             tmdb_candidate()
         );
     }
@@ -214,7 +228,7 @@ mod tests {
         let base = crate::http::test_server::serve("200 OK", body.as_bytes());
 
         assert_eq!(
-            search_with_key(MediaKind::Game, "outer wilds", &base, None).unwrap(),
+            search_with_key(MediaKind::Game, "outer wilds", &base, None, None).unwrap(),
             vec![game]
         );
     }
@@ -222,11 +236,17 @@ mod tests {
     #[test]
     fn details_with_a_key_are_limited_to_tmdb() {
         assert!(matches!(
-            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, Some("token")),
+            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, Some("token"), None),
             Err(Error::UnsupportedLookup)
         ));
         assert!(matches!(
-            details_with_key(Source::OpenLibrary, "42", UNREACHABLE_RELAY, Some("token")),
+            details_with_key(
+                Source::OpenLibrary,
+                "42",
+                UNREACHABLE_RELAY,
+                Some("token"),
+                None
+            ),
             Err(Error::UnsupportedLookup)
         ));
     }

@@ -7,6 +7,8 @@ pub const FILE_NAME: &str = "api-keys.json";
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ApiKeys {
     pub tmdb_token: Option<String>,
+    pub igdb_client_id: Option<String>,
+    pub igdb_client_secret: Option<String>,
 }
 
 impl ApiKeys {
@@ -32,6 +34,17 @@ impl ApiKeys {
         self.tmdb_token
             .as_deref()
             .filter(|token| !token.trim().is_empty())
+    }
+
+    pub fn igdb_credentials(&self) -> Option<(&str, &str)> {
+        match (&self.igdb_client_id, &self.igdb_client_secret) {
+            (Some(client_id), Some(client_secret))
+                if !client_id.trim().is_empty() && !client_secret.trim().is_empty() =>
+            {
+                Some((client_id, client_secret))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -68,6 +81,8 @@ mod tests {
         let temporary = TempDir::new().unwrap();
         let keys = ApiKeys {
             tmdb_token: Some("abc123".to_owned()),
+            igdb_client_id: Some("client-id".to_owned()),
+            igdb_client_secret: Some("client-secret".to_owned()),
         };
 
         keys.save(&keys_path(&temporary)).unwrap();
@@ -107,7 +122,8 @@ mod tests {
     fn a_blank_token_counts_as_no_token() {
         assert_eq!(
             ApiKeys {
-                tmdb_token: Some("   ".to_owned())
+                tmdb_token: Some("   ".to_owned()),
+                ..Default::default()
             }
             .tmdb_token(),
             None
@@ -115,11 +131,37 @@ mod tests {
         assert_eq!(ApiKeys::default().tmdb_token(), None);
         assert_eq!(
             ApiKeys {
-                tmdb_token: Some("abc".to_owned())
+                tmdb_token: Some("abc".to_owned()),
+                ..Default::default()
             }
             .tmdb_token(),
             Some("abc")
         );
+    }
+
+    #[test]
+    fn igdb_credentials_need_both_parts() {
+        let both = ApiKeys {
+            igdb_client_id: Some("id".to_owned()),
+            igdb_client_secret: Some("secret".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(both.igdb_credentials(), Some(("id", "secret")));
+
+        let only_id = ApiKeys {
+            igdb_client_id: Some("id".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(only_id.igdb_credentials(), None);
+
+        let blank_secret = ApiKeys {
+            igdb_client_id: Some("id".to_owned()),
+            igdb_client_secret: Some("  ".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(blank_secret.igdb_credentials(), None);
+
+        assert_eq!(ApiKeys::default().igdb_credentials(), None);
     }
 
     #[test]
