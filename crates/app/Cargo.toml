@@ -23,6 +23,9 @@ loregalia-core.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
+[build-dependencies]
+embed-resource = "3"
+
 [lints]
 workspace = true
 
@@ -33,12 +36,12 @@ description = "Plan what to watch, read and play next"
 publisher = "Manu"
 homepage = "https://github.com/ManusolJ/loregalia"
 license-file = "../../LICENSE"
-icons = ["../../favicon.ico"]
+icons = ["../../icons/icon.ico"]
 formats = ["nsis"]
 out-dir = "../../target/installer"
 before-packaging-command = "cargo build --release --locked -p loregalia"
 binaries = [{ path = "loregalia", main = true }]
 
 [package.metadata.packager.nsis]
-installer-icon = "../../favicon.ico"
+installer-icon = "../../icons/icon.ico"
 appdata-paths = ["$APPDATA/loregalia"]
