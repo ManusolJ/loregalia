@@ -4282,7 +4282,7 @@ fn clicking_a_row_selects_it_for_the_detail_panel(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn saving_a_tmdb_key_writes_it_beside_the_database(cx: &mut TestAppContext) {
+fn saving_keys_writes_them_beside_the_database(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
     let handle = open_shell(
@@ -4307,24 +4307,40 @@ fn saving_a_tmdb_key_writes_it_beside_the_database(cx: &mut TestAppContext) {
     cx.simulate_input(handle, "my-token");
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("save-tmdb-key", cx);
+        window.click("igdb-client-id-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "client-id");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("igdb-client-secret-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "client-secret");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-keys", cx);
     })
     .unwrap();
     cx.run_until_parked();
 
     let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
     assert_eq!(keys.tmdb_token.as_deref(), Some("my-token"));
+    assert_eq!(keys.igdb_client_id.as_deref(), Some("client-id"));
+    assert_eq!(keys.igdb_client_secret.as_deref(), Some("client-secret"));
 
     let database = Database::open(&path).unwrap();
     assert_eq!(settings::get(&database, "tmdb_token").unwrap(), None);
 }
 
 #[gpui_kit::test]
-fn removing_the_tmdb_key_clears_the_file(cx: &mut TestAppContext) {
+fn removing_keys_clears_the_file(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
     keys::ApiKeys {
         tmdb_token: Some("secret".to_owned()),
+        igdb_client_id: Some("id".to_owned()),
+        igdb_client_secret: Some("secret".to_owned()),
     }
     .save(&temporary.path().join("api-keys.json"))
     .unwrap();
@@ -4345,12 +4361,12 @@ fn removing_the_tmdb_key_clears_the_file(cx: &mut TestAppContext) {
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.find("remove-tmdb-key").visible());
-        window.click("remove-tmdb-key", cx);
+        assert!(window.find("remove-keys").visible());
+        window.click("remove-keys", cx);
     })
     .unwrap();
     cx.run_until_parked();
 
     let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
-    assert_eq!(keys.tmdb_token, None);
+    assert_eq!(keys, keys::ApiKeys::default());
 }
