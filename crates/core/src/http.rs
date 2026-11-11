@@ -99,10 +99,40 @@ pub(crate) fn classify(error: ureq::Error) -> Error {
 #[cfg(test)]
 pub(crate) mod test_server {
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::time::Duration;
 
     pub(crate) const TEST_TIMEOUT: Duration = Duration::from_millis(250);
+
+    fn declared_length(head: &[u8]) -> usize {
+        String::from_utf8_lossy(head)
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())
+                    .flatten()
+            })
+            .unwrap_or(0)
+    }
+
+    fn read_request(stream: &mut TcpStream) {
+        let mut received = Vec::new();
+        let mut chunk = [0_u8; 1024];
+
+        while let Ok(read) = stream.read(&mut chunk) {
+            if read == 0 {
+                return;
+            }
+            received.extend_from_slice(&chunk[..read]);
+            if let Some(end) = received.windows(4).position(|window| window == b"\r\n\r\n")
+                && received.len() >= end + 4 + declared_length(&received[..end])
+            {
+                return;
+            }
+        }
+    }
 
     pub(crate) fn serve(status: &str, body: &[u8]) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -116,8 +146,7 @@ pub(crate) mod test_server {
 
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
+            read_request(&mut stream);
             let _ = stream.write_all(&head);
             let _ = stream.write_all(&body);
         });
