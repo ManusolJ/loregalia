@@ -8,7 +8,7 @@ use loregalia_app::shell::{MetadataDetails, MetadataSearch, Shell};
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
-    Database, Error, Result as CoreResult, items, list_items, lists,
+    Database, Error, Result as CoreResult, items, keys, list_items, lists,
     media::MediaKind,
     providers::{Candidate, Source},
     seasons, settings, tags,
@@ -4192,4 +4192,78 @@ fn clicking_a_row_selects_it_for_the_detail_panel(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn saving_a_tmdb_key_writes_it_beside_the_database(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("tmdb-key-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "my-token");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("save-tmdb-key", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
+    assert_eq!(keys.tmdb_token.as_deref(), Some("my-token"));
+
+    let database = Database::open(&path).unwrap();
+    assert_eq!(settings::get(&database, "tmdb_token").unwrap(), None);
+}
+
+#[gpui_kit::test]
+fn removing_the_tmdb_key_clears_the_file(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    keys::ApiKeys {
+        tmdb_token: Some("secret".to_owned()),
+    }
+    .save(&temporary.path().join("api-keys.json"))
+    .unwrap();
+
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("remove-tmdb-key").visible());
+        window.click("remove-tmdb-key", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
+    assert_eq!(keys.tmdb_token, None);
 }

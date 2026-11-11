@@ -23,7 +23,7 @@ use gpui_kit::{
 };
 use loregalia_core::library::{self, Shelf};
 use loregalia_core::{
-    Database, Result as CoreResult, items, list_items, lists, log, media::MediaKind, seasons,
+    Database, Result as CoreResult, items, keys, list_items, lists, log, media::MediaKind, seasons,
     settings, statuses, tags,
 };
 
@@ -73,6 +73,8 @@ pub struct Shell {
     refresh_started: bool,
     theme: settings::Theme,
     settings_error: Option<String>,
+    tmdb_token: Option<String>,
+    tmdb_input: Option<Entity<InputState>>,
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
     statuses: Vec<statuses::Status>,
@@ -126,6 +128,17 @@ fn load(database: &Database) -> CoreResult<Snapshot> {
     })
 }
 
+fn load_tmdb_token(storage: &StorageState) -> Option<String> {
+    let StorageState::Ready(path) = storage else {
+        return None;
+    };
+    let path = keys::file_for_database(path)?;
+    keys::ApiKeys::load(&path)
+        .ok()?
+        .tmdb_token()
+        .map(str::to_owned)
+}
+
 struct NavRow {
     id: String,
     icon: IconName,
@@ -141,14 +154,17 @@ impl Shell {
         theme: settings::Theme,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_with_services(
+        let tmdb_token = load_tmdb_token(&storage);
+        let mut shell = Self::new_with_services(
             storage,
             log_path,
             theme,
-            default_search(),
-            default_details(),
+            default_search(tmdb_token.clone()),
+            default_details(tmdb_token.clone()),
             cx,
-        )
+        );
+        shell.tmdb_token = tmdb_token;
+        shell
     }
 
     pub fn new_with_search(
@@ -163,7 +179,7 @@ impl Shell {
             log_path,
             theme,
             metadata_search,
-            default_details(),
+            default_details(None),
             cx,
         )
     }
@@ -185,6 +201,8 @@ impl Shell {
             refresh_started: false,
             theme,
             settings_error: None,
+            tmdb_token: None,
+            tmdb_input: None,
             lists: Vec::new(),
             items: Vec::new(),
             statuses: Vec::new(),
@@ -580,7 +598,7 @@ impl Shell {
         row: NavRow,
         shows_labels: bool,
         palette: &Palette,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let button = Button::new(row.id.clone())
@@ -588,7 +606,7 @@ impl Shell {
             .role(Role::ListItem)
             .accessibility_label(row.label.clone())
             .selected(row.selected)
-            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
+            .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)));
 
         if !shows_labels {
             return button.icon(row.icon).tooltip(row.label).into_any_element();
@@ -669,7 +687,7 @@ impl Shell {
                     },
                     shows_labels,
                     palette,
-                    move |this, cx| this.show_shelf(shelf, cx),
+                    move |this, _window, cx| this.show_shelf(shelf, cx),
                     cx,
                 )
             })
@@ -694,7 +712,7 @@ impl Shell {
                     },
                     shows_labels,
                     palette,
-                    move |this, cx| this.select_list(id.clone(), cx),
+                    move |this, _window, cx| this.select_list(id.clone(), cx),
                     cx,
                 );
                 if shows_labels {
@@ -730,7 +748,7 @@ impl Shell {
                 },
                 shows_labels,
                 palette,
-                |this, cx| this.begin_settings(cx),
+                |this, window, cx| this.begin_settings(window, cx),
                 cx,
             ),
             Self::nav_row(
@@ -743,7 +761,7 @@ impl Shell {
                 },
                 shows_labels,
                 palette,
-                |this, cx| this.begin_about(cx),
+                |this, _window, cx| this.begin_about(cx),
                 cx,
             ),
         ];

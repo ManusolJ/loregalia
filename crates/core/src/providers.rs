@@ -69,24 +69,51 @@ pub fn source(media_kind: MediaKind) -> Option<Source> {
 }
 
 pub fn search(media_kind: MediaKind, query: &str, relay_url: &str) -> Result<Vec<Candidate>> {
+    search_with_key(media_kind, query, relay_url, None)
+}
+
+pub fn search_with_key(
+    media_kind: MediaKind,
+    query: &str,
+    relay_url: &str,
+    tmdb_token: Option<&str>,
+) -> Result<Vec<Candidate>> {
     match media_kind {
         MediaKind::Show => tvmaze::search(query),
-        MediaKind::Movie => relay::search_movies(relay_url, query),
+        MediaKind::Movie => match tmdb_token {
+            Some(token) => tmdb::search(token, query),
+            None => relay::search_movies(relay_url, query),
+        },
         MediaKind::Book => open_library::search(query),
         MediaKind::Game => Err(Error::UnsupportedLookup),
     }
 }
 
 pub fn details(source: Source, external_id: &str, relay_url: &str) -> Result<Candidate> {
+    details_with_key(source, external_id, relay_url, None)
+}
+
+pub fn details_with_key(
+    source: Source,
+    external_id: &str,
+    relay_url: &str,
+    tmdb_token: Option<&str>,
+) -> Result<Candidate> {
     match source {
-        Source::Tmdb => relay::movie_details(relay_url, external_id),
+        Source::Tmdb => match tmdb_token {
+            Some(token) => tmdb::details(token, external_id),
+            None => relay::movie_details(relay_url, external_id),
+        },
         Source::TvMaze | Source::OpenLibrary | Source::Igdb => Err(Error::UnsupportedLookup),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Source, details, search, source, supported, year_of};
+    use super::{
+        Candidate, Source, details, details_with_key, search, search_with_key, source, supported,
+        year_of,
+    };
     use crate::Error;
     use crate::media::MediaKind;
 
@@ -152,5 +179,65 @@ mod tests {
         assert_eq!(year_of(Some("soon")), None);
         assert_eq!(year_of(Some("")), None);
         assert_eq!(year_of(None), None);
+    }
+
+    fn tmdb_candidate() -> Candidate {
+        Candidate {
+            source: Source::Tmdb,
+            external_id: "438631".to_owned(),
+            title: "Dune".to_owned(),
+            release_year: Some(2021),
+            cover_url: None,
+        }
+    }
+
+    #[test]
+    fn a_movie_search_without_a_key_goes_to_the_relay() {
+        let body = serde_json::to_string(&crate::providers::relay::SearchResponse {
+            results: vec![tmdb_candidate()],
+        })
+        .unwrap();
+        let base = crate::http::test_server::serve("200 OK", body.as_bytes());
+
+        assert_eq!(
+            search_with_key(MediaKind::Movie, "dune", &base, None).unwrap(),
+            vec![tmdb_candidate()]
+        );
+    }
+
+    #[test]
+    fn a_movie_details_without_a_key_goes_to_the_relay() {
+        let body = serde_json::to_string(&tmdb_candidate()).unwrap();
+        let base = crate::http::test_server::serve("200 OK", body.as_bytes());
+
+        assert_eq!(
+            details_with_key(Source::Tmdb, "438631", &base, None).unwrap(),
+            tmdb_candidate()
+        );
+    }
+
+    #[test]
+    fn an_unsupported_kind_with_a_key_never_makes_a_request() {
+        assert!(matches!(
+            search_with_key(
+                MediaKind::Game,
+                "outer wilds",
+                UNREACHABLE_RELAY,
+                Some("token")
+            ),
+            Err(Error::UnsupportedLookup)
+        ));
+    }
+
+    #[test]
+    fn details_with_a_key_are_still_limited_to_tmdb() {
+        assert!(matches!(
+            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, Some("token")),
+            Err(Error::UnsupportedLookup)
+        ));
+        assert!(matches!(
+            details_with_key(Source::Igdb, "42", UNREACHABLE_RELAY, Some("token")),
+            Err(Error::UnsupportedLookup)
+        ));
     }
 }

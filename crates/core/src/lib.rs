@@ -2,6 +2,7 @@ mod error;
 mod http;
 pub mod images;
 pub mod items;
+pub mod keys;
 pub mod library;
 pub mod list_items;
 pub mod lists;

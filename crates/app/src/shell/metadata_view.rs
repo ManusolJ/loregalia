@@ -22,13 +22,25 @@ pub type MetadataDetails = Arc<dyn Fn(Source, String) -> CoreResult<Candidate> +
 
 pub(super) const TMDB_REFRESH_AFTER_DAYS: u64 = 150;
 
-pub(super) fn default_search() -> MetadataSearch {
-    Arc::new(|kind, query| providers::search(kind, query, providers::relay::base_url()))
+pub(super) fn default_search(tmdb_token: Option<String>) -> MetadataSearch {
+    Arc::new(move |kind, query| {
+        providers::search_with_key(
+            kind,
+            query,
+            providers::relay::base_url(),
+            tmdb_token.as_deref(),
+        )
+    })
 }
 
-pub(super) fn default_details() -> MetadataDetails {
-    Arc::new(|source, external_id| {
-        providers::details(source, &external_id, providers::relay::base_url())
+pub(super) fn default_details(tmdb_token: Option<String>) -> MetadataDetails {
+    Arc::new(move |source, external_id| {
+        providers::details_with_key(
+            source,
+            &external_id,
+            providers::relay::base_url(),
+            tmdb_token.as_deref(),
+        )
     })
 }
 
