@@ -118,13 +118,14 @@ impl Shell {
         cx.notify();
     }
 
-    pub(super) fn begin_delete(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn begin_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.selected.clone() else {
             return;
         };
 
         self.close_inline_panels();
         self.confirm_delete = Some(id);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -361,7 +362,7 @@ impl Shell {
                     .danger()
                     .icon(IconName::Trash)
                     .label("Delete")
-                    .on_click(cx.listener(|this, _, _, cx| this.begin_delete(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_delete(window, cx))),
             )
             .into_any_element()
     }

@@ -29,8 +29,7 @@ Prove the painful parts while the app is still small.
       (D-16, D-18)
 - [ ] Human check: install it, start it from the Start menu, and confirm covers and data persist
 - [x] Portable zip whose data stays beside the `.exe` (D-30)
-- [ ] App icon: an original design by the owner, embedded in the `.exe` and the installer. Embedding
-      needs a dependency approval
+- [x] App icon: an original design by the owner, embedded in the `.exe` and the installer
 
 ## 4. Features
 
@@ -46,8 +45,9 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Metadata lookup: provider trait, then each chosen source
 - [x] Relay: build the TMDB and IGDB relay in `crates/relay`; the gate already keeps GPUI and the
       app crate out of it
-- [ ] Metadata lookup for games (IGDB)
-- [ ] Relay: IGDB endpoints
+- [x] Metadata lookup for games (IGDB)
+- [x] Relay: IGDB endpoints
+- [x] Keyboard: Esc closes the innermost panel, Tab reaches item rows, Enter or Space opens them
 - [x] About screen: attribution each source requires
 - [x] Covers: loading, no-image tile, failure
 - [x] Theme setting: Dark, Light, System
@@ -59,7 +59,13 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [ ] Code signing so Windows shows no unknown-publisher warning: SignPath Foundation's free
       certificate for open source, or the Microsoft Store, which is free for individuals and signs
       MSIX packages
-- [ ] Credit TMDB (logo and notice) and Open Library in the About screen
+- [x] Credit every source in the About screen, with a privacy note on what the relay sees
+- [ ] Add TMDB's approved logo next to its notice in About
+- [ ] Store user API keys in Windows Credential Manager instead of `api-keys.json` (needs a
+      dependency approval)
+- [ ] Release workflow: on a version tag, build the installer and portable zip in CI and attach them
+      to a GitHub Release
+- [ ] Put the relay online behind HTTPS, and build releases with `LOREGALIA_RELAY_URL` set to it
 - [ ] No key in the repo or the installer; the project's keys live only on the relay
 - [ ] Human check on Windows: scaling at 100% and 150%, resizing, keyboard navigation
 - [ ] README with the reasons behind each major decision

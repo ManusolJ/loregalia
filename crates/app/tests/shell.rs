@@ -26,6 +26,7 @@ fn open_window(
 ) -> Result<AnyWindowHandle> {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        loregalia_app::shell::bind_keys(cx);
         theme::apply_choice(choice, cx);
         if let Some(client) = client {
             cx.set_http_client(client);
@@ -4369,4 +4370,192 @@ fn removing_keys_clears_the_file(cx: &mut TestAppContext) {
 
     let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
     assert_eq!(keys, keys::ApiKeys::default());
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_detail_panel_and_enter_reopens_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
+        assert!(window.find("detail-panel").visible());
+        assert_eq!(
+            window.find(format!("item-row-{}", item.id)).focused(),
+            Some(true)
+        );
+
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-panel").is_none());
+
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Dune"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn escape_closes_an_inline_panel_before_the_detail_panel(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
+        window.click(format!("item-tags-{}", item.id), cx);
+        window.render_frame(cx);
+        assert!(window.find("tag-picker").visible());
+
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("tag-picker").is_none());
+        assert!(window.find("detail-panel").visible());
+
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-panel").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn escape_cancels_the_item_editor_while_typing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+        assert_eq!(window.find("item-title-input").focused(), Some(true));
+    })
+    .unwrap();
+    cx.simulate_input(handle, "Dune");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("item-editor").is_none());
+        assert!(window.find("empty-state").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn escape_cancels_a_delete_confirmation(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
+        window.click(format!("item-delete-{}", item.id), cx);
+        window.render_frame(cx);
+        assert!(window.find("item-delete-confirmation").visible());
+
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("item-delete-confirmation").is_none());
+        assert!(window.find(format!("item-row-{}", item.id)).visible());
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        items::all(&Database::open(&path).unwrap()).unwrap().len(),
+        1
+    );
+}
+
+#[gpui_kit::test]
+fn tab_reaches_an_item_row_and_enter_opens_it(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let row = format!("item-row-{}", item.id);
+        let mut presses = 0;
+        while window.find(row.clone()).focused() != Some(true) && presses < 40 {
+            window.press("tab", cx);
+            presses += 1;
+        }
+
+        assert_eq!(window.find(row.clone()).focused(), Some(true));
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Piranesi"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn about_credits_every_source_and_explains_privacy(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("about-button", cx);
+        window.render_frame(cx);
+
+        for credit in [
+            "about-tvmaze",
+            "about-tmdb",
+            "about-openlibrary",
+            "about-igdb",
+        ] {
+            assert!(window.find(credit).visible(), "{credit} is missing");
+        }
+        let privacy = window.find("about-privacy");
+        assert!(privacy.visible());
+        assert_eq!(privacy.role(), Some(Role::Region));
+        assert_eq!(privacy.label(), Some("Privacy"));
+    })
+    .unwrap();
 }

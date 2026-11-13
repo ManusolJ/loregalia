@@ -366,8 +366,8 @@ impl Shell {
                     .danger()
                     .icon(IconName::Trash)
                     .label("Delete")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.begin_delete_item(delete_id.clone(), cx)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.begin_delete_item(delete_id.clone(), window, cx)
                     })),
             )
             .into_any_element()

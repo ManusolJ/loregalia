@@ -8,6 +8,7 @@ mod settings_view;
 mod tags_view;
 mod widgets;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 
@@ -18,8 +19,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, FontWeight, Pixels, Role, TestSupportExt, Window, div,
-    px, rgb,
+    AnyElement, App, AppContext, Context, Entity, FocusHandle, FontWeight, KeyBinding, Pixels,
+    Role, TestSupportExt, Window, actions, div, px, rgb,
 };
 use loregalia_core::library::{self, Shelf};
 use loregalia_core::{
@@ -66,7 +67,22 @@ enum Screen {
     Settings,
 }
 
+actions!(shell, [Dismiss, Activate]);
+
+const SHELL_CONTEXT: &str = "Shell";
+const ITEM_ROW_CONTEXT: &str = "ItemRow";
+
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("escape", Dismiss, Some(SHELL_CONTEXT)),
+        KeyBinding::new("enter", Activate, Some(ITEM_ROW_CONTEXT)),
+        KeyBinding::new("space", Activate, Some(ITEM_ROW_CONTEXT)),
+    ]);
+}
+
 pub struct Shell {
+    focus_handle: FocusHandle,
+    row_focus: HashMap<String, FocusHandle>,
     storage: StorageState,
     log_path: Option<PathBuf>,
     metadata_search: MetadataSearch,
@@ -194,6 +210,8 @@ impl Shell {
     ) -> Self {
         let loading = matches!(&storage, StorageState::Ready(_));
         let mut shell = Self {
+            focus_handle: cx.focus_handle(),
+            row_focus: HashMap::new(),
             storage,
             log_path,
             metadata_search,
@@ -240,6 +258,53 @@ impl Shell {
         self.selected = None;
         self.detail = None;
         self.close_editors();
+    }
+
+    fn has_inline_panel(&self) -> bool {
+        self.add_picker.is_some()
+            || self.tag_editor.is_some()
+            || self.renaming_tag.is_some()
+            || self.confirm_delete_tag.is_some()
+            || self.season_editor.is_some()
+            || self.season_status_picker.is_some()
+            || self.confirm_delete_season.is_some()
+    }
+
+    fn has_editor(&self) -> bool {
+        self.editor.is_some()
+            || self.confirm_delete.is_some()
+            || self.item_editor.is_some()
+            || self.confirm_delete_item.is_some()
+    }
+
+    fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_inline_panel() {
+            self.close_inline_panels();
+            self.focus_handle.focus(window, cx);
+        } else if self.has_editor() {
+            self.close_editors();
+            self.focus_handle.focus(window, cx);
+        } else if self.detail.is_some() {
+            self.detail = None;
+        } else {
+            cx.propagate();
+            return;
+        }
+        cx.notify();
+    }
+
+    fn sync_row_focus(&mut self, cx: &mut Context<Self>) {
+        let items = &self.items;
+        self.row_focus
+            .retain(|id, _| items.iter().any(|item| &item.id == id));
+        for item in &self.items {
+            if !self.row_focus.contains_key(&item.id) {
+                self.row_focus.insert(
+                    item.id.clone(),
+                    cx.focus_handle().tab_index(0).tab_stop(true),
+                );
+            }
+        }
     }
 
     fn show_shelf(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
@@ -860,6 +925,10 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_row_focus(cx);
+        if window.focused(cx).is_none() {
+            self.focus_handle.focus(window, cx);
+        }
         let palette = *cx.global::<Palette>();
         let window_width = window.viewport_size().width;
         let width = sidebar_width(window_width);
@@ -877,6 +946,10 @@ impl Render for Shell {
             .map(|item| self.detail_element(item, docked, &palette, cx));
 
         div()
+            .id("shell")
+            .key_context(SHELL_CONTEXT)
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::dismiss))
             .relative()
             .size_full()
             .flex()
