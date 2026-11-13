@@ -20,6 +20,7 @@ pub enum Error {
     RateLimited,
     HttpStatus { code: u16 },
     Json(serde_json::Error),
+    SecretStore(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -67,6 +68,7 @@ impl std::fmt::Display for Error {
                 write!(formatter, "the metadata server returned HTTP {code}")
             }
             Self::Json(error) => write!(formatter, "invalid response: {error}"),
+            Self::SecretStore(reason) => write!(formatter, "key storage error: {reason}"),
         }
     }
 }
@@ -93,7 +95,8 @@ impl std::error::Error for Error {
             | Self::InvalidSeasonNumber
             | Self::ConnectionFailed
             | Self::RateLimited
-            | Self::HttpStatus { .. } => None,
+            | Self::HttpStatus { .. }
+            | Self::SecretStore(_) => None,
         }
     }
 }

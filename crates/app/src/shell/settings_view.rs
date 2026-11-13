@@ -75,19 +75,9 @@ impl Shell {
     }
 
     fn persist_keys(&mut self, keys: keys::ApiKeys, cx: &mut Context<Self>) {
-        let StorageState::Ready(path) = self.storage.clone() else {
-            self.settings_error = Some("Keys need a working data folder.".to_owned());
-            cx.notify();
-            return;
-        };
-        let Some(keys_path) = keys::file_for_database(&path) else {
-            self.settings_error = Some("Could not locate the keys file.".to_owned());
-            cx.notify();
-            return;
-        };
-
         let saved = keys.clone();
-        let task = cx.background_spawn(async move { keys.save(&keys_path) });
+        let secrets = self.secrets.clone();
+        let task = cx.background_spawn(async move { keys.save(secrets.as_ref()) });
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -137,7 +127,8 @@ impl Shell {
                     .child(
                         "Enter your own keys to call each source directly and skip the Loregalia \
                          service. IGDB needs both a client ID and a secret. Leave fields empty to \
-                         use the service.",
+                         use the service. Keys are kept in Windows Credential Manager, not in a \
+                         file.",
                     ),
             );
 

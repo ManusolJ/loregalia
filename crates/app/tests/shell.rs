@@ -52,8 +52,32 @@ fn open_shell(
     log_path: Option<PathBuf>,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, settings::Theme::Dark, None, |cx| {
-        Shell::new(storage, log_path, settings::Theme::Dark, cx)
+        Shell::new(
+            storage,
+            log_path,
+            settings::Theme::Dark,
+            memory_secrets(),
+            cx,
+        )
     })
+}
+
+fn memory_secrets() -> Arc<dyn keys::SecretStore> {
+    Arc::new(keys::MemoryStore::default())
+}
+
+fn open_shell_with_secrets(
+    cx: &mut TestAppContext,
+    storage: StorageState,
+    secrets: Arc<dyn keys::SecretStore>,
+) -> Result<AnyWindowHandle> {
+    open_window(
+        cx,
+        size(px(1280.0), px(800.0)),
+        settings::Theme::Dark,
+        None,
+        |cx| Shell::new(storage, None, settings::Theme::Dark, secrets, cx),
+    )
 }
 
 fn open_shell_with_search(
@@ -75,7 +99,7 @@ fn open_shell_with_theme(
     choice: settings::Theme,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, choice, None, |cx| {
-        Shell::new(storage, None, choice, cx)
+        Shell::new(storage, None, choice, memory_secrets(), cx)
     })
 }
 
@@ -98,7 +122,7 @@ fn open_shell_with_http(
     client: Arc<dyn HttpClient>,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, settings::Theme::Dark, Some(client), |cx| {
-        Shell::new(storage, None, settings::Theme::Dark, cx)
+        Shell::new(storage, None, settings::Theme::Dark, memory_secrets(), cx)
     })
 }
 
@@ -4283,16 +4307,12 @@ fn clicking_a_row_selects_it_for_the_detail_panel(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn saving_keys_writes_them_beside_the_database(cx: &mut TestAppContext) {
+fn saving_keys_puts_them_in_the_key_store_and_not_in_a_file(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
-    let handle = open_shell(
-        cx,
-        size(px(1280.0), px(800.0)),
-        StorageState::Ready(path.clone()),
-        None,
-    )
-    .unwrap();
+    let secrets = Arc::new(keys::MemoryStore::default());
+    let handle =
+        open_shell_with_secrets(cx, StorageState::Ready(path.clone()), secrets.clone()).unwrap();
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
@@ -4325,34 +4345,30 @@ fn saving_keys_writes_them_beside_the_database(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
 
-    let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
+    let keys = keys::ApiKeys::load(secrets.as_ref()).unwrap();
     assert_eq!(keys.tmdb_token.as_deref(), Some("my-token"));
     assert_eq!(keys.igdb_client_id.as_deref(), Some("client-id"));
     assert_eq!(keys.igdb_client_secret.as_deref(), Some("client-secret"));
+    assert!(!temporary.path().join(keys::FILE_NAME).exists());
 
     let database = Database::open(&path).unwrap();
     assert_eq!(settings::get(&database, "tmdb_token").unwrap(), None);
 }
 
 #[gpui_kit::test]
-fn removing_keys_clears_the_file(cx: &mut TestAppContext) {
+fn removing_keys_clears_the_key_store(cx: &mut TestAppContext) {
     let temporary = TempDir::new().unwrap();
     let path = temporary.path().join("loregalia.db");
+    let secrets = Arc::new(keys::MemoryStore::default());
     keys::ApiKeys {
         tmdb_token: Some("secret".to_owned()),
         igdb_client_id: Some("id".to_owned()),
         igdb_client_secret: Some("secret".to_owned()),
     }
-    .save(&temporary.path().join("api-keys.json"))
+    .save(secrets.as_ref())
     .unwrap();
 
-    let handle = open_shell(
-        cx,
-        size(px(1280.0), px(800.0)),
-        StorageState::Ready(path),
-        None,
-    )
-    .unwrap();
+    let handle = open_shell_with_secrets(cx, StorageState::Ready(path), secrets.clone()).unwrap();
     cx.run_until_parked();
 
     cx.update_window(handle, |_, window, cx| {
@@ -4368,7 +4384,7 @@ fn removing_keys_clears_the_file(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
 
-    let keys = keys::ApiKeys::load(&temporary.path().join("api-keys.json")).unwrap();
+    let keys = keys::ApiKeys::load(secrets.as_ref()).unwrap();
     assert_eq!(keys, keys::ApiKeys::default());
 }
 

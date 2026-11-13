@@ -13,6 +13,7 @@ publish = false
 [workspace.dependencies]
 axum = "0.8"
 gpui-kit = "=0.9.0"
+keyring-core = "1"
 loregalia-core = { path = "crates/core" }
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +22,7 @@ tempfile = "3"
 tokio = "1"
 ureq = "3.5"
 uuid = { version = "1", features = ["v7"] }
+windows-native-keyring-store = { version = "1.1", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

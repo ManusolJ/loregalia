@@ -43,6 +43,7 @@ one, move it to Decided, with the date.
 | D-21 | Open Library's User-Agent names the app and its repo, with no email      | The limit is per IP address, so 1 request per second per user is enough for a search that waits for typing to stop | 2026-11-07 |
 | D-29 | The data folder is `%APPDATA%\loregalia`; an old `com.manu.loregalia` folder is renamed at startup | A clean path the owner can find, without losing anyone's library | 2026-11-11 |
 | D-30 | An optional portable zip keeps its data beside the `.exe`, marked by a `portable` file | Runs from a USB stick or a synced folder, with no installer | 2026-11-11 |
+| D-32 | User API keys live in Windows Credential Manager, through `keyring-core` and `windows-native-keyring-store`; an old `api-keys.json` is moved in at startup | Keys are secrets, and a plain-text file beside the library is easy to copy or sync by accident | 2026-11-13 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 

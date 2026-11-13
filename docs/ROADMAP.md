@@ -60,9 +60,8 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
       certificate for open source, or the Microsoft Store, which is free for individuals and signs
       MSIX packages
 - [x] Credit every source in the About screen, with a privacy note on what the relay sees
-- [ ] Add TMDB's approved logo next to its notice in About
-- [ ] Store user API keys in Windows Credential Manager instead of `api-keys.json` (needs a
-      dependency approval)
+- [x] Add TMDB's approved logo next to its notice in About
+- [x] Store user API keys in Windows Credential Manager instead of `api-keys.json`
 - [ ] Release workflow: on a version tag, build the installer and portable zip in CI and attach them
       to a GitHub Release
 - [ ] Put the relay online behind HTTPS, and build releases with `LOREGALIA_RELAY_URL` set to it
