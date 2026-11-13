@@ -125,7 +125,7 @@ release with both files and their checksums. Read it over on GitHub, then publis
 crates/app    GPUI views, theme and window
 crates/core   Domain logic, storage and metadata providers, with no UI dependency
 crates/relay  The metadata relay server that holds the TMDB and IGDB keys
-deploy/relay  Docker and Caddy files to run the relay behind HTTPS
+deploy/relay  Docker files to run the relay behind a Cloudflare Tunnel
 xtask         The gate and project rules
 docs/         Product, architecture, design, decisions and roadmap
 scripts/      Linux and sandbox setup
