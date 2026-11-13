@@ -98,7 +98,7 @@ fn open_at_with_theme(path: PathBuf) -> (StorageState, Theme) {
             (StorageState::Ready(path), theme)
         }
         Err(error) => (
-            StorageState::Failed(format!("Could not open the database: {error}")),
+            StorageState::Failed(storage::open_failure_message(&error, &path)),
             Theme::Dark,
         ),
     }
@@ -197,6 +197,27 @@ mod tests {
         assert!(message.starts_with("Could not open the database:"));
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
+
+    #[test]
+    fn a_newer_database_asks_for_the_latest_version() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("loregalia.db");
+        drop(Database::open(&path).unwrap());
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[SQLITE_USER_VERSION_OFFSET..SQLITE_USER_VERSION_OFFSET + 4]
+            .copy_from_slice(&999u32.to_be_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+
+        let message = match open_at(path.clone()) {
+            StorageState::Failed(message) => message,
+            StorageState::Ready(path) => format!("unexpected ready state at {}", path.display()),
+        };
+
+        assert!(message.contains("newer version of Loregalia"));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    const SQLITE_USER_VERSION_OFFSET: usize = 60;
 
     #[test]
     fn startup_logs_the_version_and_database_path() {

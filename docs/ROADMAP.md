@@ -54,7 +54,7 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 
 ## 5. Release readiness
 
-- [ ] Failure paths: no network, bad key, missing database, older database
+- [x] Failure paths: no network, bad key, missing database, older database
 - [ ] Recheck each source's terms before release
 - [ ] Code signing so Windows shows no unknown-publisher warning: SignPath Foundation's free
       certificate for open source, or the Microsoft Store, which is free for individuals and signs

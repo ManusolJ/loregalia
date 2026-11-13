@@ -69,6 +69,75 @@ pub fn source(media_kind: MediaKind) -> Option<Source> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Route {
+    Direct,
+    OwnKey,
+    Relay,
+}
+
+pub fn route(
+    media_kind: MediaKind,
+    tmdb_token: Option<&str>,
+    igdb_credentials: Option<(&str, &str)>,
+) -> Route {
+    match media_kind {
+        MediaKind::Show | MediaKind::Book => Route::Direct,
+        MediaKind::Movie if tmdb_token.is_some() => Route::OwnKey,
+        MediaKind::Game if igdb_credentials.is_some() => Route::OwnKey,
+        MediaKind::Movie | MediaKind::Game => Route::Relay,
+    }
+}
+
+const SERVICE_NAME: &str = "the Loregalia service";
+
+pub fn failure_message(error: &Error, source: Source, route: Route) -> String {
+    let name = source.label();
+    let target = match route {
+        Route::Direct | Route::OwnKey => name,
+        Route::Relay => SERVICE_NAME,
+    };
+    let message = match (error, route) {
+        (Error::Unauthorized, Route::OwnKey) => format!(
+            "{name} rejected your API key. Check it in Settings, or remove it to search through \
+             {SERVICE_NAME}."
+        ),
+        (Error::Unauthorized, Route::Relay) => format!(
+            "{SERVICE_NAME} could not sign in to {name}. Try again later, or add your own {name} \
+             key in Settings."
+        ),
+        (Error::Unauthorized, Route::Direct) => {
+            format!("{name} refused the search. Try again later.")
+        }
+        (Error::RelayUnavailable, _) => format!(
+            "{SERVICE_NAME} is unavailable right now. Try again later, or add your own {name} key \
+             in Settings."
+        ),
+        (Error::ConnectionFailed, _) => {
+            format!("Could not connect to {target}. Check your internet connection and try again.")
+        }
+        (Error::RateLimited, _) => {
+            format!("{target} is rate limiting searches. Wait a minute and try again.")
+        }
+        (Error::HttpStatus { code }, _) => {
+            format!("{target} returned an error (HTTP {code}). Try again later.")
+        }
+        (Error::Json(_), _) => {
+            format!("{target} sent a reply Loregalia could not read. Try again later.")
+        }
+        (other, _) => other.to_string(),
+    };
+    capitalized(&message)
+}
+
+fn capitalized(text: &str) -> String {
+    let mut characters = text.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().chain(characters).collect(),
+        None => String::new(),
+    }
+}
+
 pub fn search_with_key(
     media_kind: MediaKind,
     query: &str,
@@ -118,11 +187,107 @@ pub fn details_with_key(
 
 #[cfg(test)]
 mod tests {
-    use super::{Candidate, Source, details_with_key, search_with_key, source, supported, year_of};
+    use super::{
+        Candidate, Route, Source, details_with_key, failure_message, route, search_with_key,
+        source, supported, year_of,
+    };
     use crate::Error;
     use crate::media::MediaKind;
 
     const UNREACHABLE_RELAY: &str = "http://127.0.0.1:1";
+
+    #[test]
+    fn shows_and_books_always_go_direct() {
+        for kind in [MediaKind::Show, MediaKind::Book] {
+            assert_eq!(
+                route(kind, Some("token"), Some(("id", "secret"))),
+                Route::Direct
+            );
+            assert_eq!(route(kind, None, None), Route::Direct);
+        }
+    }
+
+    #[test]
+    fn movies_and_games_use_the_relay_unless_the_user_has_a_key() {
+        assert_eq!(route(MediaKind::Movie, None, None), Route::Relay);
+        assert_eq!(route(MediaKind::Movie, Some("token"), None), Route::OwnKey);
+        assert_eq!(route(MediaKind::Game, Some("token"), None), Route::Relay);
+        assert_eq!(
+            route(MediaKind::Game, None, Some(("id", "secret"))),
+            Route::OwnKey
+        );
+    }
+
+    #[test]
+    fn a_rejected_own_key_points_to_settings() {
+        let message = failure_message(&Error::Unauthorized, Source::Tmdb, Route::OwnKey);
+
+        assert!(message.starts_with("TMDB rejected your API key."));
+        assert!(message.contains("Settings"));
+    }
+
+    #[test]
+    fn a_relay_that_cannot_sign_in_is_not_blamed_on_the_user() {
+        let message = failure_message(&Error::Unauthorized, Source::Igdb, Route::Relay);
+
+        assert!(message.starts_with("The Loregalia service could not sign in to IGDB."));
+        assert!(!message.contains("your API key"));
+    }
+
+    #[test]
+    fn no_network_names_what_could_not_be_reached() {
+        assert_eq!(
+            failure_message(&Error::ConnectionFailed, Source::TvMaze, Route::Direct),
+            "Could not connect to TVmaze. Check your internet connection and try again."
+        );
+        assert_eq!(
+            failure_message(&Error::ConnectionFailed, Source::Tmdb, Route::Relay),
+            "Could not connect to the Loregalia service. Check your internet connection and try \
+             again."
+        );
+    }
+
+    #[test]
+    fn a_down_relay_suggests_an_own_key() {
+        let message = failure_message(&Error::RelayUnavailable, Source::Tmdb, Route::Relay);
+
+        assert!(message.starts_with("The Loregalia service is unavailable right now."));
+        assert!(message.contains("your own TMDB key"));
+    }
+
+    #[test]
+    fn rate_limits_and_server_errors_say_to_try_later() {
+        assert_eq!(
+            failure_message(&Error::RateLimited, Source::Tmdb, Route::Relay),
+            "The Loregalia service is rate limiting searches. Wait a minute and try again."
+        );
+        assert_eq!(
+            failure_message(
+                &Error::HttpStatus { code: 500 },
+                Source::OpenLibrary,
+                Route::Direct
+            ),
+            "Open Library returned an error (HTTP 500). Try again later."
+        );
+    }
+
+    #[test]
+    fn an_unreadable_reply_is_not_shown_as_raw_json_errors() {
+        let error = Error::Json(serde_json::from_str::<u8>("{").unwrap_err());
+
+        assert_eq!(
+            failure_message(&error, Source::TvMaze, Route::Direct),
+            "TVmaze sent a reply Loregalia could not read. Try again later."
+        );
+    }
+
+    #[test]
+    fn other_errors_keep_their_description_with_a_capital_letter() {
+        assert_eq!(
+            failure_message(&Error::UnsupportedLookup, Source::TvMaze, Route::Direct),
+            "No metadata source is available for this media kind yet"
+        );
+    }
 
     #[test]
     fn every_source_round_trips_through_its_key() {
