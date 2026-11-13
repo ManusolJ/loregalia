@@ -170,6 +170,11 @@ impl Shell {
         let kind = editor.kind;
         editor.search = SearchStatus::Searching;
         let search = self.metadata_search.clone();
+        let route = providers::route(
+            kind,
+            self.api_keys.tmdb_token(),
+            self.api_keys.igdb_credentials(),
+        );
         cx.notify();
 
         let task = cx.background_spawn(async move { search(kind, &query) });
@@ -189,9 +194,12 @@ impl Shell {
                     Ok(results) if results.is_empty() => SearchStatus::Empty,
                     Ok(results) => SearchStatus::Results(results),
                     Err(error) => {
-                        let message = error.to_string();
-                        failure = Some(message.clone());
-                        SearchStatus::Failed(message)
+                        let shown = match providers::source(kind) {
+                            Some(source) => providers::failure_message(&error, source, route),
+                            None => error.to_string(),
+                        };
+                        failure = Some(error.to_string());
+                        SearchStatus::Failed(shown)
                     }
                 };
 

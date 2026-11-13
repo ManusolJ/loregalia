@@ -1,5 +1,5 @@
 use crate::{Error, Result};
-use rusqlite::{Connection, Params, Row, types::Type};
+use rusqlite::{Connection, ErrorCode, Params, Row, types::Type};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -219,6 +219,35 @@ pub fn database_in(directory: &Path) -> PathBuf {
     directory.join(DATABASE_FILE)
 }
 
+pub fn open_failure_message(error: &Error, path: &Path) -> String {
+    let unchanged = format!("The file was not changed: {}", path.display());
+    let reason = match error {
+        Error::SchemaTooNew { .. } => format!(
+            "it was saved by a newer version of Loregalia. Install the latest version to open \
+             it. {unchanged}"
+        ),
+        Error::Sqlite(sqlite) => match sqlite.sqlite_error_code() {
+            Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt) => format!(
+                "the file is damaged or is not a Loregalia library. Restore it from a backup, or \
+                 move it away to start a new library. {unchanged}"
+            ),
+            Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => format!(
+                "another program is using it. Close that program and start Loregalia again. \
+                 {unchanged}"
+            ),
+            Some(ErrorCode::ReadOnly | ErrorCode::CannotOpen | ErrorCode::PermissionDenied) => {
+                format!("Loregalia is not allowed to write to it. {unchanged}")
+            }
+            Some(ErrorCode::DiskFull) => {
+                format!("the disk is full. Free some space and start Loregalia again. {unchanged}")
+            }
+            _ => error.to_string(),
+        },
+        other => other.to_string(),
+    };
+    format!("Could not open the database: {reason}")
+}
+
 fn non_empty(value: Option<OsString>) -> Option<PathBuf> {
     value.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
@@ -310,8 +339,53 @@ mod tests {
     use super::{
         APP_FOLDER, DATABASE_FILE, Database, LEGACY_APP_FOLDER, MIGRATIONS, PORTABLE_MARKER,
         adopt_legacy_directory, data_directory, database_in, keyed_column, latest_version,
-        legacy_data_directory, portable_data_directory,
+        legacy_data_directory, open_failure_message, portable_data_directory,
     };
+
+    fn failure_opening(path: &std::path::Path) -> Option<String> {
+        Database::open(path)
+            .err()
+            .map(|error| open_failure_message(&error, path))
+    }
+
+    #[test]
+    fn a_newer_database_asks_for_the_latest_version_and_names_the_file() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join(DATABASE_FILE);
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA user_version = 999;")
+            .unwrap();
+
+        let message = failure_opening(&path).unwrap();
+
+        assert!(message.starts_with("Could not open the database:"));
+        assert!(message.contains("newer version of Loregalia"));
+        assert!(message.contains(&path.display().to_string()));
+    }
+
+    #[test]
+    fn a_damaged_database_says_so_instead_of_a_sqlite_error() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join(DATABASE_FILE);
+        std::fs::write(&path, b"this is not a database at all, just some text").unwrap();
+
+        let message = failure_opening(&path).unwrap();
+
+        assert!(message.starts_with("Could not open the database:"));
+        assert!(message.contains("damaged or is not a Loregalia library"));
+        assert!(message.contains("was not changed"));
+    }
+
+    #[test]
+    fn other_open_failures_keep_their_description() {
+        let error = Error::Io(std::io::Error::other("disk unplugged"));
+
+        assert_eq!(
+            open_failure_message(&error, std::path::Path::new("loregalia.db")),
+            "Could not open the database: storage i/o error: disk unplugged"
+        );
+    }
 
     #[test]
     fn the_data_folder_is_named_loregalia() {

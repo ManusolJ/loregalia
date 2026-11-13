@@ -1334,10 +1334,9 @@ fn a_failed_show_search_is_shown_as_an_alert(cx: &mut TestAppContext) {
         let failed = window.find("metadata-search-failed");
         assert!(failed.visible());
         assert_eq!(failed.role(), Some(Role::Alert));
-        assert!(
-            failed
-                .label()
-                .is_some_and(|label| label.contains("could not connect"))
+        assert_eq!(
+            failed.label(),
+            Some("Could not connect to TVmaze. Check your internet connection and try again.")
         );
         assert!(window.try_find("metadata-search-empty").is_none());
     })
@@ -1392,6 +1391,52 @@ fn a_rate_limited_search_names_the_rate_limit(cx: &mut TestAppContext) {
                 .label()
                 .is_some_and(|label| label.contains("rate limiting"))
         );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_rejected_relay_search_does_not_blame_the_users_key(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: MetadataSearch = Arc::new(|_, _| Err(Error::Unauthorized));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("item-kind-movie", cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dune");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-metadata", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+
+        let failed = window.find("metadata-search-failed");
+        assert!(failed.visible());
+        assert_eq!(failed.role(), Some(Role::Alert));
+        assert!(failed.label().is_some_and(|label| {
+            label.starts_with("The Loregalia service could not sign in to TMDB.")
+        }));
     })
     .unwrap();
 }
