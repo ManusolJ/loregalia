@@ -322,7 +322,15 @@ fn capture(shot: &Shot, path: &Path) -> Result<()> {
             Theme::Light
         };
         gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| Shell::new(shot.storage.clone(), None, choice, cx))
+            cx.new(|cx| {
+                Shell::new(
+                    shot.storage.clone(),
+                    None,
+                    choice,
+                    std::sync::Arc::new(loregalia_core::keys::MemoryStore::default()),
+                    cx,
+                )
+            })
         })
     })?;
 

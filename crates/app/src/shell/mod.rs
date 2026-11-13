@@ -11,6 +11,7 @@ mod widgets;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -91,6 +92,7 @@ pub struct Shell {
     theme: settings::Theme,
     settings_error: Option<String>,
     api_keys: keys::ApiKeys,
+    secrets: Arc<dyn keys::SecretStore>,
     key_inputs: Option<KeyInputs>,
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
@@ -145,16 +147,6 @@ fn load(database: &Database) -> CoreResult<Snapshot> {
     })
 }
 
-fn load_keys(storage: &StorageState) -> keys::ApiKeys {
-    let StorageState::Ready(path) = storage else {
-        return keys::ApiKeys::default();
-    };
-    let Some(path) = keys::file_for_database(path) else {
-        return keys::ApiKeys::default();
-    };
-    keys::ApiKeys::load(&path).unwrap_or_default()
-}
-
 struct NavRow {
     id: String,
     icon: IconName,
@@ -168,9 +160,10 @@ impl Shell {
         storage: StorageState,
         log_path: Option<PathBuf>,
         theme: settings::Theme,
+        secrets: Arc<dyn keys::SecretStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let api_keys = load_keys(&storage);
+        let api_keys = keys::ApiKeys::load(secrets.as_ref()).unwrap_or_default();
         let mut shell = Self::new_with_services(
             storage,
             log_path,
@@ -180,6 +173,7 @@ impl Shell {
             cx,
         );
         shell.api_keys = api_keys;
+        shell.secrets = secrets;
         shell
     }
 
@@ -220,6 +214,7 @@ impl Shell {
             theme,
             settings_error: None,
             api_keys: keys::ApiKeys::default(),
+            secrets: Arc::new(keys::MemoryStore::default()),
             key_inputs: None,
             lists: Vec::new(),
             items: Vec::new(),

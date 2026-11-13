@@ -1,11 +1,14 @@
 use loregalia_core::{
-    Database, Result as CoreResult, log,
+    Database, Result as CoreResult,
+    keys::{self, SecretStore, UnavailableStore},
+    log,
     settings::{self, Theme},
     storage,
 };
 use std::any::Any;
 use std::fmt::Display;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageState {
@@ -31,6 +34,23 @@ pub fn prepare() -> Startup {
     }
 
     startup
+}
+
+pub fn open_secrets(storage: &StorageState, log_path: &Option<PathBuf>) -> Arc<dyn SecretStore> {
+    let directory = match storage {
+        StorageState::Ready(path) => path.parent(),
+        StorageState::Failed(_) => None,
+    };
+    let Some(directory) = directory else {
+        return Arc::new(UnavailableStore::new(
+            "keys need a working data folder".to_owned(),
+        ));
+    };
+    let opened = keys::open_store(directory);
+    if let Some(note) = opened.note {
+        record(log_path, &format!("API keys: {note}"));
+    }
+    opened.store
 }
 
 fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {

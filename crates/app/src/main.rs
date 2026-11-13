@@ -5,7 +5,7 @@ use gpui_kit::assets::AllAssets;
 use loregalia_app::shell::Shell;
 use loregalia_app::single_instance::{self, Instance};
 use loregalia_app::startup::{
-    Startup, StorageState, install_panic_hook, prepare, record, window_open_failure,
+    Startup, StorageState, install_panic_hook, open_secrets, prepare, record, window_open_failure,
 };
 
 fn main() {
@@ -22,6 +22,7 @@ fn main() {
     if let StorageState::Failed(message) = &storage {
         eprintln!("{message}");
     }
+    let secrets = open_secrets(&storage, &log_path);
     let listener = match instance {
         Ok(Instance::Primary(listener)) => Some(listener),
         Ok(Instance::Secondary) => None,
@@ -51,7 +52,7 @@ fn main() {
 
             let options = loregalia_app::window_options(cx);
             match gpui_kit::open_window(options, cx, |_, cx| {
-                cx.new(|cx| Shell::new(storage, log_path, theme, cx))
+                cx.new(|cx| Shell::new(storage, log_path, theme, secrets, cx))
             }) {
                 Ok((window, _)) => {
                     if let Some(listener) = listener {
