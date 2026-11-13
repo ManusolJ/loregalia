@@ -18,6 +18,7 @@ const APP_TITLE: &str = "Loregalia";
 
 pub fn init(cx: &mut App, theme: Theme) {
     gpui_kit::init(cx);
+    shell::bind_keys(cx);
     theme::apply_choice(theme, cx);
     cx.set_http_client(Arc::new(http::ImageHttpClient::new(
         cx.background_executor().clone(),

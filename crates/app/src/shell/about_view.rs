@@ -6,6 +6,19 @@ use super::{Screen, Shell};
 use crate::startup::StorageState;
 use crate::theme::Palette;
 
+pub(super) const PRIVACY_NOTES: [&str; 4] = [
+    "Your lists, items, tags and statuses stay in a file on this computer. Loregalia has no \
+     account and sends none of it anywhere.",
+    "Show and book searches go straight from this computer to TVmaze and Open Library, and covers \
+     load from their image servers, so those services see your IP address.",
+    "Movie and game searches go through the Loregalia server, which holds the API keys. It keeps \
+     search results for up to a day so repeated searches are fast, with nothing that says who \
+     searched, and it holds your IP address in memory only to limit how often one computer can \
+     search. It keeps no log of requests.",
+    "If you enter your own TMDB or IGDB keys in Settings, those searches skip the Loregalia server \
+     and go straight to TMDB and IGDB.",
+];
+
 impl Shell {
     pub(super) fn begin_about(&mut self, cx: &mut Context<Self>) {
         self.show(Screen::About);
@@ -57,7 +70,7 @@ impl Shell {
                             .text_color(rgb(palette.content))
                             .child(
                                 "A local-first planner for what to watch, read and play next. \
-                                 Your data stays on this computer; there is no account and no server.",
+                                 Your library stays on this computer, and there is no account.",
                             ),
                     ),
             )
@@ -153,7 +166,54 @@ impl Shell {
                                     ),
                             )
                             .child("."),
+                    )
+                    .child(
+                        div()
+                            .id("about-igdb")
+                            .test_support()
+                            .aria_label("Game metadata from IGDB")
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1()
+                            .text_base()
+                            .text_color(rgb(palette.content))
+                            .child("Game metadata and covers from")
+                            .child(
+                                div()
+                                    .id("igdb-link")
+                                    .test_support()
+                                    .child(
+                                        Link::new("igdb-anchor")
+                                            .href("https://www.igdb.com/")
+                                            .child("IGDB"),
+                                    ),
+                            )
+                            .child("."),
                     ),
+            )
+            .child(
+                div()
+                    .id("about-privacy")
+                    .role(Role::Region)
+                    .test_support()
+                    .aria_label("Privacy")
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .max_w(px(560.0))
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Privacy"),
+                    )
+                    .children(PRIVACY_NOTES.map(|note| {
+                        div()
+                            .text_base()
+                            .text_color(rgb(palette.content))
+                            .child(note)
+                    })),
             )
             .child(
                 div()

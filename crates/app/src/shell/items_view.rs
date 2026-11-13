@@ -10,7 +10,7 @@ use loregalia_core::{Database, items, list_items, media::MediaKind, providers};
 
 use super::metadata_view::SearchStatus;
 use super::widgets::{Confirmation, Cover, ROW_COVER_WIDTH, TILE_COVER_WIDTH};
-use super::{Screen, Shell, load};
+use super::{Activate, ITEM_ROW_CONTEXT, Screen, Shell, load};
 use crate::startup::StorageState;
 use crate::theme::{HOVER_ALPHA, Palette, SELECTED_ALPHA};
 
@@ -189,10 +189,16 @@ impl Shell {
         cx.notify();
     }
 
-    pub(super) fn begin_delete_item(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn begin_delete_item(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.close_editors();
         self.detail = None;
         self.confirm_delete_item = Some(id);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -380,12 +386,23 @@ impl Shell {
             .role(Role::ListItem)
             .test_support()
             .aria_label(item.title.clone())
+            .when_some(self.row_focus.get(&item.id), |row, handle| {
+                row.track_focus(handle).tab_index(0)
+            })
+            .key_context(ITEM_ROW_CONTEXT)
+            .on_action(cx.listener({
+                let id = item.id.clone();
+                move |this, _: &Activate, _, cx| this.open_detail(id.clone(), cx)
+            }))
             .flex()
             .items_center()
             .gap_3()
             .px_2()
             .py_2()
             .rounded(px(10.0))
+            .border_2()
+            .border_color(rgb(palette.accent).alpha(0.0))
+            .focus_visible(|style| style.border_color(rgb(palette.accent)))
             .cursor_pointer()
             .when(selected, |row| {
                 row.bg(rgb(palette.accent).alpha(SELECTED_ALPHA))
