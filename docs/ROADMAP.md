@@ -55,16 +55,17 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 ## 5. Release readiness
 
 - [x] Failure paths: no network, bad key, missing database, older database
-- [ ] Recheck each source's terms before release
+- [x] Recheck each source's terms before release
 - [ ] Code signing so Windows shows no unknown-publisher warning: SignPath Foundation's free
       certificate for open source, or the Microsoft Store, which is free for individuals and signs
       MSIX packages
 - [x] Credit every source in the About screen, with a privacy note on what the relay sees
 - [x] Add TMDB's approved logo next to its notice in About
 - [x] Store user API keys in Windows Credential Manager instead of `api-keys.json`
-- [ ] Release workflow: on a version tag, build the installer and portable zip in CI and attach them
+- [x] Release workflow: on a version tag, build the installer and portable zip in CI and attach them
       to a GitHub Release
-- [ ] Put the relay online behind HTTPS, and build releases with `LOREGALIA_RELAY_URL` set to it
-- [ ] No key in the repo or the installer; the project's keys live only on the relay
+- [ ] Put the relay online behind HTTPS, and build releases with `LOREGALIA_RELAY_URL` set to it.
+      `deploy/relay` and the relay README have the steps; the owner runs them
+- [x] No key in the repo or the installer; the project's keys live only on the relay
 - [ ] Human check on Windows: scaling at 100% and 150%, resizing, keyboard navigation
-- [ ] README with the reasons behind each major decision
+- [x] README with the reasons behind each major decision

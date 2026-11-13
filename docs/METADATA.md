@@ -1,15 +1,25 @@
 # Metadata sources
 
-Findings from each API's official pages, checked on 2026-11-05 and 2026-11-07. Terms change, so
-recheck a source before building its provider. The choices are decisions D-09 to D-12, D-20, D-21
-and D-28.
+Findings from each API's official pages, checked on 2026-11-05 and 2026-11-07, and rechecked for
+the release on 2026-11-13. Terms change, so recheck a source before building its provider. The
+choices are decisions D-09 to D-12, D-20, D-21 and D-28.
+
+## Release recheck (2026-11-13)
+
+| Source | Finding | Action |
+| ------ | ------- | ------ |
+| TVmaze | Unchanged: CC BY-SA, credit with a link back, at least 20 calls per 10 s per IP | None |
+| TMDB | Terms still dated 2023-10-20. They require the logo, less prominent than the app's own name, and this notice: "This [application] uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB." Cache limit still 6 months | About now uses the terms' wording instead of the shorter FAQ wording |
+| Open Library | Limits unchanged. New usage guidelines: requests on behalf of people, cache responses, identify with a User-Agent, no scraping or bulk use, and no high-traffic commercial backends. A form invites apps to register their use case | Loregalia already follows them. Registering is optional and is the owner's task |
+| IGDB | Unchanged: free for non-commercial use under the Twitch Developer Services Agreement, 4 requests per second, 8 open requests. The FAQ says commercial partners pay nothing but must credit IGDB | None |
+| Twitch agreement | Still limits caching Twitch API data to 24 hours without written authorization | The relay's 24-hour IGDB cache still fits |
 
 ## Recommended
 
 | Media | Source                                       | Credentials            | Rate limit                                  | Credit required                         | Storing data                                                    |
 | ----- | -------------------------------------------- | ---------------------- | ------------------------------------------- | --------------------------------------- | --------------------------------------------------------------- |
 | Shows | [TVmaze](https://www.tvmaze.com/api)         | None                   | At least 20 calls per 10 s, per IP          | Credit and link back (CC BY-SA 4.0)     | Images may be cached indefinitely                               |
-| Movies | [TMDB](https://developer.themoviedb.org/docs/faq) | Free key, per account | About 40 requests per second, may change    | Approved logo plus a notice in About or Credits | [Six months at most](https://www.themoviedb.org/api-terms-of-use) |
+| Movies | [TMDB](https://developer.themoviedb.org/docs/faq) | Free key, per account | About 40 requests per second, may change    | Logo plus the terms' notice, shown in About | [Six months at most](https://www.themoviedb.org/api-terms-of-use) |
 | Books | [Open Library](https://openlibrary.org/developers/api) | None             | 1 per second, or 3 with User-Agent and email | Courtesy link for covers                | "Cache responses whenever possible"; no bulk downloads          |
 | Games | [IGDB](https://api-docs.igdb.com/)           | Client ID and secret   | 4 per second, 8 open requests               | Visible credit (formally for partners)  | "We prefer if you store" it; see the conflict below             |
 

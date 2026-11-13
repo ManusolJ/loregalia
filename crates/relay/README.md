@@ -23,9 +23,9 @@ or a log.
 cargo run -p loregalia-relay
 ```
 
-The relay binds to localhost by default. Put it behind an HTTPS reverse proxy such as Caddy before
-exposing it. The app reaches it by domain name, with a local default of `http://127.0.0.1:8080` for
-development.
+The relay binds to localhost by default and stops cleanly on Ctrl+C or `SIGTERM`. Put it behind an
+HTTPS reverse proxy before exposing it; see [Deploy](#deploy). The app reaches it by domain name, with
+a local default of `http://127.0.0.1:8080` for development.
 
 Current endpoints:
 
@@ -38,6 +38,41 @@ GET /v1/games/{id}
 ```
 
 `/healthz` reports the relay version and whether TMDB and IGDB credentials are configured.
+
+## Deploy
+
+`deploy/relay` runs the relay behind [Caddy](https://caddyserver.com/), which gets and renews an
+HTTPS certificate on its own. The relay shares Caddy's network, so it sees Caddy as a loopback peer
+and rate-limits each user's real address. It works the same on a home server (D-26) or a VPS.
+
+You need:
+
+- A Linux machine with Docker and the Compose plugin
+- A domain name pointing at that machine, such as `relay.example.com`. At home, a dynamic DNS name
+  works if your address changes
+- Ports 80 and 443 reachable from the internet. At home, forward both from the router to the machine
+- The project's TMDB read access token, and the Twitch client ID and secret for IGDB
+
+Then, on that machine:
+
+```sh
+git clone https://github.com/ManusolJ/loregalia.git
+cd loregalia/deploy/relay
+cp relay.env.example relay.env
+chmod 600 relay.env
+nano relay.env
+docker compose --env-file relay.env up -d --build
+curl https://relay.example.com/healthz
+```
+
+Fill in `relay.env` with the domain and the keys. It is ignored by Git and never leaves the machine.
+`/healthz` should report both sources as configured. To update, run `git pull` and the same
+`docker compose` command again. The cache and certificates live in Docker volumes, so they survive
+updates.
+
+Once it answers over HTTPS, set the repository variable `LOREGALIA_RELAY_URL` to
+`https://relay.example.com` under Settings, Secrets and variables, Actions, Variables. The release
+workflow builds the app with it.
 
 ## Cache
 

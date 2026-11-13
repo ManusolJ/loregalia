@@ -7,3 +7,4 @@
 !.env.example
 Thumbs.db
 .DS_Store
+relay.env

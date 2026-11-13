@@ -2932,7 +2932,7 @@ fn clicking_about_shows_the_credits(cx: &mut TestAppContext) {
         assert!(window.find("about-tmdb").visible());
         assert_eq!(
             window.find("about-tmdb").label(),
-            Some("This product uses the TMDB API but is not endorsed or certified by TMDB")
+            Some("This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB")
         );
         assert!(window.find("tmdb-link").visible());
         assert!(window.find("about-openlibrary").visible());

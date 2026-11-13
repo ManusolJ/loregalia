@@ -4127,7 +4127,7 @@ dependencies = [
 
 [[package]]
 name = "loregalia"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "embed-resource",
  "gpui-kit",
@@ -4138,7 +4138,7 @@ dependencies = [
 
 [[package]]
 name = "loregalia-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "keyring-core",
  "rusqlite",
@@ -4152,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "loregalia-relay"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "axum",
  "loregalia-core",
@@ -9041,7 +9041,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "y4m"
