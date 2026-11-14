@@ -19,6 +19,10 @@ const TMDB_LOGO_HEIGHT: f32 = 12.0;
 const TMDB_LOGO_RATIO: f32 = 273.42 / 35.52;
 const TMDB_NOTICE: &str = "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB";
 
+const KOFI_URL: &str = "https://ko-fi.com/manusolj";
+const KOFI_LABEL: &str = "Support Loregalia on Ko-fi";
+const SUPPORT_NOTE: &str = "Loregalia is free, and every feature stays free. If it is useful to you, you can buy me a coffee.";
+
 static TMDB_LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
     Arc::new(Image::from_bytes(
         ImageFormat::Svg,
@@ -271,6 +275,46 @@ impl Shell {
                             .into_any_element()
                     })
                     .collect(),
+            ))
+            .child(Self::about_card(
+                "about-support",
+                "Support",
+                palette,
+                vec![
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_3()
+                        .child(
+                            div().pt_0p5().child(
+                                Icon::new(IconName::Heart)
+                                    .with_size(px(16.0))
+                                    .text_color(rgb(palette.accent)),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(SUPPORT_NOTE)
+                                .child(
+                                    div()
+                                        .id("kofi-link")
+                                        .test_support()
+                                        .aria_label(KOFI_LABEL)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(
+                                            Link::new("kofi-anchor")
+                                                .href(KOFI_URL)
+                                                .child(KOFI_LABEL),
+                                        ),
+                                ),
+                        )
+                        .into_any_element(),
+                ],
             ))
             .child(
                 div()
