@@ -1,219 +1,131 @@
-# Loregalia
+<h1 align="center">Loregalia</h1>
 
-A local-first desktop app for planning what to watch, read and play next, and for keeping a record
-of what you have finished. It brings movies, shows, books and games together in one place.
+<p align="center">
+  <strong>Plan what to watch, read and play next.</strong><br>
+  Movies, shows, books and games in one calm library that lives on your computer.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ManusolJ/loregalia/releases/latest"><strong>Download for Windows</strong></a>
+  ·
+  <a href="#features">Features</a>
+  ·
+  <a href="#privacy">Privacy</a>
+  ·
+  <a href="docs/TECHNICAL.md">For developers</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/library-dark.png" alt="Loregalia's library: an Up next shelf of covers above a list of shows, movies, books and games with their statuses" width="900">
+</p>
 
 > [!IMPORTANT]
 > **This project is built entirely with agentic AI.** AI coding agents write the code, tests and
 > documentation. A human sets the direction, makes the product decisions, reviews the changes and
 > merges them. Treat the code accordingly: it is checked by automated tests and human review, but it
-> has not been written or audited line by line by a person. See [How it's built](#how-its-built).
+> has not been written or audited line by line by a person. See
+> [How it's built](docs/TECHNICAL.md#how-its-built).
 
-## Status
+## Why Loregalia
 
-**Version 1.0.** Lists, items, statuses, tags, seasons, lookup for shows, movies, books and games,
-covers, keyboard navigation, a theme setting, an installer and a portable zip all work. What comes
-after 1.0 is in the [roadmap](docs/ROADMAP.md).
+Your watchlist is in one app, your reading list in another, and the games you meant to play live in a
+note somewhere. Loregalia puts them in one place, so when you have an evening free you can see
+everything you wanted to get to and pick the next thing.
 
-## Download
-
-Get the installer or the portable zip from
-[Releases](https://github.com/ManusolJ/loregalia/releases). Each release lists SHA-256 checksums in
-`SHA256SUMS.txt`.
-
-The builds are not code-signed yet, so Windows SmartScreen may warn about an unknown publisher.
-Choose **More info**, then **Run anyway**.
+It is a **planner**, not a tracker. It helps you decide what to start, keeps what is in progress in
+front of you, and remembers what you finished. It does not count episodes or pages, and it never asks
+you to rate, review or share anything.
 
 ## Features
 
-Loregalia is a planner, not a progress tracker. It helps you decide what to pick up next, and it does
-not record which episode or page you stopped at.
+### One library for everything
 
-- **Lists:** custom lists in your own order, where an item can belong to several lists
-- **Tags:** your own labels on lists and items
-- **Media:** movies, books and games as single items, and shows with their seasons
-- **Statuses:** To watch, In progress, On hold, Watched, Dropped, with labels that fit each type of
-  media, and room to add more
-- **Metadata lookup:** search public APIs to fill in titles, covers and details, or type items by hand
-- **Local-first:** your data stays in a SQLite file on your computer, with no account. Movie and game
-  searches go through a small Loregalia server that holds the API keys, unless you add your own
+Shows, movies, books and games sit side by side. **Up next** keeps what you are in the middle of at
+the top, and **Finished** keeps a record of what you completed. Filter by kind with one click.
 
-The full scope, including what is deliberately left out, is in [PRODUCT.md](docs/PRODUCT.md).
+<p align="center">
+  <img src="docs/images/library-light.png" alt="The library in the light theme" width="820">
+</p>
 
-## Tech stack
+### Add things in seconds
 
-| Layer    | Choice                                                                  |
-| -------- | ----------------------------------------------------------------------- |
-| Language | Rust                                                                    |
-| UI       | [GPUI](https://www.gpui.rs/), through [gpui-kit](https://gpui-kit.com/) |
-| Storage  | SQLite                                                                  |
-| Platform | Windows; Linux is built and tested for development, but not shipped     |
+Type a title and pick the match. Covers, years and details come from **TVmaze** for shows,
+**TMDB** for movies, **Open Library** for books and **IGDB** for games. No account and no API keys
+needed. You can also type anything in by hand.
 
-## Getting started
+<p align="center">
+  <img src="docs/images/search-dark.png" alt="Adding a game: searching IGDB for Elden Ring shows a list of matches" width="820">
+</p>
 
-### Requirements
+### Plan one season at a time
 
-- [Rust through rustup](https://www.rust-lang.org/tools/install); `rust-toolchain.toml` selects the
-  version
-- On Windows: Visual Studio or Build Tools with the **Desktop development with C++** workload, and
-  CMake on your `PATH`
-- On Linux: the packages in [scripts/linux-packages.sh](scripts/linux-packages.sh)
+Every item has a status that reads naturally for its kind: *To watch*, *To read*, *To play*,
+*In progress*, *On hold*, *Watched*, *Dropped*. Shows can be split into seasons, each with its own
+status, so you can finish season one and leave season two for later.
 
-### Run it
+<p align="center">
+  <img src="docs/images/detail-dark.png" alt="The detail panel for Severance with its status, two seasons, a tag and its list" width="820">
+</p>
 
-```powershell
-git clone https://github.com/ManusolJ/loregalia.git
-cd loregalia
-cargo run
-```
+### Your own lists and tags
 
-The first build takes a few minutes.
+Make lists like *Weekend queue* or *Cozy autumn*, in the order you want, and put an item in as many as
+you like. Tag lists and items with your own labels.
 
-### Check it
+<p align="center">
+  <img src="docs/images/list-light.png" alt="The Cozy autumn list with a game, a book and a movie in a manual order" width="820">
+</p>
 
-```powershell
-cargo xtask gate
-```
+### Made to feel at home
 
-This runs the project rules, formatting, clippy and all tests. Use `cargo xtask gate --fast` for the
-quick version.
+- **Light and dark themes**, or follow Windows
+- **Keyboard friendly:** Tab through items, Enter to open, Esc to close
+- **Works offline:** your library, lists and statuses stay available without a connection; only
+  covers and searches need one
+- **Fast and small:** a native app, under 10 MB to download
 
-### Build the installer
+## Privacy
 
-Install the packager once, then build from the app crate:
+- **Your library stays on your computer**, in a single file you can back up. There is no account,
+  and nothing is uploaded.
+- **Shows and books** are searched directly at TVmaze and Open Library, which see your IP address
+  like any website.
+- **Movies and games** go through a small Loregalia server that holds the API keys. It keeps no logs
+  and nothing that identifies you. You can add your own TMDB or IGDB keys in Settings to skip it;
+  they are stored in Windows Credential Manager, not in a file.
 
-```powershell
-cargo install cargo-packager --locked
-cd crates/app
-cargo packager --release
-```
+## Download
 
-The installer lands in `target/installer`. It installs for the current user without administrator
-rights. Its uninstaller offers to delete the app's data folder, unticked by default. Starting
-Loregalia while it is already open brings the open window to the front instead.
+**[Get the latest release](https://github.com/ManusolJ/loregalia/releases/latest)**
 
-For a portable zip, which keeps its data in a `data` folder next to `loregalia.exe`, run:
+| File | For |
+| ---- | --- |
+| `loregalia_<version>_x64-setup.exe` | Installs for your user, no administrator rights needed |
+| `loregalia_<version>_x64-portable.zip` | Runs from any folder or USB stick, keeping its data beside it |
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1
-```
+Loregalia runs on 64-bit Windows 11. Windows 10 should work but is not tested.
 
-Installed copies keep their data in `%APPDATA%\loregalia`.
+The builds are not code-signed yet, so Windows SmartScreen may warn about an unknown publisher.
+Choose **More info**, then **Run anyway**. Each release lists SHA-256 checksums in
+`SHA256SUMS.txt` if you want to verify your download.
 
-Movie and game searches go to the relay at the address `LOREGALIA_RELAY_URL` held when the app was
-built, or to `http://127.0.0.1:8080` if it was not set. To run the relay, see
-[crates/relay](crates/relay/README.md).
+## Credits
 
-### Release a version
+Metadata and covers come from [TVmaze](https://www.tvmaze.com/) (CC BY-SA 4.0),
+[TMDB](https://www.themoviedb.org/), [Open Library](https://openlibrary.org/) and
+[IGDB](https://www.igdb.com/). Covers in the screenshots belong to their respective owners.
 
-1. Set the version in the workspace `Cargo.toml`, run `cargo xtask gate`, and merge the change.
-2. Make sure the repository variable `LOREGALIA_RELAY_URL` holds the relay's `https://` address.
-3. Tag the merged commit and push the tag:
+This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by
+TMDB.
 
-   ```powershell
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
+## Support
 
-The [release workflow](.github/workflows/release.yml) checks that the tag matches the version, runs
-the gate, builds the installer and the portable zip with the relay address, and creates a **draft**
-release with both files and their checksums. Read it over on GitHub, then publish it.
+Loregalia is free, and every feature stays free. If it is useful to you, you can
+[buy me a coffee on Ko-fi](https://ko-fi.com/manusolj).
 
-## Project layout
-
-```text
-crates/app    GPUI views, theme and window
-crates/core   Domain logic, storage and metadata providers, with no UI dependency
-crates/relay  The metadata relay server that holds the TMDB and IGDB keys
-deploy/relay  Docker files to run the relay behind a Cloudflare Tunnel
-xtask         The gate and project rules
-docs/         Product, architecture, design, decisions and roadmap
-scripts/      Linux and sandbox setup
-AGENTS.md     Instructions for coding agents
-```
-
-## Why it's built this way
-
-The full list, with dates, is in [DECISIONS.md](docs/DECISIONS.md).
-
-| Decision | Why |
-| -------- | --- |
-| Local-first, with one SQLite file and no account | A planner should work offline, and your library should be yours to keep and back up (D-01, D-12) |
-| Rust and GPUI, through a pinned `gpui-kit` | A fast native app, with UI tests that run without a window; pinned because `gpui-kit` is pre-1.0 (A-01) |
-| Windows first; Linux only builds and tests | Windows is where it is used and tested by hand; Linux is where the agents work (A-04) |
-| No keys in the app; a small relay holds them | Nobody has to sign up for API keys, and the IGDB secret never leaves the server. Your own keys skip the relay (D-11) |
-| Your own keys live in Windows Credential Manager | Keys are secrets, and a file beside your library is easy to copy or sync by accident (D-32) |
-| TVmaze for shows, TMDB for movies, Open Library for books, IGDB for games | Each was the best free source for its kind with terms that allow this use; see [METADATA.md](docs/METADATA.md) (D-09, D-10, D-20) |
-| Saved items keep their source data | Your library still works when a source is down; TMDB data is refreshed before its six-month limit (D-12) |
-| UUIDs as IDs | Sync between computers stays possible later without rewriting every table (D-02) |
-| Seasons are their own items with their own status | You can plan one season at a time (D-03) |
-| Statuses in five categories with labels per media kind | "To read" and "To play" read naturally, while filters still work across kinds (D-04) |
-| Free, with no paid features | Keeps the app non-commercial under TMDB's and IGDB's terms (D-25) |
-| An NSIS installer for the current user, plus a portable zip | No administrator rights needed, and the zip runs from a USB stick or a synced folder (D-16, D-30) |
-
-## How it's built
-
-| Who       | Does what                                                                         |
-| --------- | --------------------------------------------------------------------------------- |
-| AI agents | Write code and tests on `agent/*` branches, run the gate, and propose doc changes |
-| The human | Sets direction, makes [product decisions](docs/DECISIONS.md), reviews and merges  |
-
-Agents follow [AGENTS.md](AGENTS.md), and these limits are enforced rather than requested:
-
-- **The gate** must pass, and it also runs in CI.
-- **A commit hook** blocks commits to `main` and runs the fast gate.
-- **Agent permissions** in [opencode.json](opencode.json) deny pushing, merging, deleting files,
-  touching secrets, and editing the docs or the rules themselves.
-- **A sandbox** keeps agents away from the rest of the computer. Its script also mounts the docs and
-  the rules as read-only, and covers secret files such as `.env` with an empty file.
-
-Create a sandbox with the script, then start the agent:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\new-sandbox.ps1 -Name <name>
-sbx run --name <name> -- --auto
-```
-
-Permission rules match text, so they can be worked around. The read-only mounts can't be, but they are
-set when a sandbox is created, so create a new sandbox after adding a secret file. Agents can still
-change `.git`, which is why GitHub's rules on `main` and your review remain necessary.
-
-To review an agent's work, check it locally, then merge it through a pull request:
-
-```powershell
-git log main..agent/<task> --oneline
-git diff main...agent/<task>
-git switch agent/<task>
-cargo xtask gate
-cargo run
-git push -u origin agent/<task>
-```
-
-Agents never push, so this last step is always done by the human. After merging the pull request on
-GitHub, update your local copy:
-
-```powershell
-git switch main
-git pull
-```
-
-If creating a sandbox fails with `erofs` and `No space left on device` even with free disk space, run
-`sbx daemon restart` and try again. Keep any file you mount into a sandbox out of `%LOCALAPPDATA%`,
-because creating the sandbox failed with mask files stored there.
-
-## Documentation
-
-- [Product](docs/PRODUCT.md): what the app does
-- [Architecture](docs/ARCHITECTURE.md): how the code and data are organized
-- [Design](docs/DESIGN.md): colors, type, layout and states
-- [Metadata sources](docs/METADATA.md): candidate APIs, their limits and terms
-- [Decisions](docs/DECISIONS.md): what has been decided and what is still open
-- [Roadmap](docs/ROADMAP.md): what comes next
-
-## Contributing
-
-The project isn't set up for outside contributions yet, but issues with ideas or problems are welcome.
-Anyone using an agent on this code should point it at [AGENTS.md](AGENTS.md) first.
+Ideas and bug reports are welcome as [issues](https://github.com/ManusolJ/loregalia/issues).
+Building it yourself, the architecture and the agent workflow are in the
+[technical guide](docs/TECHNICAL.md).
 
 ## License
 
