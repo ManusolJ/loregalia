@@ -107,9 +107,24 @@ in the `loregalia-relay_relay-data` volume. It needs no backup: it refills itsel
 
 ## Cache
 
-The cache is a `STRICT` SQLite table with one body per key and an expiry time. TMDB searches live
-for one hour and TMDB details for 30 days, both within TMDB's six-month limit. IGDB searches and
-details live for 24 hours.
+The cache is a `STRICT` SQLite table in WAL mode, with one body per key and an expiry time. It holds
+at most 20,000 entries and removes the soonest to expire first.
+
+| What | Lifetime | Why |
+| ---- | -------- | --- |
+| TMDB and IGDB searches | 7 days | Well within TMDB's six months; IGDB allows storing (D-33) |
+| TMDB movie and IGDB game details | 30 days | IGDB removes a replaced cover image after 30 days |
+
+Search keys ignore case and extra spaces, so "Outer Wilds" and " outer  wilds" share one entry.
+Searches with no results are cached too, and failures are not.
+
+## Upstream limits
+
+Each source has a queue: IGDB gets at most 8 open requests started 250 ms apart, which is its limit
+of 4 a second, and TMDB at most 20 started 50 ms apart. A request that would wait more than 8 seconds
+gets `503 upstream_busy` instead. Identical requests that arrive together share one upstream call.
+The Twitch access token is reused until shortly before it expires, and replaced once if IGDB rejects
+it. Search text is cleaned before it reaches IGDB's query language, so it cannot add clauses.
 
 ## Tests
 

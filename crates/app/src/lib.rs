@@ -11,7 +11,11 @@ use gpui_kit::{
     size,
 };
 use interprocess::local_socket::Listener;
+use loregalia_core::images::CoverCache;
 use loregalia_core::settings::Theme;
+use loregalia_core::{Database, items};
+
+use crate::startup::StorageState;
 pub const APP_ID: &str = "com.manu.loregalia";
 
 const APP_TITLE: &str = "Loregalia";
@@ -23,6 +27,30 @@ pub fn init(cx: &mut App, theme: Theme) {
     cx.set_http_client(Arc::new(http::ImageHttpClient::new(
         cx.background_executor().clone(),
     )));
+}
+
+pub fn use_cover_cache(storage: &StorageState, cx: &mut App) {
+    let StorageState::Ready(database_path) = storage else {
+        return;
+    };
+    let Some(data_directory) = database_path.parent() else {
+        return;
+    };
+    let covers = CoverCache::in_data_folder(data_directory);
+    cx.set_http_client(Arc::new(http::ImageHttpClient::with_cover_cache(
+        cx.background_executor().clone(),
+        covers.clone(),
+    )));
+
+    let database_path = database_path.clone();
+    cx.background_spawn(async move {
+        if let Ok(database) = Database::open(&database_path)
+            && let Ok(library) = items::all(&database)
+        {
+            let _ = covers.keep_only(library.iter().filter_map(|item| item.cover_url.as_deref()));
+        }
+    })
+    .detach();
 }
 
 pub fn focus_on_request(window: AnyWindowHandle, listener: Listener, cx: &mut App) {

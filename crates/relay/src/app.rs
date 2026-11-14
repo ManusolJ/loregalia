@@ -4,24 +4,35 @@ use axum::routing::get;
 use axum::{Json, Router};
 use loregalia_core::providers::Candidate;
 use loregalia_core::providers::relay::SearchResponse;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::cache::Cache;
+use crate::coalesce::Coalescer;
 use crate::config::Config;
 use crate::error::RelayError;
 use crate::igdb::{IgdbClient, IgdbUpstream};
 use crate::rate_limit::RateLimiter;
+use crate::throttle::Throttle;
 use crate::tmdb::{TmdbClient, TmdbUpstream};
 
 const CLIENT_LIMIT: u32 = 30;
 const CLIENT_WINDOW_SECONDS: i64 = 60;
-const SEARCH_TTL_SECONDS: i64 = 60 * 60;
-const DETAILS_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
-const GAMES_TTL_SECONDS: i64 = 24 * 60 * 60;
-const MAX_CACHE_ENTRIES: usize = 5_000;
+const DAY_SECONDS: i64 = 24 * 60 * 60;
+const SEARCH_TTL_SECONDS: i64 = 7 * DAY_SECONDS;
+const DETAILS_TTL_SECONDS: i64 = 30 * DAY_SECONDS;
+const MAX_CACHE_ENTRIES: usize = 20_000;
 const MAX_QUERY_CHARS: usize = 100;
+const MAX_ID_DIGITS: usize = 20;
+const QUEUE_WAIT: Duration = Duration::from_secs(8);
+const TMDB_OPEN_REQUESTS: usize = 20;
+const TMDB_SPACING: Duration = Duration::from_millis(50);
+const IGDB_OPEN_REQUESTS: usize = 8;
+const IGDB_SPACING: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -30,6 +41,9 @@ pub struct AppState {
     pub limiter: Arc<RateLimiter>,
     pub tmdb: Option<Arc<dyn TmdbUpstream>>,
     pub igdb: Option<Arc<dyn IgdbUpstream>>,
+    in_flight: Arc<Coalescer>,
+    tmdb_throttle: Arc<Throttle>,
+    igdb_throttle: Arc<Throttle>,
 }
 
 impl AppState {
@@ -65,6 +79,9 @@ impl AppState {
             limiter: Arc::new(RateLimiter::new(CLIENT_LIMIT, CLIENT_WINDOW_SECONDS)),
             tmdb,
             igdb,
+            in_flight: Arc::new(Coalescer::default()),
+            tmdb_throttle: Arc::new(Throttle::new(TMDB_OPEN_REQUESTS, TMDB_SPACING, QUEUE_WAIT)),
+            igdb_throttle: Arc::new(Throttle::new(IGDB_OPEN_REQUESTS, IGDB_SPACING, QUEUE_WAIT)),
         }
     }
 }
@@ -101,47 +118,46 @@ struct SearchParams {
     q: String,
 }
 
+fn normalized_query(raw: &str) -> Option<String> {
+    let query = raw
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    (!query.is_empty() && query.chars().count() <= MAX_QUERY_CHARS).then_some(query)
+}
+
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= MAX_ID_DIGITS && id.chars().all(|c| c.is_ascii_digit())
+}
+
 async fn search_movies(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<SearchResponse>, RelayError> {
-    let query = params.q.trim().to_owned();
-    if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
-        return Err(RelayError::BadRequest);
-    }
+    let query = normalized_query(&params.q).ok_or(RelayError::BadRequest)?;
+    let now = admit(&state, peer, &headers)?;
+    let upstream = state.tmdb.clone();
+    let throttle = state.tmdb_throttle.clone();
 
-    let now = crate::cache::now();
-    check_rate(
+    cached(
         &state,
-        client_ip(peer, &headers, state.config.trust_proxy),
+        format!("tmdb:search:{query}"),
         now,
-    )?;
-
-    let key = format!("tmdb:search:{}", query.to_lowercase());
-    if let Some(body) = state.cache.get(&key, now).map_err(|_| RelayError::Cache)?
-        && let Ok(response) = serde_json::from_str::<SearchResponse>(&body)
-    {
-        return Ok(Json(response));
-    }
-
-    let upstream = state.tmdb.as_ref().ok_or(RelayError::NotConfigured)?;
-    let results = upstream.search(query).await.map_err(RelayError::Upstream)?;
-    let response = SearchResponse { results };
-    let body = serde_json::to_string(&response).map_err(|_| RelayError::Internal)?;
-    state
-        .cache
-        .put(
-            &key,
-            &body,
-            now + SEARCH_TTL_SECONDS,
-            now,
-            MAX_CACHE_ENTRIES,
-        )
-        .map_err(|_| RelayError::Cache)?;
-
-    Ok(Json(response))
+        SEARCH_TTL_SECONDS,
+        async move {
+            let upstream = upstream.ok_or(RelayError::NotConfigured)?;
+            let results = throttle
+                .run(upstream.search(query))
+                .await?
+                .map_err(RelayError::upstream)?;
+            Ok(SearchResponse { results })
+        },
+    )
+    .await
+    .map(Json)
 }
 
 async fn movie_details(
@@ -150,39 +166,28 @@ async fn movie_details(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Candidate>, RelayError> {
-    if id.is_empty() || id.len() > 20 || !id.chars().all(|character| character.is_ascii_digit()) {
+    if !valid_id(&id) {
         return Err(RelayError::BadRequest);
     }
+    let now = admit(&state, peer, &headers)?;
+    let upstream = state.tmdb.clone();
+    let throttle = state.tmdb_throttle.clone();
 
-    let now = crate::cache::now();
-    check_rate(
+    cached(
         &state,
-        client_ip(peer, &headers, state.config.trust_proxy),
+        format!("tmdb:movie:{id}"),
         now,
-    )?;
-
-    let key = format!("tmdb:movie:{id}");
-    if let Some(body) = state.cache.get(&key, now).map_err(|_| RelayError::Cache)?
-        && let Ok(movie) = serde_json::from_str::<Candidate>(&body)
-    {
-        return Ok(Json(movie));
-    }
-
-    let upstream = state.tmdb.as_ref().ok_or(RelayError::NotConfigured)?;
-    let movie = upstream.details(id).await.map_err(RelayError::Upstream)?;
-    let body = serde_json::to_string(&movie).map_err(|_| RelayError::Internal)?;
-    state
-        .cache
-        .put(
-            &key,
-            &body,
-            now + DETAILS_TTL_SECONDS,
-            now,
-            MAX_CACHE_ENTRIES,
-        )
-        .map_err(|_| RelayError::Cache)?;
-
-    Ok(Json(movie))
+        DETAILS_TTL_SECONDS,
+        async move {
+            let upstream = upstream.ok_or(RelayError::NotConfigured)?;
+            throttle
+                .run(upstream.details(id))
+                .await?
+                .map_err(RelayError::upstream)
+        },
+    )
+    .await
+    .map(Json)
 }
 
 async fn search_games(
@@ -191,35 +196,27 @@ async fn search_games(
     headers: HeaderMap,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<SearchResponse>, RelayError> {
-    let query = params.q.trim().to_owned();
-    if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
-        return Err(RelayError::BadRequest);
-    }
+    let query = normalized_query(&params.q).ok_or(RelayError::BadRequest)?;
+    let now = admit(&state, peer, &headers)?;
+    let upstream = state.igdb.clone();
+    let throttle = state.igdb_throttle.clone();
 
-    let now = crate::cache::now();
-    check_rate(
+    cached(
         &state,
-        client_ip(peer, &headers, state.config.trust_proxy),
+        format!("igdb:search:{query}"),
         now,
-    )?;
-
-    let key = format!("igdb:search:{}", query.to_lowercase());
-    if let Some(body) = state.cache.get(&key, now).map_err(|_| RelayError::Cache)?
-        && let Ok(response) = serde_json::from_str::<SearchResponse>(&body)
-    {
-        return Ok(Json(response));
-    }
-
-    let upstream = state.igdb.as_ref().ok_or(RelayError::NotConfigured)?;
-    let results = upstream.search(query).await.map_err(RelayError::Upstream)?;
-    let response = SearchResponse { results };
-    let body = serde_json::to_string(&response).map_err(|_| RelayError::Internal)?;
-    state
-        .cache
-        .put(&key, &body, now + GAMES_TTL_SECONDS, now, MAX_CACHE_ENTRIES)
-        .map_err(|_| RelayError::Cache)?;
-
-    Ok(Json(response))
+        SEARCH_TTL_SECONDS,
+        async move {
+            let upstream = upstream.ok_or(RelayError::NotConfigured)?;
+            let results = throttle
+                .run(upstream.search(query))
+                .await?
+                .map_err(RelayError::upstream)?;
+            Ok(SearchResponse { results })
+        },
+    )
+    .await
+    .map(Json)
 }
 
 async fn game_details(
@@ -228,38 +225,92 @@ async fn game_details(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Candidate>, RelayError> {
-    if id.is_empty() || id.len() > 20 || !id.chars().all(|character| character.is_ascii_digit()) {
+    if !valid_id(&id) {
         return Err(RelayError::BadRequest);
     }
+    let now = admit(&state, peer, &headers)?;
+    let upstream = state.igdb.clone();
+    let throttle = state.igdb_throttle.clone();
 
-    let now = crate::cache::now();
-    check_rate(
+    cached(
         &state,
-        client_ip(peer, &headers, state.config.trust_proxy),
+        format!("igdb:game:{id}"),
         now,
-    )?;
-
-    let key = format!("igdb:game:{id}");
-    if let Some(body) = state.cache.get(&key, now).map_err(|_| RelayError::Cache)?
-        && let Ok(game) = serde_json::from_str::<Candidate>(&body)
-    {
-        return Ok(Json(game));
-    }
-
-    let upstream = state.igdb.as_ref().ok_or(RelayError::NotConfigured)?;
-    let game = upstream.details(id).await.map_err(RelayError::Upstream)?;
-    let body = serde_json::to_string(&game).map_err(|_| RelayError::Internal)?;
-    state
-        .cache
-        .put(&key, &body, now + GAMES_TTL_SECONDS, now, MAX_CACHE_ENTRIES)
-        .map_err(|_| RelayError::Cache)?;
-
-    Ok(Json(game))
+        DETAILS_TTL_SECONDS,
+        async move {
+            let upstream = upstream.ok_or(RelayError::NotConfigured)?;
+            throttle
+                .run(upstream.details(id))
+                .await?
+                .map_err(RelayError::upstream)
+        },
+    )
+    .await
+    .map(Json)
 }
 
-fn check_rate(state: &AppState, client: IpAddr, now: i64) -> Result<(), RelayError> {
-    if state.limiter.check(client, now) {
-        Ok(())
+async fn cached<T>(
+    state: &AppState,
+    key: String,
+    now: i64,
+    ttl_seconds: i64,
+    fetch: impl Future<Output = Result<T, RelayError>>,
+) -> Result<T, RelayError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    if let Some(body) = cache_get(&state.cache, &key, now).await?
+        && let Ok(value) = serde_json::from_str::<T>(&body)
+    {
+        return Ok(value);
+    }
+
+    let cache = state.cache.clone();
+    let body = state
+        .in_flight
+        .run(&key, async {
+            let value = fetch.await?;
+            let body = serde_json::to_string(&value).map_err(|_| RelayError::Internal)?;
+            cache_put(&cache, &key, &body, now + ttl_seconds, now).await?;
+            Ok(body)
+        })
+        .await?;
+
+    serde_json::from_str(&body).map_err(|_| RelayError::Internal)
+}
+
+async fn cache_get(cache: &Arc<Cache>, key: &str, now: i64) -> Result<Option<String>, RelayError> {
+    let cache = cache.clone();
+    let key = key.to_owned();
+    tokio::task::spawn_blocking(move || cache.get(&key, now))
+        .await
+        .map_err(|_| RelayError::Internal)?
+        .map_err(|_| RelayError::Cache)
+}
+
+async fn cache_put(
+    cache: &Arc<Cache>,
+    key: &str,
+    body: &str,
+    expires_at: i64,
+    now: i64,
+) -> Result<(), RelayError> {
+    let cache = cache.clone();
+    let key = key.to_owned();
+    let body = body.to_owned();
+    tokio::task::spawn_blocking(move || cache.put(&key, &body, expires_at, now, MAX_CACHE_ENTRIES))
+        .await
+        .map_err(|_| RelayError::Internal)?
+        .map_err(|_| RelayError::Cache)
+}
+
+fn admit(state: &AppState, peer: SocketAddr, headers: &HeaderMap) -> Result<i64, RelayError> {
+    let now = crate::cache::now();
+    if state
+        .limiter
+        .check(client_ip(peer, headers, state.config.trust_proxy), now)
+    {
+        Ok(now)
     } else {
         Err(RelayError::RateLimited)
     }
@@ -286,7 +337,7 @@ fn client_ip(peer: SocketAddr, headers: &HeaderMap, trust_proxy: bool) -> IpAddr
 mod tests {
     use super::{
         AppState, HealthResponse, MAX_QUERY_CHARS, SearchParams, client_ip, game_details, health,
-        movie_details, search_games, search_movies,
+        movie_details, normalized_query, search_games, search_movies,
     };
     use crate::cache::Cache;
     use crate::config::Config;
@@ -513,7 +564,7 @@ mod tests {
 
         assert!(matches!(
             search(state, "dune").await,
-            Err(RelayError::Upstream(Error::Unauthorized))
+            Err(RelayError::UpstreamRejected)
         ));
     }
 
@@ -694,5 +745,99 @@ mod tests {
             game_detail(state, "outer wilds").await,
             Err(RelayError::BadRequest)
         ));
+    }
+
+    struct SlowTmdb {
+        searches: Mutex<usize>,
+        results: Vec<Candidate>,
+    }
+
+    impl TmdbUpstream for SlowTmdb {
+        fn search(&self, _query: String) -> UpstreamResult<Vec<Candidate>> {
+            *self.searches.lock().unwrap() += 1;
+            let results = self.results.clone();
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                Ok(results)
+            })
+        }
+
+        fn details(&self, _id: String) -> UpstreamResult<Candidate> {
+            Box::pin(async move { Ok(candidate()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn spellings_of_one_search_share_a_cache_entry() {
+        let fake = Arc::new(FakeTmdb::ok());
+        let state = state_with(Some(fake.clone()));
+
+        search(state.clone(), "Dune  Part Two").await.unwrap();
+        search(state.clone(), "  dune part two ").await.unwrap();
+        search(state, "DUNE PART TWO").await.unwrap();
+
+        assert_eq!(*fake.searches.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn simultaneous_identical_searches_call_upstream_once() {
+        let fake = Arc::new(SlowTmdb {
+            searches: Mutex::new(0),
+            results: vec![candidate()],
+        });
+        let state = state_with(Some(fake.clone()));
+
+        let tasks: Vec<_> = (0..5)
+            .map(|_| {
+                let state = state.clone();
+                tokio::spawn(async move { search(state, "dune").await })
+            })
+            .collect();
+        for task in tasks {
+            assert_eq!(task.await.unwrap().unwrap().results, vec![candidate()]);
+        }
+
+        assert_eq!(*fake.searches.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_search_with_no_results_is_cached_too() {
+        let fake = Arc::new(SlowTmdb {
+            searches: Mutex::new(0),
+            results: Vec::new(),
+        });
+        let state = state_with(Some(fake.clone()));
+
+        assert!(
+            search(state.clone(), "qwxyz")
+                .await
+                .unwrap()
+                .results
+                .is_empty()
+        );
+        assert!(search(state, "qwxyz").await.unwrap().results.is_empty());
+
+        assert_eq!(*fake.searches.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_search_is_not_cached() {
+        let fake = Arc::new(FakeTmdb::with_search_error(FakeError::Unauthorized));
+        let state = state_with(Some(fake.clone()));
+
+        assert!(search(state.clone(), "dune").await.is_err());
+        assert!(search(state, "dune").await.is_err());
+
+        assert_eq!(*fake.searches.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn queries_are_normalized_and_bounded() {
+        assert_eq!(
+            normalized_query("  Outer   Wilds "),
+            Some("outer wilds".to_owned())
+        );
+        assert_eq!(normalized_query("   "), None);
+        assert_eq!(normalized_query(&"a".repeat(MAX_QUERY_CHARS + 1)), None);
     }
 }

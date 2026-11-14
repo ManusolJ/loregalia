@@ -12,7 +12,7 @@ choices are decisions D-09 to D-12, D-20, D-21 and D-28.
 | TMDB | Terms still dated 2023-10-20. They require the logo, less prominent than the app's own name, and this notice: "This [application] uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB." Cache limit still 6 months | About now uses the terms' wording instead of the shorter FAQ wording |
 | Open Library | Limits unchanged. New usage guidelines: requests on behalf of people, cache responses, identify with a User-Agent, no scraping or bulk use, and no high-traffic commercial backends. A form invites apps to register their use case | Loregalia already follows them. Registering is optional and is the owner's task |
 | IGDB | Unchanged: free for non-commercial use under the Twitch Developer Services Agreement, 4 requests per second, 8 open requests. The FAQ says commercial partners pay nothing but must credit IGDB | None |
-| Twitch agreement | Still limits caching Twitch API data to 24 hours without written authorization | The relay's 24-hour IGDB cache still fits |
+| Twitch agreement | Still limits caching Twitch API data to 24 hours without written authorization | IGDB's FAQ is that authorization; see D-33 and Resolved below |
 
 ## Recommended
 
@@ -21,7 +21,7 @@ choices are decisions D-09 to D-12, D-20, D-21 and D-28.
 | Shows | [TVmaze](https://www.tvmaze.com/api)         | None                   | At least 20 calls per 10 s, per IP          | Credit and link back (CC BY-SA 4.0)     | Images may be cached indefinitely                               |
 | Movies | [TMDB](https://developer.themoviedb.org/docs/faq) | Free key, per account | About 40 requests per second, may change    | Logo plus the terms' notice, shown in About | [Six months at most](https://www.themoviedb.org/api-terms-of-use) |
 | Books | [Open Library](https://openlibrary.org/developers/api) | None             | 1 per second, or 3 with User-Agent and email | Courtesy link for covers                | "Cache responses whenever possible"; no bulk downloads          |
-| Games | [IGDB](https://api-docs.igdb.com/)           | Client ID and secret   | 4 per second, 8 open requests               | Visible credit (formally for partners)  | "We prefer if you store" it; see the conflict below             |
+| Games | [IGDB](https://api-docs.igdb.com/)           | Client ID and secret   | 4 per second, 8 open requests               | Visible credit (formally for partners)  | "We prefer if you store" it (D-33); replaced images last 30 days |
 
 All four are free for a non-commercial app. TVmaze's license is the only one here that clearly allows
 commercial use as well. **If Loregalia ever makes money, recheck TMDB and IGDB first:** TMDB needs a
@@ -90,12 +90,20 @@ the top result. Anime films come from TMDB.
 Radarr users have complained when its server was down, so the app must keep working without the
 relay (see `ARCHITECTURE.md`).
 
+## Resolved
+
+- **IGDB storage (2026-11-14, D-33):** the
+  [Twitch agreement](https://legal.twitch.com/legal/developer-agreement/) forbids storing copies
+  unless Twitch authorizes it in writing, "through these terms or otherwise", or the copy is kept for
+  24 hours. That clause sits in the schedule for Twitch's own APIs. IGDB's [FAQ](https://api-docs.igdb.com/#faq)
+  says storing is allowed and preferred (question 3), and that data may be kept even after a
+  partnership ends (question 5). Its technical FAQ recommends a backend proxy, and its Proxy section
+  lists caching as a reason for one. IGDB keeps a removed or replaced image for 30 days, so cached
+  details stay within 30 days. Access tokens last 60 days and an application may hold 25, so tokens
+  are reused rather than requested per call.
+
 ## Unresolved
 
-- **IGDB storage:** IGDB's FAQ prefers local storage, but the
-  [Twitch agreement](https://legal.twitch.com/legal/developer-agreement/) that governs its API limits
-  caching to 24 hours without authorization. Saved items follow IGDB's FAQ and keep their data
-  (D-12), while the relay's cache keeps to 24 hours.
 - **Open Library's license:** it asserts no new rights, but warns that individual records may have
   existing rights issues. Its pages do not state CC0.
 - **Local AI use:** TMDB's terms prohibit training AI systems on its content, so never put its data

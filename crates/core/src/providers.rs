@@ -154,8 +154,7 @@ pub fn search_with_key(
         MediaKind::Book => open_library::search(query),
         MediaKind::Game => match igdb_credentials {
             Some((client_id, client_secret)) => {
-                let token = igdb::token(client_id, client_secret)?;
-                igdb::search(client_id, &token.value, query)
+                igdb::search_with_credentials(client_id, client_secret, query)
             }
             None => relay::search_games(relay_url, query),
         },
@@ -176,8 +175,7 @@ pub fn details_with_key(
         },
         Source::Igdb => match igdb_credentials {
             Some((client_id, client_secret)) => {
-                let token = igdb::token(client_id, client_secret)?;
-                igdb::details(client_id, &token.value, external_id)
+                igdb::details_with_credentials(client_id, client_secret, external_id)
             }
             None => relay::game_details(relay_url, external_id),
         },

@@ -2,7 +2,8 @@ use crate::http;
 use crate::providers::{Candidate, Source};
 use crate::{Error, Result};
 use serde::Deserialize;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const BASE_URL: &str = "https://api.igdb.com/v4";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
@@ -54,8 +55,150 @@ impl ApiGame {
     }
 }
 
+const REFRESH_MARGIN_SECONDS: u64 = 60;
+
+static USER_TOKENS: TokenCache = TokenCache::new();
+
+struct CachedToken {
+    client_id: String,
+    client_secret: String,
+    value: String,
+    expires_at: u64,
+}
+
+pub struct TokenCache {
+    cached: Mutex<Option<CachedToken>>,
+}
+
+impl Default for TokenCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TokenCache {
+    pub const fn new() -> Self {
+        Self {
+            cached: Mutex::new(None),
+        }
+    }
+
+    fn token(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        now: u64,
+        fetch: &dyn Fn() -> Result<IgdbToken>,
+    ) -> Result<(String, bool)> {
+        let mut cached = self
+            .cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(token) = cached.as_ref()
+            && token.client_id == client_id
+            && token.client_secret == client_secret
+            && token.expires_at > now.saturating_add(REFRESH_MARGIN_SECONDS)
+        {
+            return Ok((token.value.clone(), true));
+        }
+
+        let fresh = fetch()?;
+        let value = fresh.value.clone();
+        *cached = Some(CachedToken {
+            client_id: client_id.to_owned(),
+            client_secret: client_secret.to_owned(),
+            value: fresh.value,
+            expires_at: now.saturating_add(fresh.expires_in),
+        });
+        Ok((value, false))
+    }
+
+    fn forget(&self) {
+        *self
+            .cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    pub fn with_token<T>(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        now: u64,
+        fetch: &dyn Fn() -> Result<IgdbToken>,
+        call: &dyn Fn(&str) -> Result<T>,
+    ) -> Result<T> {
+        let (token, reused) = self.token(client_id, client_secret, now, fetch)?;
+        match call(&token) {
+            Err(Error::Unauthorized) if reused => {
+                self.forget();
+                let (fresh, _) = self.token(client_id, client_secret, now, fetch)?;
+                call(&fresh)
+            }
+            result => result,
+        }
+    }
+}
+
+pub fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+pub fn search_with_credentials(
+    client_id: &str,
+    client_secret: &str,
+    query: &str,
+) -> Result<Vec<Candidate>> {
+    USER_TOKENS.with_token(
+        client_id,
+        client_secret,
+        unix_now(),
+        &|| token(client_id, client_secret),
+        &|access| search(client_id, access, query),
+    )
+}
+
+pub fn details_with_credentials(
+    client_id: &str,
+    client_secret: &str,
+    id: &str,
+) -> Result<Candidate> {
+    USER_TOKENS.with_token(
+        client_id,
+        client_secret,
+        unix_now(),
+        &|| token(client_id, client_secret),
+        &|access| details(client_id, access, id),
+    )
+}
+
 pub fn token(client_id: &str, client_secret: &str) -> Result<IgdbToken> {
     token_at(TOKEN_URL, client_id, client_secret, http::TIMEOUT)
+}
+
+fn search_clause(query: &str) -> String {
+    let cleaned: String = query
+        .chars()
+        .map(|character| match character {
+            '"' | '\\' => ' ',
+            character if character.is_control() => ' ',
+            character => character,
+        })
+        .collect();
+    format!(
+        "search \"{}\"; fields {FIELDS}; limit 20;",
+        cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+    )
+}
+
+fn details_clause(id: &str) -> Result<String> {
+    if id.is_empty() || !id.chars().all(|character| character.is_ascii_digit()) {
+        return Err(Error::HttpStatus { code: 404 });
+    }
+    Ok(format!("where id = {id}; fields {FIELDS};"))
 }
 
 fn token_at(
@@ -89,8 +232,7 @@ fn search_at(
     query: &str,
     timeout: Duration,
 ) -> Result<Vec<Candidate>> {
-    let body = format!("search \"{query}\"; fields {FIELDS}; limit 20;");
-    let text = post(base_url, client_id, token, &body, timeout)?;
+    let text = post(base_url, client_id, token, &search_clause(query), timeout)?;
     parse_search(&text)
 }
 
@@ -105,8 +247,7 @@ fn details_at(
     id: &str,
     timeout: Duration,
 ) -> Result<Candidate> {
-    let body = format!("where id = {id}; fields {FIELDS};");
-    let text = post(base_url, client_id, token, &body, timeout)?;
+    let text = post(base_url, client_id, token, &details_clause(id)?, timeout)?;
     parse_details(&text)
 }
 
@@ -184,10 +325,140 @@ fn civil_year(days: i64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FIELDS, IMAGE_BASE_URL, civil_year, details_at, parse_details, parse_search, parse_token,
-        search_at, token_at, year_from_unix,
+        FIELDS, IMAGE_BASE_URL, IgdbToken, TokenCache, civil_year, details_at, details_clause,
+        parse_details, parse_search, parse_token, search_at, search_clause, token_at,
+        year_from_unix,
     };
     use crate::Error;
+    use std::cell::Cell;
+
+    fn issued(value: &str, expires_in: u64) -> crate::Result<IgdbToken> {
+        Ok(IgdbToken {
+            value: value.to_owned(),
+            expires_in,
+        })
+    }
+
+    #[test]
+    fn a_token_is_reused_until_it_nears_expiry() {
+        let cache = TokenCache::new();
+        let fetches = Cell::new(0);
+        let fetch = || {
+            fetches.set(fetches.get() + 1);
+            issued(&format!("token-{}", fetches.get()), 1_000)
+        };
+        let echo = |token: &str| Ok(token.to_owned());
+
+        assert_eq!(
+            cache.with_token("id", "secret", 0, &fetch, &echo).unwrap(),
+            "token-1"
+        );
+        assert_eq!(
+            cache
+                .with_token("id", "secret", 500, &fetch, &echo)
+                .unwrap(),
+            "token-1"
+        );
+        assert_eq!(
+            cache
+                .with_token("id", "secret", 950, &fetch, &echo)
+                .unwrap(),
+            "token-2"
+        );
+        assert_eq!(fetches.get(), 2);
+    }
+
+    #[test]
+    fn changed_keys_get_their_own_token() {
+        let cache = TokenCache::new();
+        let fetches = Cell::new(0);
+        let fetch = || {
+            fetches.set(fetches.get() + 1);
+            issued(&format!("token-{}", fetches.get()), 1_000)
+        };
+        let echo = |token: &str| Ok(token.to_owned());
+
+        cache.with_token("id", "secret", 0, &fetch, &echo).unwrap();
+        assert_eq!(
+            cache.with_token("id", "other", 1, &fetch, &echo).unwrap(),
+            "token-2"
+        );
+        assert_eq!(
+            cache
+                .with_token("other", "other", 2, &fetch, &echo)
+                .unwrap(),
+            "token-3"
+        );
+    }
+
+    #[test]
+    fn a_rejected_cached_token_is_replaced_once() {
+        let cache = TokenCache::new();
+        let fetches = Cell::new(0);
+        let fetch = || {
+            fetches.set(fetches.get() + 1);
+            issued(&format!("token-{}", fetches.get()), 1_000)
+        };
+        cache
+            .with_token("id", "secret", 0, &fetch, &|token: &str| {
+                Ok(token.to_owned())
+            })
+            .unwrap();
+        let only_fresh = |token: &str| {
+            if token == "token-1" {
+                Err(Error::Unauthorized)
+            } else {
+                Ok(token.to_owned())
+            }
+        };
+
+        assert_eq!(
+            cache
+                .with_token("id", "secret", 1, &fetch, &only_fresh)
+                .unwrap(),
+            "token-2"
+        );
+    }
+
+    #[test]
+    fn a_rejected_new_token_is_not_retried() {
+        let cache = TokenCache::new();
+        let fetches = Cell::new(0);
+        let fetch = || {
+            fetches.set(fetches.get() + 1);
+            issued("token", 1_000)
+        };
+        let reject = |_: &str| -> crate::Result<String> { Err(Error::Unauthorized) };
+
+        assert!(matches!(
+            cache.with_token("id", "secret", 0, &fetch, &reject),
+            Err(Error::Unauthorized)
+        ));
+        assert_eq!(fetches.get(), 1);
+    }
+
+    #[test]
+    fn a_search_cannot_close_the_quoted_string() {
+        let clause = search_clause(r#"zelda"; fields *; limit 500; where id = 1 \"#);
+
+        assert_eq!(
+            clause,
+            format!(
+                "search \"zelda ; fields *; limit 500; where id = 1\"; fields {FIELDS}; limit 20;"
+            )
+        );
+        assert_eq!(clause.matches('"').count(), 2);
+    }
+
+    #[test]
+    fn details_accept_only_numeric_ids() {
+        assert_eq!(
+            details_clause("1942").unwrap(),
+            format!("where id = 1942; fields {FIELDS};")
+        );
+        assert!(details_clause("1942; fields *").is_err());
+        assert!(details_clause("").is_err());
+    }
     use crate::http::test_server::{TEST_TIMEOUT, serve};
     use crate::providers::{Candidate, Source};
 
