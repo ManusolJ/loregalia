@@ -1,4 +1,5 @@
 use crate::{Error, Result};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 pub(crate) const USER_AGENT: &str = concat!(
@@ -7,6 +8,9 @@ pub(crate) const USER_AGENT: &str = concat!(
     " (+https://github.com/ManusolJ/loregalia)"
 );
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(10);
+
+static AGENT: LazyLock<ureq::Agent> =
+    LazyLock::new(|| ureq::Agent::config_builder().build().into());
 
 pub(crate) fn get_text(
     url: &str,
@@ -48,11 +52,12 @@ fn send(
     bearer_token: Option<&str>,
     timeout: Duration,
 ) -> Result<ureq::http::Response<ureq::Body>> {
-    let config = ureq::Agent::config_builder()
+    let mut request = AGENT
+        .get(url)
+        .config()
         .timeout_global(Some(timeout))
-        .build();
-    let agent: ureq::Agent = config.into();
-    let mut request = agent.get(url).header("User-Agent", USER_AGENT);
+        .build()
+        .header("User-Agent", USER_AGENT);
 
     if let Some(token) = bearer_token {
         request = request.header("Authorization", &format!("Bearer {token}"));
@@ -71,11 +76,12 @@ fn post(
     body: &str,
     timeout: Duration,
 ) -> Result<ureq::http::Response<ureq::Body>> {
-    let config = ureq::Agent::config_builder()
+    let mut request = AGENT
+        .post(url)
+        .config()
         .timeout_global(Some(timeout))
-        .build();
-    let agent: ureq::Agent = config.into();
-    let mut request = agent.post(url).header("User-Agent", USER_AGENT);
+        .build()
+        .header("User-Agent", USER_AGENT);
 
     for &(name, value) in headers {
         request = request.header(name, value);
@@ -167,6 +173,27 @@ pub(crate) mod test_server {
         format!("http://{address}")
     }
 
+    pub(crate) fn serve_on_one_connection(responses: usize, body: &[u8]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let response = [
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes(),
+            body.to_vec(),
+        ]
+        .concat();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            for _ in 0..responses {
+                read_request(&mut stream);
+                let _ = stream.write_all(&response);
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        });
+
+        format!("http://{address}")
+    }
+
     pub(crate) fn refuse() -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -178,8 +205,18 @@ pub(crate) mod test_server {
 
 #[cfg(test)]
 mod tests {
-    use super::test_server::{TEST_TIMEOUT, refuse, serve, serve_silently};
+    use super::test_server::{
+        TEST_TIMEOUT, refuse, serve, serve_on_one_connection, serve_silently,
+    };
     use super::{Error, get_bytes, get_text, post_text};
+
+    #[test]
+    fn requests_to_one_host_reuse_the_connection() {
+        let base = serve_on_one_connection(2, b"ok");
+
+        assert_eq!(get_text(&base, &[], None, TEST_TIMEOUT).unwrap(), "ok");
+        assert_eq!(get_text(&base, &[], None, TEST_TIMEOUT).unwrap(), "ok");
+    }
 
     #[test]
     fn a_rejected_token_is_unauthorized() {

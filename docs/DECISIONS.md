@@ -44,6 +44,8 @@ one, move it to Decided, with the date.
 | D-29 | The data folder is `%APPDATA%\loregalia`; an old `com.manu.loregalia` folder is renamed at startup | A clean path the owner can find, without losing anyone's library | 2026-11-11 |
 | D-30 | An optional portable zip keeps its data beside the `.exe`, marked by a `portable` file | Runs from a USB stick or a synced folder, with no installer | 2026-11-11 |
 | D-32 | User API keys live in Windows Credential Manager, through `keyring-core` and `windows-native-keyring-store`; an old `api-keys.json` is moved in at startup | Keys are secrets, and a plain-text file beside the library is easy to copy or sync by accident | 2026-11-13 |
+| D-33 | IGDB data may be stored and served beyond 24 hours. The relay keeps searches for 7 days and game details for 30 | IGDB's FAQ (questions 3 and 5) prefers that apps store and serve its data, which is the written permission the Twitch agreement's storage clause allows. Details stay within 30 days because IGDB removes a replaced image after 30 days | 2026-11-14 |
+| D-34 | Covers are cached on disk, capped at 200 MB, oldest first; TMDB covers are refreshed after 150 days | About 25 KB a cover; covers show offline and are not downloaded on every launch, within each source's terms | 2026-11-14 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 

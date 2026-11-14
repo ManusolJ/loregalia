@@ -42,6 +42,7 @@ fn main() {
         .with_assets(AllAssets)
         .run(move |cx| {
             loregalia_app::init(cx, theme);
+            loregalia_app::use_cover_cache(&storage, cx);
 
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {

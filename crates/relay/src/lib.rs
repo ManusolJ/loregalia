@@ -1,9 +1,11 @@
 pub mod app;
 pub mod cache;
+pub mod coalesce;
 pub mod config;
 pub mod error;
 pub mod igdb;
 pub mod rate_limit;
+pub mod throttle;
 pub mod tmdb;
 
 pub use app::{AppState, router};

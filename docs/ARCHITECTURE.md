@@ -107,10 +107,13 @@ them.
 - Save each API's real response as a fixture the first time you call it. Tests never use the network.
 - Remote covers through `img()` need an HTTP client installed with `cx.set_http_client(...)`. Native
   builds fail every request until one is set.
+- Covers are cached in the data folder's `covers` folder, capped at 200 MB with the oldest removed
+  first. TMDB covers are fetched again after 150 days and never kept past 180. Covers of deleted items
+  are removed at startup (D-34). Requests share one pooled connection per host.
 
 ## Relay
 
-Built for TMDB search and details; IGDB comes next (D-11, D-24). Its configuration, endpoints and
+It serves TMDB and IGDB search and details (D-11, D-24). Its configuration, endpoints and
 cache are in `crates/relay/README.md`. It runs on the owner's server at home for now, and moves to a VPS
 if the app grows (D-26). Its code lives in `crates/relay` (D-27), and it ships as its own binary,
 deployed separately from the app.
@@ -122,11 +125,13 @@ deployed separately from the app.
   address, so moving it to a VPS needs no app update.
 - **Public by design:** a desktop app cannot hide a password, so anyone can call the relay. Narrow
   endpoints and per-client rate limits are the protection. IGDB's 4 requests per second is shared by
-  every user.
-- **Cache within each source's limits:** TMDB for six months at most, IGDB for 24 hours
-  (`METADATA.md`).
-- **No personal data:** do not store searches, and keep IP addresses only as long as rate limiting
-  needs them. Say so in the app's privacy note.
+  every user, so the relay queues calls to each source and makes one call for identical searches that
+  arrive together.
+- **Cache within each source's limits:** searches for 7 days and details for 30 days. TMDB allows six
+  months; IGDB allows storing (D-33), but removes a replaced image after 30 days, so details that
+  hold a cover URL stay within that (`METADATA.md`).
+- **No personal data:** cache results by search text only, never with who searched, and keep IP
+  addresses only as long as rate limiting needs them. Say so in the app's privacy note.
 - **The app works without it:** saved items, hand entry, TVmaze and Open Library keep working when
   the relay is down, and a user's own keys skip it entirely.
 - **AniDB later:** when anime moves to AniDB (D-28), the relay holds the registered client, caches

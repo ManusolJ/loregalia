@@ -22,7 +22,9 @@ impl Cache {
             std::fs::create_dir_all(parent)?;
         }
 
-        Self::from_connection(Connection::open(path)?)
+        let connection = Connection::open(path)?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        Self::from_connection(connection)
     }
 
     pub fn open_in_memory() -> Result<Self, CacheError> {

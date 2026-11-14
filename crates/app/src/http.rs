@@ -5,15 +5,27 @@ use gpui_kit::BackgroundExecutor;
 use gpui_kit::http_client::{
     AsyncBody, HttpClient, Method, Request, Response, StatusCode, Url, http::HeaderValue,
 };
-use loregalia_core::images;
+use loregalia_core::images::{self, CoverCache};
+use std::time::SystemTime;
 
 pub struct ImageHttpClient {
     executor: BackgroundExecutor,
+    covers: Option<CoverCache>,
 }
 
 impl ImageHttpClient {
     pub fn new(executor: BackgroundExecutor) -> Self {
-        Self { executor }
+        Self {
+            executor,
+            covers: None,
+        }
+    }
+
+    pub fn with_cover_cache(executor: BackgroundExecutor, covers: CoverCache) -> Self {
+        Self {
+            executor,
+            covers: Some(covers),
+        }
     }
 }
 
@@ -39,9 +51,17 @@ impl HttpClient for ImageHttpClient {
 
         let url = request.uri().to_string();
         let executor = self.executor.clone();
+        let covers = self.covers.clone();
 
         Box::pin(async move {
-            let bytes = executor.spawn(async move { images::fetch(&url) }).await?;
+            let bytes = executor
+                .spawn(async move {
+                    match covers {
+                        Some(covers) => covers.fetch(&url, SystemTime::now(), &images::fetch),
+                        None => images::fetch(&url),
+                    }
+                })
+                .await?;
             Response::builder()
                 .status(StatusCode::OK)
                 .body(AsyncBody::from(bytes))
