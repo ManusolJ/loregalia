@@ -4620,3 +4620,25 @@ fn about_credits_every_source_and_explains_privacy(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn about_offers_an_optional_ko_fi_link(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("about-button", cx);
+        window.render_frame(cx);
+
+        let support = window.find("about-support");
+        assert!(support.visible());
+        assert_eq!(support.role(), Some(Role::Region));
+        assert_eq!(support.label(), Some("Support"));
+        let link = window.find("kofi-link");
+        assert!(link.visible());
+        assert_eq!(link.label(), Some("Support Loregalia on Ko-fi"));
+    })
+    .unwrap();
+}
