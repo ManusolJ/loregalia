@@ -1,0 +1,8 @@
+.git
+target
+**/*.db
+**/*.db-*
+**/*.log
+**/.env
+**/.env.*
+**/relay.env

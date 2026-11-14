@@ -17,7 +17,7 @@ use crate::theme::{DISPLAY_FONT, Palette};
 const SOURCE_COLUMN: f32 = 112.0;
 const TMDB_LOGO_HEIGHT: f32 = 12.0;
 const TMDB_LOGO_RATIO: f32 = 273.42 / 35.52;
-const TMDB_NOTICE: &str = "This product uses the TMDB API but is not endorsed or certified by TMDB";
+const TMDB_NOTICE: &str = "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB";
 
 static TMDB_LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
     Arc::new(Image::from_bytes(

@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows installer and portable zip
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      LOREGALIA_RELAY_URL: ${{ vars.LOREGALIA_RELAY_URL }}
+      CARGO_PACKAGER_VERSION: 0.11.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the version
+        shell: pwsh
+        run: |
+          $line = Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1
+          $version = $line.Matches[0].Groups[1].Value
+          if ("${{ github.ref_name }}" -ne "v$version") {
+            throw "Tag ${{ github.ref_name }} does not match the workspace version $version."
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Check the relay address
+        shell: pwsh
+        run: |
+          if (-not $env:LOREGALIA_RELAY_URL) {
+            throw "Set the repository variable LOREGALIA_RELAY_URL to the relay's https address."
+          }
+          if (-not $env:LOREGALIA_RELAY_URL.StartsWith("https://")) {
+            throw "LOREGALIA_RELAY_URL must start with https://."
+          }
+
+      - name: Cache Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup/toolchains
+          key: rustup-toolchains-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Run the gate
+        run: cargo xtask gate
+
+      - name: Cache cargo-packager
+        id: packager-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-packager.exe
+          key: cargo-packager-${{ env.CARGO_PACKAGER_VERSION }}
+
+      - name: Install cargo-packager
+        if: steps.packager-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-packager --locked --version ${{ env.CARGO_PACKAGER_VERSION }}
+
+      - name: Build the installer
+        working-directory: crates/app
+        run: cargo packager --release
+
+      - name: Build the portable zip
+        shell: pwsh
+        run: ./scripts/package-portable.ps1
+
+      - name: Check the build points at the relay
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("target/release/loregalia.exe")
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if (-not $text.Contains($env:LOREGALIA_RELAY_URL)) {
+            throw "loregalia.exe does not contain the relay address."
+          }
+
+      - name: Write checksums
+        shell: pwsh
+        run: |
+          Set-Location target/installer
+          $files = Get-ChildItem -File | Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.zip" }
+          if ($files.Count -lt 2) { throw "Expected the installer and the portable zip." }
+          $files | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
+
+      - name: Create a draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem target/installer -File |
+            Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.zip" -or $_.Name -eq "SHA256SUMS.txt" } |
+            ForEach-Object { $_.FullName }
+          gh release create "${{ github.ref_name }}" @assets --draft --generate-notes --title "Loregalia $env:VERSION"

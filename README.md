@@ -11,11 +11,20 @@ of what you have finished. It brings movies, shows, books and games together in 
 
 ## Status
 
-**Early development: not ready to use yet.** Lists, items, statuses, tags, seasons, lookup for
-shows, books and movies, covers, a theme setting, an installer and a portable zip work. Game
-lookup (IGDB) is next. See the [roadmap](docs/ROADMAP.md).
+**Version 1.0.** Lists, items, statuses, tags, seasons, lookup for shows, movies, books and games,
+covers, keyboard navigation, a theme setting, an installer and a portable zip all work. What comes
+after 1.0 is in the [roadmap](docs/ROADMAP.md).
 
-## Planned features
+## Download
+
+Get the installer or the portable zip from
+[Releases](https://github.com/ManusolJ/loregalia/releases). Each release lists SHA-256 checksums in
+`SHA256SUMS.txt`.
+
+The builds are not code-signed yet, so Windows SmartScreen may warn about an unknown publisher.
+Choose **More info**, then **Run anyway**.
+
+## Features
 
 Loregalia is a planner, not a progress tracker. It helps you decide what to pick up next, and it does
 not record which episode or page you stopped at.
@@ -91,8 +100,24 @@ powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1
 
 Installed copies keep their data in `%APPDATA%\loregalia`.
 
-Movie search goes to the relay at the address `LOREGALIA_RELAY_URL` held when the app was built,
-or to `http://127.0.0.1:8080` if it was not set.
+Movie and game searches go to the relay at the address `LOREGALIA_RELAY_URL` held when the app was
+built, or to `http://127.0.0.1:8080` if it was not set. To run the relay, see
+[crates/relay](crates/relay/README.md).
+
+### Release a version
+
+1. Set the version in the workspace `Cargo.toml`, run `cargo xtask gate`, and merge the change.
+2. Make sure the repository variable `LOREGALIA_RELAY_URL` holds the relay's `https://` address.
+3. Tag the merged commit and push the tag:
+
+   ```powershell
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+The [release workflow](.github/workflows/release.yml) checks that the tag matches the version, runs
+the gate, builds the installer and the portable zip with the relay address, and creates a **draft**
+release with both files and their checksums. Read it over on GitHub, then publish it.
 
 ## Project layout
 
@@ -100,11 +125,31 @@ or to `http://127.0.0.1:8080` if it was not set.
 crates/app    GPUI views, theme and window
 crates/core   Domain logic, storage and metadata providers, with no UI dependency
 crates/relay  The metadata relay server that holds the TMDB and IGDB keys
+deploy/relay  Docker files to run the relay behind a Cloudflare Tunnel
 xtask         The gate and project rules
 docs/         Product, architecture, design, decisions and roadmap
 scripts/      Linux and sandbox setup
 AGENTS.md     Instructions for coding agents
 ```
+
+## Why it's built this way
+
+The full list, with dates, is in [DECISIONS.md](docs/DECISIONS.md).
+
+| Decision | Why |
+| -------- | --- |
+| Local-first, with one SQLite file and no account | A planner should work offline, and your library should be yours to keep and back up (D-01, D-12) |
+| Rust and GPUI, through a pinned `gpui-kit` | A fast native app, with UI tests that run without a window; pinned because `gpui-kit` is pre-1.0 (A-01) |
+| Windows first; Linux only builds and tests | Windows is where it is used and tested by hand; Linux is where the agents work (A-04) |
+| No keys in the app; a small relay holds them | Nobody has to sign up for API keys, and the IGDB secret never leaves the server. Your own keys skip the relay (D-11) |
+| Your own keys live in Windows Credential Manager | Keys are secrets, and a file beside your library is easy to copy or sync by accident (D-32) |
+| TVmaze for shows, TMDB for movies, Open Library for books, IGDB for games | Each was the best free source for its kind with terms that allow this use; see [METADATA.md](docs/METADATA.md) (D-09, D-10, D-20) |
+| Saved items keep their source data | Your library still works when a source is down; TMDB data is refreshed before its six-month limit (D-12) |
+| UUIDs as IDs | Sync between computers stays possible later without rewriting every table (D-02) |
+| Seasons are their own items with their own status | You can plan one season at a time (D-03) |
+| Statuses in five categories with labels per media kind | "To read" and "To play" read naturally, while filters still work across kinds (D-04) |
+| Free, with no paid features | Keeps the app non-commercial under TMDB's and IGDB's terms (D-25) |
+| An NSIS installer for the current user, plus a portable zip | No administrator rights needed, and the zip runs from a USB stick or a synced folder (D-16, D-30) |
 
 ## How it's built
 

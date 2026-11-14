@@ -1,0 +1,42 @@
+name: loregalia-relay
+
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: deploy/relay/Dockerfile
+    image: loregalia-relay:local
+    container_name: loregalia-relay
+    restart: unless-stopped
+    network_mode: host
+    env_file: relay.env
+    environment:
+      LOREGALIA_RELAY_BIND: 127.0.0.1:${RELAY_PORT:-8082}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    volumes:
+      - relay-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/${RELAY_PORT:-8082} && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200'"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  relay-data:
