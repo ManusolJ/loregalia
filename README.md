@@ -41,15 +41,16 @@ you to rate, review or share anything.
 ### One library for everything
 
 Shows, movies, books and games sit side by side. **Up next** keeps what you are in the middle of at
-the top, and **Finished** keeps a record of what you completed. Filter by kind with one click.
+the top, and **Finished** keeps a record of what you completed and when. Browse it as a list or a grid
+of covers, search it with Ctrl+F, sort it, and filter it by kind or tag.
 
 <p align="center">
-  <img src="docs/images/library-light.png" alt="The library in the light theme" width="820">
+  <img src="docs/images/library-light.png" alt="The library in the light theme with the sort and tag filters open" width="820">
 </p>
 
 ### Add things in seconds
 
-Type a title and pick the match. Covers, years and details come from **TVmaze** for shows,
+Type a title and pick the match. Covers and years come from **TVmaze** for shows,
 **TMDB** for movies, **Open Library** for books and **IGDB** for games. No account and no API keys
 needed. You can also type anything in by hand.
 
@@ -70,7 +71,7 @@ status, so you can finish season one and leave season two for later.
 ### Your own lists and tags
 
 Make lists like *Weekend queue* or *Cozy autumn*, in the order you want, and put an item in as many as
-you like. Tag lists and items with your own labels.
+you like. Tag lists and items with your own labels, then filter by them.
 
 <p align="center">
   <img src="docs/images/list-light.png" alt="The Cozy autumn list with a game, a book and a movie in a manual order" width="820">

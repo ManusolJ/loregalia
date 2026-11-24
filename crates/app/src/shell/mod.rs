@@ -1,5 +1,6 @@
 mod about_view;
 mod detail_view;
+mod find_view;
 mod items_view;
 mod lists_view;
 mod metadata_view;
@@ -33,8 +34,9 @@ use crate::startup::StorageState;
 use crate::theme::{DISPLAY_FONT, Palette};
 
 use detail_view::DOCKED_FROM;
+use find_view::FindState;
 use items_view::ItemEditor;
-use lists_view::Editor;
+use lists_view::{AddPicker, Editor};
 pub use metadata_view::{MetadataDetails, MetadataSearch};
 use metadata_view::{default_details, default_search};
 use seasons_view::SeasonEditor;
@@ -78,7 +80,7 @@ enum Screen {
     Settings,
 }
 
-actions!(shell, [Dismiss, Activate]);
+actions!(shell, [Dismiss, Activate, Find]);
 
 const SHELL_CONTEXT: &str = "Shell";
 const ITEM_ROW_CONTEXT: &str = "ItemRow";
@@ -86,6 +88,7 @@ const ITEM_ROW_CONTEXT: &str = "ItemRow";
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("escape", Dismiss, Some(SHELL_CONTEXT)),
+        KeyBinding::new("ctrl-f", Find, Some(SHELL_CONTEXT)),
         KeyBinding::new("enter", Activate, Some(ITEM_ROW_CONTEXT)),
         KeyBinding::new("space", Activate, Some(ITEM_ROW_CONTEXT)),
     ]);
@@ -125,7 +128,9 @@ pub struct Shell {
     confirm_delete: Option<String>,
     item_editor: Option<ItemEditor>,
     confirm_delete_item: Option<String>,
-    add_picker: Option<String>,
+    find: FindState,
+    add_picker: Option<AddPicker>,
+    list_picker: Option<String>,
     tag_editor: Option<TagEditor>,
     renaming_tag: Option<TagRename>,
     confirm_delete_tag: Option<String>,
@@ -248,7 +253,9 @@ impl Shell {
             confirm_delete: None,
             item_editor: None,
             confirm_delete_item: None,
+            find: FindState::default(),
             add_picker: None,
+            list_picker: None,
             tag_editor: None,
             renaming_tag: None,
             confirm_delete_tag: None,
@@ -290,10 +297,12 @@ impl Shell {
         self.selected = None;
         self.detail = None;
         self.close_editors();
+        self.clear_find();
     }
 
     fn has_inline_panel(&self) -> bool {
         self.add_picker.is_some()
+            || self.list_picker.is_some()
             || self.tag_editor.is_some()
             || self.renaming_tag.is_some()
             || self.confirm_delete_tag.is_some()
@@ -316,8 +325,11 @@ impl Shell {
         } else if self.has_editor() {
             self.close_editors();
             self.focus_handle.focus(window, cx);
+        } else if self.dismiss_search(window, cx) {
         } else if self.detail.is_some() {
             self.detail = None;
+        } else if self.find.panel_open {
+            self.find.panel_open = false;
         } else {
             cx.propagate();
             return;
@@ -360,6 +372,7 @@ impl Shell {
 
     fn close_inline_panels(&mut self) {
         self.add_picker = None;
+        self.list_picker = None;
         self.tag_editor = None;
         self.close_tag_panels();
         self.close_season_panels();
@@ -443,6 +456,7 @@ impl Shell {
                         this.item_tags = snapshot.item_tags;
                         this.list_tags = snapshot.list_tags;
                         this.seasons = snapshot.seasons;
+                        this.forget_missing_tags();
                         this.error = None;
                         this.start_metadata_refresh(cx);
                     }
@@ -464,7 +478,10 @@ impl Shell {
     }
 
     fn shelved(&self, shelf: Shelf) -> Vec<&items::Item> {
-        library::shelve(&self.items, &self.statuses, shelf, self.kind_filter)
+        let mut shelved = library::shelve(&self.items, &self.statuses, shelf, self.kind_filter);
+        shelved.retain(|item| self.find.filter.keeps(item, &self.item_tags));
+        library::sort_items(&mut shelved, self.find.sort);
+        shelved
     }
 
     fn shelf_count(&self, shelf: Shelf) -> usize {
@@ -538,9 +555,13 @@ impl Shell {
     fn shelf_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let shelved = self.shelved(self.shelf);
         if shelved.is_empty() {
-            return self.empty_element(palette, cx);
+            return if self.find.filter.is_active() {
+                Self::no_matches_element(palette, cx)
+            } else {
+                self.empty_element(palette, cx)
+            };
         }
-        let up_next = if self.shelf == Shelf::All && self.layout == settings::Layout::List {
+        let up_next = if self.shows_up_next() {
             self.shelved(Shelf::UpNext)
         } else {
             Vec::new()
@@ -652,7 +673,7 @@ impl Shell {
     fn header_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let list = self.selected_list();
         let (title, count) = match list {
-            Some(list) => (list.name.clone(), self.list_count(&list.id)),
+            Some(list) => (list.name.clone(), self.visible_members(&list.id).len()),
             None => (
                 self.shelf.label().to_owned(),
                 self.shelved(self.shelf).len(),
@@ -686,6 +707,7 @@ impl Shell {
                     .child(count.to_string()),
             )
             .child(div().flex_1())
+            .children(self.search_element(palette))
             .children(list.map(|list| Self::list_actions(list, cx)))
             .child(
                 Button::new("add-item")
@@ -722,8 +744,10 @@ impl Shell {
                 div()
                     .flex()
                     .items_center()
+                    .gap_2()
                     .child(Self::segmented(filters, palette))
                     .child(div().flex_1())
+                    .child(self.filter_button(true, cx))
                     .child(self.layout_switch(palette, cx))
                     .into_any_element()
             }
@@ -746,7 +770,8 @@ impl Shell {
                     .flex_col()
                     .gap_4()
                     .child(title_row)
-                    .child(toolbar),
+                    .child(toolbar)
+                    .children(self.filter_panel(list.is_none(), palette, cx)),
             )
             .into_any_element()
     }
@@ -1012,6 +1037,7 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_row_focus(cx);
+        self.ensure_search(window, cx);
         if window.focused(cx).is_none() {
             self.focus_handle.focus(window, cx);
         }
@@ -1042,6 +1068,7 @@ impl Render for Shell {
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::focus_search))
             .relative()
             .size_full()
             .flex()

@@ -62,6 +62,7 @@ impl Shell {
 
         self.screen = Screen::Library;
         self.close_editors();
+        self.clear_find();
         self.detail = None;
         self.item_editor = Some(ItemEditor {
             id: None,
@@ -497,6 +498,13 @@ impl Shell {
                             .text_xs()
                             .text_color(rgb(palette.muted))
                             .child(Self::item_metadata(item))
+                            .children(Self::finished_label(item).map(|finished| {
+                                div()
+                                    .id(format!("item-finished-{}", item.id))
+                                    .test_support()
+                                    .aria_label(finished.clone())
+                                    .child(format!("· {finished}"))
+                            }))
                             .children(tags.into_iter().map(|tag| {
                                 div()
                                     .id(format!("item-tag-{}-{}", item.id, tag.id))
@@ -740,7 +748,7 @@ impl Shell {
             .children(items.iter().enumerate().map(|(index, item)| {
                 let list_actions = list_id.map(|list_id| ListItemActions {
                     list_id,
-                    manual: self.sort == list_items::Sort::Manual,
+                    manual: self.sort == list_items::Sort::Manual && !self.find.filter.is_active(),
                     can_move_up: index > 0,
                     can_move_down: index + 1 < items.len(),
                 });

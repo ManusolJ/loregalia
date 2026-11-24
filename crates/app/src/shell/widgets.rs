@@ -4,7 +4,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, FontWeight, ObjectFit, Role, TestSupportExt, div, img, px, rgb,
 };
-use loregalia_core::{items, media::MediaKind, statuses, tags};
+use loregalia_core::{dates, items, media::MediaKind, statuses, tags};
 
 use super::Shell;
 use crate::theme::{DISPLAY_FONT, Palette, SELECTED_ALPHA};
@@ -356,6 +356,12 @@ impl Shell {
         }
 
         element.into_any_element()
+    }
+
+    pub(super) fn finished_label(item: &items::Item) -> Option<String> {
+        let date = dates::short(item.finished_on.as_deref()?)?;
+
+        Some(format!("Finished {date}"))
     }
 
     pub(super) fn item_metadata(item: &items::Item) -> String {

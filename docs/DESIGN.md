@@ -82,14 +82,18 @@ detail.
 
 - **Sidebar:** the app name, then Library (All items, Up next, Finished) and Lists, each row with
   its count, and Settings and About at the bottom.
-- **Main:** a page header with the title in the Display face, its count, list actions as icon
-  buttons and one primary Add item button, then a toolbar (kind filter on library views, sort and Add
-  existing item on lists, and the List or Grid switch on both). Header and content share one column,
+- **Main:** a page header with the title in the Display face, its count, a search box (Ctrl+F), list
+  actions as icon buttons and one primary Add item button, then a toolbar (kind filter on library
+  views, sort and Add existing item on lists, and Filter and the List or Grid switch on both). Header and content share one column,
   at most 1280 px wide and centered beyond that. Forms, Settings and About stay within 760 px.
 - **List:** rows split by a `line` divider, with statuses in their own 104 px column so they align.
   All items opens with an Up next shelf of 112 px covers for items in progress or on hold.
 - **Grid:** 144 px covers with title, kind, year and status, 12 px apart. Manual reordering is in the
   list. The choice is remembered in the `settings` table, and new libraries start as a list.
+- **Finding:** the search box matches every word of a title, ignoring accents and case. Sort and
+  filter opens a panel under the toolbar with the sort order and the tags; an item needs every chosen
+  tag. Leaving the page clears the search and the tags, not the sort. While a list is filtered, its
+  move buttons are hidden, because the neighbours you would move past are too.
 - **Forms** replace the page and its header. Add an item starts with the search box focused, and
   results show their cover; typing the title by hand is always offered below.
 - **Destructive actions** are quiet until confirmed: no fill on Delete, and the filled danger button
@@ -116,6 +120,7 @@ detail.
 | Disabled | 50% opacity, no hover change                                        |
 | Invalid  | `danger` border, plus a 12 px `danger` message; never color alone   |
 | Loading  | Blocks of `content` at 5%                                           |
+| No match | Its own empty state, never the empty library's, with Clear search and filters |
 | Empty    | An icon in a `surface` circle, what is empty, one hint, and an action when there is one |
 
 Color transitions take 150 ms. The detail drawer slides in over 180 ms. Nothing else moves on its

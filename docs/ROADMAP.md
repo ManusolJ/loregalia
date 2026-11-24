@@ -69,3 +69,11 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] No key in the repo or the installer; the project's keys live only on the relay
 - [ ] Human check on Windows: scaling at 100% and 150%, resizing, keyboard navigation
 - [x] README with the reasons behind each major decision
+
+## 6. After 1.1
+
+- [x] Cover grid (D-15) and the layout refresh
+- [x] Search the library, sort it, and filter by tag
+- [x] Add an item to lists from its details, and search when adding existing items to a list
+- [x] Show when an item was finished
+- [x] Indexes on the columns that deletes cascade through
