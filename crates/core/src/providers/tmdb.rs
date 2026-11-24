@@ -81,6 +81,7 @@ impl ApiMovie {
                 .poster_path
                 .map(|path| format!("{IMAGE_BASE_URL}{path}")),
             details: None,
+            edition: None,
         })
     }
 }

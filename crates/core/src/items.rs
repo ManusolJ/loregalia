@@ -438,6 +438,7 @@ mod tests {
             release_year: Some(2021),
             cover_url: Some("https://image.example/dune.jpg".to_owned()),
             details: None,
+            edition: None,
         };
 
         assert_eq!(

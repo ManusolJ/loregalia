@@ -132,6 +132,7 @@ impl ApiDoc {
                 .cover_i
                 .map(|cover| format!("{COVER_BASE_URL}/{cover}-M.jpg?default=false")),
             details: None,
+            edition: None,
         })
     }
 }

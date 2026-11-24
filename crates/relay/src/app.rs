@@ -26,6 +26,7 @@ const DAY_SECONDS: i64 = 24 * 60 * 60;
 const SEARCH_TTL_SECONDS: i64 = 7 * DAY_SECONDS;
 const DETAILS_TTL_SECONDS: i64 = 30 * DAY_SECONDS;
 const DETAILS_VERSION: &str = "v2";
+const SEARCH_VERSION: &str = "v2";
 const MAX_CACHE_ENTRIES: usize = 20_000;
 const MAX_QUERY_CHARS: usize = 100;
 const MAX_ID_DIGITS: usize = 20;
@@ -204,7 +205,7 @@ async fn search_games(
 
     cached(
         &state,
-        format!("igdb:search:{query}"),
+        format!("igdb:search:{SEARCH_VERSION}:{query}"),
         now,
         SEARCH_TTL_SECONDS,
         async move {
@@ -375,6 +376,7 @@ mod tests {
             release_year: Some(2021),
             cover_url: Some("https://image.example/dune.jpg".to_owned()),
             details: None,
+            edition: None,
         }
     }
 
@@ -644,6 +646,7 @@ mod tests {
                 "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg".to_owned(),
             ),
             details: None,
+            edition: None,
         }
     }
 
@@ -897,5 +900,26 @@ mod tests {
         );
         assert_eq!(normalized_query("   "), None);
         assert_eq!(normalized_query(&"a".repeat(MAX_QUERY_CHARS + 1)), None);
+    }
+
+    #[tokio::test]
+    async fn game_searches_cached_before_ranking_existed_are_fetched_again() {
+        let fake = Arc::new(FakeIgdb::ok());
+        let state = state_with_igdb(Some(fake.clone()));
+        let now = crate::cache::now();
+        state
+            .cache
+            .put(
+                "igdb:search:outer wilds",
+                r#"{"results":[]}"#,
+                now + 1_000,
+                now,
+                100,
+            )
+            .unwrap();
+
+        let found = game_search(state, "outer wilds").await.unwrap();
+        assert_eq!(found.results, vec![game_candidate()]);
+        assert_eq!(*fake.searches.lock().unwrap(), 1);
     }
 }

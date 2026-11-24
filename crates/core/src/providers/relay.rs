@@ -94,6 +94,7 @@ mod tests {
             release_year: Some(2021),
             cover_url: Some("https://image.example/dune.jpg".to_owned()),
             details: None,
+            edition: None,
         }
     }
 
@@ -200,6 +201,7 @@ mod tests {
             release_year: Some(2019),
             cover_url: None,
             details: None,
+            edition: None,
         };
         let body = serde_json::to_string(&SearchResponse {
             results: vec![game.clone()],
@@ -222,6 +224,7 @@ mod tests {
             release_year: Some(2019),
             cover_url: None,
             details: None,
+            edition: None,
         };
         let body = serde_json::to_string(&game).unwrap();
         let base = serve("200 OK", body.as_bytes());

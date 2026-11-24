@@ -62,6 +62,8 @@ pub struct Candidate {
     pub cover_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<Details>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edition: Option<String>,
 }
 
 pub(crate) fn numeric(id: &str) -> Result<&str> {
@@ -376,6 +378,7 @@ mod tests {
             release_year: Some(2021),
             cover_url: None,
             details: None,
+            edition: None,
         }
     }
 
@@ -413,6 +416,7 @@ mod tests {
             release_year: Some(2019),
             cover_url: None,
             details: None,
+            edition: None,
         };
         let body = serde_json::to_string(&crate::providers::relay::SearchResponse {
             results: vec![game.clone()],

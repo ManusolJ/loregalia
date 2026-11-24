@@ -131,7 +131,7 @@ pub fn matches_text(title: &str, text: &str) -> bool {
         .all(|word| title.contains(word))
 }
 
-fn fold(text: &str) -> String {
+pub(crate) fn fold(text: &str) -> String {
     text.to_lowercase()
         .chars()
         .filter(|letter| !('\u{0300}'..='\u{036f}').contains(letter))

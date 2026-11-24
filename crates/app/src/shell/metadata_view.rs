@@ -62,9 +62,12 @@ pub(super) fn default_details(keys: keys::ApiKeys) -> MetadataDetails {
 }
 
 pub(super) fn candidate_label(candidate: &Candidate, already_added: bool) -> String {
-    let label = match candidate.release_year {
-        Some(year) => format!("{} ({year})", candidate.title),
-        None => candidate.title.clone(),
+    let year = candidate.release_year.map(|year| year.to_string());
+    let facts: Vec<String> = year.into_iter().chain(candidate.edition.clone()).collect();
+    let label = if facts.is_empty() {
+        candidate.title.clone()
+    } else {
+        format!("{} ({})", candidate.title, facts.join(", "))
     };
 
     if already_added {
@@ -310,6 +313,10 @@ impl Shell {
         let year = candidate
             .release_year
             .map_or_else(|| "Year unknown".to_owned(), |year| year.to_string());
+        let facts = match &candidate.edition {
+            Some(edition) => format!("{year} · {edition}"),
+            None => year,
+        };
 
         div()
             .w_full()
@@ -343,7 +350,7 @@ impl Shell {
                             .font_weight(FontWeight::MEDIUM)
                             .child(candidate.title.clone()),
                     )
-                    .child(div().text_xs().text_color(rgb(palette.muted)).child(year)),
+                    .child(div().text_xs().text_color(rgb(palette.muted)).child(facts)),
             )
             .when(already_added, |row| {
                 row.child(
