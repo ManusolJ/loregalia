@@ -25,6 +25,18 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+impl Error {
+    pub fn is_temporary(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionFailed
+                | Self::RateLimited
+                | Self::RelayUnavailable
+                | Self::HttpStatus { code: 500..=599 }
+        )
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -116,5 +128,28 @@ impl From<rusqlite::Error> for Error {
 impl From<serde_json::Error> for Error {
     fn from(error: serde_json::Error) -> Self {
         Self::Json(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn only_failures_that_can_pass_are_temporary() {
+        for error in [
+            Error::ConnectionFailed,
+            Error::RateLimited,
+            Error::HttpStatus { code: 503 },
+        ] {
+            assert!(error.is_temporary(), "{error}");
+        }
+        for error in [
+            Error::HttpStatus { code: 404 },
+            Error::BlockedAddress,
+            Error::Unauthorized,
+        ] {
+            assert!(!error.is_temporary(), "{error}");
+        }
     }
 }

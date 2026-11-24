@@ -1870,7 +1870,7 @@ fn the_image_http_client_fetches_a_cover(cx: &mut TestAppContext) {
 
     let client = ImageHttpClient::with_download(
         cx.background_executor.clone(),
-        loregalia_core::images::download,
+        Arc::new(loregalia_core::images::download),
     );
     let request = Request::builder()
         .method(Method::GET)
@@ -5878,4 +5878,88 @@ fn a_port_is_labelled_in_the_search_results(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+type CoverResult = Arc<std::sync::Mutex<Option<bool>>>;
+
+fn fetch_cover(
+    cx: &mut TestAppContext,
+    answer: impl Fn(usize) -> CoreResult<Vec<u8>> + Send + Sync + 'static,
+) -> (Arc<std::sync::atomic::AtomicUsize>, CoverResult) {
+    use gpui_kit::http_client::{Method, Request};
+    use loregalia_app::http::ImageHttpClient;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let tries = Arc::new(AtomicUsize::new(0));
+    let counted = tries.clone();
+    let client = ImageHttpClient::with_download(
+        cx.background_executor.clone(),
+        Arc::new(move |_| answer(counted.fetch_add(1, Ordering::SeqCst) + 1)),
+    );
+    let result = CoverResult::default();
+    let slot = result.clone();
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("https://images.igdb.com/cover.jpg")
+        .body(AsyncBody::default());
+    if let Ok(request) = request {
+        cx.background_executor
+            .spawn(async move {
+                let succeeded = client.send(request).await.is_ok();
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(succeeded);
+                }
+            })
+            .detach();
+    }
+    cx.run_until_parked();
+    (tries, result)
+}
+
+#[gpui_kit::test]
+fn a_cover_that_failed_is_tried_again_later(cx: &mut TestAppContext) {
+    use loregalia_app::http::COVER_RETRIES;
+    use std::sync::atomic::Ordering;
+
+    let (tries, result) = fetch_cover(cx, |attempt| {
+        if attempt < 3 {
+            Err(Error::ConnectionFailed)
+        } else {
+            Ok(b"cover".to_vec())
+        }
+    });
+    assert_eq!(tries.load(Ordering::SeqCst), 1);
+    assert_eq!(*result.lock().unwrap(), None);
+
+    cx.background_executor.advance_clock(COVER_RETRIES[0]);
+    cx.run_until_parked();
+    assert_eq!(tries.load(Ordering::SeqCst), 2);
+
+    cx.background_executor.advance_clock(COVER_RETRIES[1]);
+    cx.run_until_parked();
+    assert_eq!(tries.load(Ordering::SeqCst), 3);
+    assert_eq!(*result.lock().unwrap(), Some(true));
+}
+
+#[gpui_kit::test]
+fn a_cover_that_keeps_failing_is_given_up(cx: &mut TestAppContext) {
+    use loregalia_app::http::COVER_RETRIES;
+    use std::sync::atomic::Ordering;
+
+    let (tries, result) = fetch_cover(cx, |_| Err(Error::ConnectionFailed));
+    for _ in 0..4 {
+        cx.background_executor.advance_clock(COVER_RETRIES[1]);
+        cx.run_until_parked();
+    }
+    assert_eq!(tries.load(Ordering::SeqCst), 3);
+    assert_eq!(*result.lock().unwrap(), Some(false));
+}
+
+#[gpui_kit::test]
+fn a_cover_that_does_not_exist_is_not_tried_again(cx: &mut TestAppContext) {
+    use std::sync::atomic::Ordering;
+
+    let (tries, result) = fetch_cover(cx, |_| Err(Error::HttpStatus { code: 404 }));
+    assert_eq!(*result.lock().unwrap(), Some(false));
+    assert_eq!(tries.load(Ordering::SeqCst), 1);
 }

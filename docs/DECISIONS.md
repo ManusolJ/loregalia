@@ -49,6 +49,7 @@ one, move it to Decided, with the date.
 | D-35 | Items keep details from their source: synopsis, length, genres, creator and full release date, in English, with no ratings. They live in the source data, so no migration is needed, and never replace what the user typed | PRODUCT.md promises an item's details, and choosing what is next needs its length and what it is about | 2026-11-24 |
 | D-36 | Missing details fill in by themselves, one item every 4 seconds, newest first. Three failures in a row or one rate limit stop it until the next launch or the next item added from a search | 15 requests a minute leaves half of the relay's limit for searching, and one slow source does not stop the rest | 2026-11-24 |
 | D-37 | Covers load only over HTTPS, and only from the four sources' image servers | A compromised source or relay cannot make the app call other addresses. Redirects must stay on HTTPS; Open Library redirects to archive.org | 2026-11-24 |
+| D-38 | A connection that is not made within 3 seconds, or is dropped, is tried once more. A server that is only slow to answer is not asked twice. Covers are tried again after 5 and 20 seconds | Home connections stall: on 2026-11-24 plain requests to IGDB and TMDB took 3 to 12 seconds at random, almost always while connecting | 2026-11-24 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 
