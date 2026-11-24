@@ -82,10 +82,18 @@ detail.
 
 - **Sidebar:** the app name, then Library (All items, Up next, Finished) and Lists, each row with
   its count, and Settings and About at the bottom.
-- **Main:** a page header with the title in the Display face, its count, list actions and one
-  primary Add item button, then a toolbar (kind filter on library views, sort and Add existing item
-  on lists). Content starts top left, is at most 760 px wide, and scrolls.
-- **All items** opens with an Up next shelf of 112 px covers for items in progress or on hold.
+- **Main:** a page header with the title in the Display face, its count, list actions as icon
+  buttons and one primary Add item button, then a toolbar (kind filter on library views, sort and Add
+  existing item on lists, and the List or Grid switch on both). Header and content share one column,
+  at most 1280 px wide and centered beyond that. Forms, Settings and About stay within 760 px.
+- **List:** rows split by a `line` divider, with statuses in their own 104 px column so they align.
+  All items opens with an Up next shelf of 112 px covers for items in progress or on hold.
+- **Grid:** 144 px covers with title, kind, year and status, 12 px apart. Manual reordering is in the
+  list. The choice is remembered in the `settings` table, and new libraries start as a list.
+- **Forms** replace the page and its header. Add an item starts with the search box focused, and
+  results show their cover; typing the title by hand is always offered below.
+- **Destructive actions** are quiet until confirmed: no fill on Delete, and the filled danger button
+  appears only in the confirmation, next to what will be lost.
 - **Detail:** clicking a row or a shelf tile opens it. It holds the cover, status picker, seasons,
   tags, lists, Edit and Delete. The drawer slides in over 180 ms.
 
@@ -93,8 +101,8 @@ detail.
 
 - One ratio: 2:3, cropped and centered (`ObjectFit::Cover`).
 - No image: a `sunken` tile with the media-kind icon in `muted`. Never show a broken image.
-- Row covers are 40 x 60 px; shelf tiles and the detail cover are 112 x 168 px; grid tiles, when
-  they come, are at least 144 px wide.
+- Row covers are 40 x 60 px; shelf tiles and the detail cover are 112 x 168 px; grid covers
+  are 144 x 216 px.
 - 6 px radius with a `line` edge, so a dark poster does not dissolve into the background.
 - Off-screen covers should not load. Use a virtual list for long grids and lists.
 
@@ -108,6 +116,7 @@ detail.
 | Disabled | 50% opacity, no hover change                                        |
 | Invalid  | `danger` border, plus a 12 px `danger` message; never color alone   |
 | Loading  | Blocks of `content` at 5%                                           |
+| Empty    | An icon in a `surface` circle, what is empty, one hint, and an action when there is one |
 
 Color transitions take 150 ms. The detail drawer slides in over 180 ms. Nothing else moves on its
 own, and all motion stops when Windows' animation effects are off.

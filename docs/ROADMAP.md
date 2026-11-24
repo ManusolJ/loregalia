@@ -64,7 +64,7 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Store user API keys in Windows Credential Manager instead of `api-keys.json`
 - [x] Release workflow: on a version tag, build the installer and portable zip in CI and attach them
       to a GitHub Release
-- [ ] Put the relay online behind HTTPS, and build releases with `LOREGALIA_RELAY_URL` set to it.
+- [x] Put the relay online behind HTTPS, and build releases with `LOREGALIA_RELAY_URL` set to it.
       `deploy/relay` and the relay README have the steps; the owner runs them
 - [x] No key in the repo or the installer; the project's keys live only on the relay
 - [ ] Human check on Windows: scaling at 100% and 150%, resizing, keyboard navigation

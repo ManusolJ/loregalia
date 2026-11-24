@@ -797,6 +797,8 @@ fn adding_an_item_by_hand_shows_it(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("item-editor").visible());
+        window.render_frame(cx);
+        window.click("item-title-input", cx);
     })
     .unwrap();
     cx.simulate_input(handle, "Piranesi");
@@ -1644,6 +1646,8 @@ fn a_hand_typed_duplicate_warns_but_can_be_saved(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("add-item", cx);
+        window.render_frame(cx);
+        window.click("item-title-input", cx);
     })
     .unwrap();
     cx.simulate_input(handle, "dune");
@@ -1723,6 +1727,8 @@ fn the_duplicate_warning_tracks_the_selected_kind(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("add-item", cx);
+        window.render_frame(cx);
+        window.click("item-title-input", cx);
     })
     .unwrap();
     cx.simulate_input(handle, "Dune");
@@ -2659,6 +2665,8 @@ fn creating_an_item_from_a_list_adds_it_to_that_list(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("item-editor").visible());
+        window.render_frame(cx);
+        window.click("item-title-input", cx);
     })
     .unwrap();
     cx.simulate_input(handle, "Piranesi");
@@ -4513,7 +4521,7 @@ fn escape_cancels_the_item_editor_while_typing(cx: &mut TestAppContext) {
         window.click("add-item", cx);
         window.render_frame(cx);
         assert!(window.find("item-editor").visible());
-        assert_eq!(window.find("item-title-input").focused(), Some(true));
+        assert_eq!(window.find("metadata-search-input").focused(), Some(true));
     })
     .unwrap();
     cx.simulate_input(handle, "Dune");
@@ -4639,6 +4647,210 @@ fn about_offers_an_optional_ko_fi_link(cx: &mut TestAppContext) {
         let link = window.find("kofi-link");
         assert!(link.visible());
         assert_eq!(link.label(), Some("Support Loregalia on Ko-fi"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_grid_layout_shows_tiles_and_is_remembered(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.clone()),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(format!("item-row-{}", item.id)).visible());
+        window.click("layout-grid", cx);
+        window.render_frame(cx);
+
+        assert!(window.try_find(format!("item-row-{}", item.id)).is_none());
+        let tile = window.find(format!("item-tile-{}", item.id));
+        assert_eq!(tile.label(), Some("Dune"));
+        window.click(format!("item-tile-{}", item.id), cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Dune"));
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let database = Database::open(&path).unwrap();
+    assert_eq!(settings::layout(&database).unwrap(), settings::Layout::Grid);
+
+    let reopened = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(reopened, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(format!("item-tile-{}", item.id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_grid_tile_opens_from_the_keyboard(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    settings::set_layout(&Database::open(&path).unwrap(), settings::Layout::Grid).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tile = format!("item-tile-{}", item.id);
+        for _ in 0..40 {
+            if window.find(tile.clone()).focused() == Some(true) {
+                break;
+            }
+            window.press("tab", cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(window.find(tile).focused(), Some(true));
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Dune"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn grid_tiles_fit_beside_the_docked_detail_panel(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for number in 0..8 {
+        seed_item(&path, MediaKind::Book, &format!("Book {number}"), None).unwrap();
+    }
+    let item = items::all(&Database::open(&path).unwrap())
+        .unwrap()
+        .remove(0);
+    settings::set_layout(&Database::open(&path).unwrap(), settings::Layout::Grid).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-tile-{}", item.id), cx);
+        window.render_frame(cx);
+        let panel = window.find("detail-panel").bounds();
+        let grid = window.find("items").bounds();
+        let tile = window.find(format!("item-tile-{}", item.id)).bounds();
+
+        assert!(grid.origin.x + grid.size.width <= panel.origin.x);
+        assert!(tile.size.width >= px(144.0));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_new_item_form_replaces_the_page_and_starts_with_the_search(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: MetadataSearch = Arc::new(|_, _| Ok(vec![found_show()]));
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+
+        assert!(window.try_find("page-header").is_none());
+        assert_eq!(window.find("metadata-search-input").focused(), Some(true));
+        let search = window.find("metadata-search-input").bounds();
+        let title = window.find("item-title-input").bounds();
+        assert!(search.origin.y < title.origin.y);
+        window.click("item-kind-show", cx);
+        window.render_frame(cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("search-cover-tvmaze-42").visible());
+        window.click("search-result-tvmaze-42", cx);
+        window.render_frame(cx);
+        assert!(window.find("search-chosen-tvmaze-42").visible());
+        assert_ne!(window.find("save-item").disabled(), Some(true));
+        window.click("cancel-item", cx);
+        window.render_frame(cx);
+        assert!(window.find("page-header").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_empty_library_offers_to_add_the_first_item(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let handle = open_shell(cx, size(px(1280.0), px(800.0)), ready(&temporary), None).unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("empty-add-item", cx);
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_empty_filter_names_the_kind_instead_of_claiming_an_empty_library(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Book, "Piranesi", None).unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("filter-game", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("empty-state").label(), Some("No games here"));
     })
     .unwrap();
 }

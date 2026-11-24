@@ -3,13 +3,12 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable, Selectable, button::Button, button::ButtonVariants};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Role, TestSupportExt, Window,
-    div, px, rgb,
+    AnyElement, AppContext, Context, Entity, Focusable, Role, TestSupportExt, Window, div, px, rgb,
 };
 use loregalia_core::{Database, items, list_items, lists};
 
 use super::tags_view::TagTarget;
-use super::widgets::Confirmation;
+use super::widgets::{Confirmation, EmptyPanel, FORM_WIDTH};
 use super::{Screen, Shell, load};
 use crate::startup::StorageState;
 use crate::theme::Palette;
@@ -18,6 +17,7 @@ const DELETE_LIST: Confirmation = Confirmation {
     id: "delete-confirmation",
     cancel_id: "cancel-delete",
     confirm_id: "confirm-delete",
+    consequence: "The items in it stay in your library. This cannot be undone.",
 };
 
 pub(super) enum Editor {
@@ -225,7 +225,7 @@ impl Shell {
 
     pub(super) fn editor_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let Some(editor) = &self.editor else {
-            return Self::empty_element(self.shelf, palette);
+            return self.empty_element(palette, cx);
         };
         let (title, input) = match editor {
             Editor::Create(input) => ("New list", input),
@@ -236,15 +236,23 @@ impl Shell {
         div()
             .id("list-editor")
             .test_support()
+            .w_full()
+            .max_w(px(FORM_WIDTH))
             .flex()
             .flex_col()
-            .gap_3()
-            .w(px(320.0))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+            .gap_6()
+            .child(Self::form_heading(title))
             .child(
-                Input::new(input)
-                    .id("list-name-input")
-                    .aria_label("List name"),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(Self::section_label("Name", palette))
+                    .child(
+                        Input::new(input)
+                            .id("list-name-input")
+                            .aria_label("List name"),
+                    ),
             )
             .child(
                 div()
@@ -252,6 +260,7 @@ impl Shell {
                     .gap_2()
                     .child(
                         Button::new("save-list")
+                            .primary()
                             .label("Save")
                             .disabled(!can_save)
                             .on_click(cx.listener(|this, _, _, cx| this.save_editor(cx))),
@@ -274,14 +283,16 @@ impl Shell {
     }
 
     pub(super) fn list_empty_element(palette: &Palette) -> AnyElement {
-        div()
-            .id("list-empty")
-            .role(Role::Status)
-            .test_support()
-            .aria_label("No items in this list yet")
-            .text_color(rgb(palette.muted))
-            .child("No items in this list yet")
-            .into_any_element()
+        Self::empty_panel(
+            EmptyPanel {
+                id: "list-empty",
+                icon: IconName::Inbox,
+                message: "No items in this list yet".to_owned(),
+                hint: "Add something you already have, or search for something new.",
+            },
+            None,
+            palette,
+        )
     }
 
     pub(super) fn add_picker_element(
@@ -353,15 +364,16 @@ impl Shell {
                 Button::new("rename-list")
                     .ghost()
                     .icon(IconName::Pencil)
-                    .label("Rename")
+                    .tooltip("Rename list")
+                    .accessibility_label("Rename list")
                     .on_click(cx.listener(|this, _, window, cx| this.begin_rename(window, cx))),
             )
             .child(
                 Button::new("delete-list")
                     .ghost()
-                    .danger()
                     .icon(IconName::Trash)
-                    .label("Delete")
+                    .tooltip("Delete list")
+                    .accessibility_label("Delete list")
                     .on_click(cx.listener(|this, _, window, cx| this.begin_delete(window, cx))),
             )
             .into_any_element()
@@ -397,10 +409,12 @@ impl Shell {
                         .ghost()
                         .label(sort.label())
                         .selected(self.sort == sort)
+                        .toggled(self.sort == sort)
                         .on_click(cx.listener(move |this, _, _, cx| this.set_sort(sort, cx)))
                 }),
                 palette,
             ))
+            .child(self.layout_switch(palette, cx))
             .into_any_element()
     }
 
@@ -453,7 +467,12 @@ impl Shell {
             .into_any_element()
     }
 
-    pub(super) fn delete_list_element(&self, id: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn delete_list_element(
+        &self,
+        id: &str,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let name = self
             .lists
             .iter()
@@ -466,6 +485,7 @@ impl Shell {
             format!("Delete \"{name}\"?"),
             Self::cancel_delete,
             Self::delete_selected,
+            palette,
             cx,
         )
     }

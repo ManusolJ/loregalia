@@ -206,6 +206,7 @@ impl Shell {
 
     pub(super) fn tags_button(target: TagTarget, id: String, cx: &mut Context<Self>) -> Button {
         Button::new(id)
+            .ghost()
             .icon(IconName::Tag)
             .tooltip("Tags")
             .accessibility_label("Tags")

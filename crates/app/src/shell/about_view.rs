@@ -37,8 +37,8 @@ pub(super) const PRIVACY_NOTES: [(IconName, &str); 3] = [
     ),
     (
         IconName::Globe,
-        "Shows and books are searched directly at TVmaze and Open Library, which see your IP \
-         address like any website.",
+        "TVmaze and Open Library are searched directly, and covers load from each source. \
+         They see your IP address like any website.",
     ),
     (
         IconName::Server,

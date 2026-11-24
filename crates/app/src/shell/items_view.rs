@@ -6,20 +6,26 @@ use gpui_kit::{
     AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Role, TestSupportExt, Window,
     div, px, rgb,
 };
-use loregalia_core::{Database, items, list_items, media::MediaKind, providers};
+use loregalia_core::{Database, items, list_items, media::MediaKind, providers, settings};
 
 use super::metadata_view::SearchStatus;
-use super::widgets::{Confirmation, Cover, ROW_COVER_WIDTH, TILE_COVER_WIDTH};
+use super::widgets::{
+    Confirmation, Cover, FORM_WIDTH, GRID_COVER_WIDTH, ROW_COVER_WIDTH, TILE_COVER_WIDTH,
+};
 use super::{Activate, ITEM_ROW_CONTEXT, Screen, Shell, load};
 use crate::startup::StorageState;
 use crate::theme::{HOVER_ALPHA, Palette, SELECTED_ALPHA};
 
 const UP_NEXT_LIMIT: usize = 6;
+const STATUS_COLUMN: f32 = 104.0;
+const YEAR_FIELD_WIDTH: f32 = 120.0;
+const GRID_TILE_INSET: f32 = 12.0;
 
 const DELETE_ITEM: Confirmation = Confirmation {
     id: "item-delete-confirmation",
     cancel_id: "cancel-item-delete",
     confirm_id: "confirm-item-delete",
+    consequence: "It is removed from every list too. This cannot be undone.",
 };
 
 pub(super) struct ItemEditor {
@@ -42,10 +48,10 @@ pub(super) struct ListItemActions<'a> {
 
 impl Shell {
     pub(super) fn begin_create_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
-        let year = cx.new(|cx| InputState::new(window, cx).placeholder("Year"));
+        let title = cx.new(|cx| InputState::new(window, cx));
+        let year = cx.new(|cx| InputState::new(window, cx));
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search by title"));
-        let focus = title.read(cx).focus_handle(cx);
+        let focus = search_input.read(cx).focus_handle(cx);
         focus.focus(window, cx);
         for input in [&title, &year] {
             Self::submit_on_enter(input, window, cx, |this, _, cx| this.save_item(cx));
@@ -245,7 +251,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(editor) = &self.item_editor else {
-            return Self::empty_element(self.shelf, palette);
+            return self.empty_element(palette, cx);
         };
         let title = editor.title.read(cx).value().trim().to_owned();
         let year = editor.year.read(cx).value().trim().to_owned();
@@ -263,37 +269,90 @@ impl Shell {
         let heading = if editor.id.is_some() {
             "Edit item"
         } else {
-            "New item"
+            "Add an item"
         };
+        let adding = editor.id.is_none();
 
         let mut panel = div()
             .id("item-editor")
             .test_support()
+            .w_full()
+            .max_w(px(FORM_WIDTH))
             .flex()
             .flex_col()
-            .gap_3()
-            .w(px(320.0))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(heading))
-            .child(
-                Input::new(&editor.title)
-                    .id("item-title-input")
-                    .aria_label("Title"),
-            )
-            .child(div().flex().gap_2().children(MediaKind::ALL.map(|kind| {
-                Button::new(format!("item-kind-{}", kind.key()))
-                    .label(kind.label())
-                    .selected(editor.kind == kind)
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_item_kind(kind, cx)))
-            })))
-            .child(
-                Input::new(&editor.year)
-                    .id("item-year-input")
-                    .aria_label("Release year"),
-            );
+            .gap_6()
+            .child(Self::form_heading(heading))
+            .child(div().flex().child(Self::segmented(
+                MediaKind::ALL.map(|kind| {
+                    Button::new(format!("item-kind-{}", kind.key()))
+                        .ghost()
+                        .icon(Self::media_kind_icon(kind))
+                        .label(kind.label())
+                        .selected(editor.kind == kind)
+                        .toggled(editor.kind == kind)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.select_item_kind(kind, cx)),
+                        )
+                }),
+                palette,
+            )));
 
-        if editor.id.is_none() && providers::supported(editor.kind) {
+        if adding && providers::supported(editor.kind) {
             panel = panel.child(self.metadata_search_element(editor, palette, cx));
         }
+
+        panel = panel.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .when(adding, |fields| {
+                    fields.child(
+                        div()
+                            .pt_4()
+                            .border_t_1()
+                            .border_color(rgb(palette.line))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(if editor.lookup.is_some() {
+                                "Check the details"
+                            } else {
+                                "Or fill it in yourself"
+                            }),
+                    )
+                })
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(Self::section_label("Title", palette))
+                                .child(
+                                    Input::new(&editor.title)
+                                        .id("item-title-input")
+                                        .aria_label("Title"),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .w(px(YEAR_FIELD_WIDTH))
+                                .flex_none()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(Self::section_label("Year", palette))
+                                .child(
+                                    Input::new(&editor.year)
+                                        .id("item-year-input")
+                                        .aria_label("Release year"),
+                                ),
+                        ),
+                ),
+        );
 
         if let Some(duplicate) = duplicate {
             let message = format!(
@@ -319,6 +378,7 @@ impl Shell {
                     .gap_2()
                     .child(
                         Button::new("save-item")
+                            .primary()
                             .label(save_label)
                             .disabled(!can_save)
                             .on_click(cx.listener(|this, _, _, cx| this.save_item(cx))),
@@ -412,11 +472,7 @@ impl Shell {
             })
             .on_click(cx.listener(move |this, _, _, cx| this.open_detail(id.clone(), cx)))
             .child(Self::cover_element(
-                Cover {
-                    prefix: "cover",
-                    item,
-                    width: ROW_COVER_WIDTH,
-                },
+                Cover::of("cover", item, ROW_COVER_WIDTH),
                 palette,
             ))
             .child(
@@ -451,7 +507,13 @@ impl Shell {
                     ),
             )
             .child(moves)
-            .children(badge)
+            .child(
+                div()
+                    .w(px(STATUS_COLUMN))
+                    .flex_none()
+                    .flex()
+                    .children(badge),
+            )
             .into_any_element()
     }
 
@@ -487,48 +549,165 @@ impl Shell {
                             .child("In progress and on hold"),
                     ),
             )
-            .child(div().flex().gap_4().overflow_hidden().children(
-                items.iter().take(UP_NEXT_LIMIT).map(|item| {
-                    let id = item.id.clone();
-                    div()
-                        .id(format!("up-next-{}", item.id))
-                        .role(Role::Button)
-                        .test_support()
-                        .aria_label(item.title.clone())
-                        .w(px(TILE_COVER_WIDTH))
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .cursor_pointer()
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.open_detail(id.clone(), cx)),
-                        )
-                        .child(Self::cover_element(
-                            Cover {
-                                prefix: "up-next-cover",
-                                item,
-                                width: TILE_COVER_WIDTH,
-                            },
-                            palette,
-                        ))
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .truncate()
-                                .child(item.title.clone()),
-                        )
-                        .children(self.status_of(&item.status_id).map(|status| {
-                            div().flex().child(Self::status_badge(
-                                status,
-                                format!("up-next-status-{}", item.id),
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_4()
+                    .children(items.iter().take(UP_NEXT_LIMIT).map(|item| {
+                        let id = item.id.clone();
+                        div()
+                            .id(format!("up-next-{}", item.id))
+                            .role(Role::Button)
+                            .test_support()
+                            .aria_label(item.title.clone())
+                            .w(px(TILE_COVER_WIDTH))
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .cursor_pointer()
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.open_detail(id.clone(), cx)),
+                            )
+                            .child(Self::cover_element(
+                                Cover::of("up-next-cover", item, TILE_COVER_WIDTH),
                                 palette,
                             ))
-                        }))
-                }),
-            ))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(item.title.clone()),
+                            )
+                            .children(self.status_of(&item.status_id).map(|status| {
+                                div().flex().child(Self::status_badge(
+                                    status,
+                                    format!("up-next-status-{}", item.id),
+                                    palette,
+                                ))
+                            }))
+                    })),
+            )
             .into_any_element()
+    }
+
+    fn item_tile(
+        &self,
+        item: &items::Item,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selected = self.detail.as_deref() == Some(item.id.as_str());
+        let id = item.id.clone();
+
+        div()
+            .id(format!("item-tile-{}", item.id))
+            .role(Role::ListItem)
+            .test_support()
+            .aria_label(item.title.clone())
+            .when_some(self.row_focus.get(&item.id), |tile, handle| {
+                tile.track_focus(handle).tab_index(0)
+            })
+            .key_context(ITEM_ROW_CONTEXT)
+            .on_action(cx.listener({
+                let id = item.id.clone();
+                move |this, _: &Activate, _, cx| this.open_detail(id.clone(), cx)
+            }))
+            .w(px(GRID_COVER_WIDTH + GRID_TILE_INSET))
+            .flex_none()
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .rounded(px(10.0))
+            .border_2()
+            .border_color(rgb(palette.accent).alpha(0.0))
+            .focus_visible(|style| style.border_color(rgb(palette.accent)))
+            .cursor_pointer()
+            .when(selected, |tile| {
+                tile.bg(rgb(palette.accent).alpha(SELECTED_ALPHA))
+            })
+            .when(!selected, |tile| {
+                tile.hover(|style| style.bg(rgb(palette.content).alpha(HOVER_ALPHA)))
+            })
+            .on_click(cx.listener(move |this, _, _, cx| this.open_detail(id.clone(), cx)))
+            .child(Self::cover_element(
+                Cover::of("tile-cover", item, GRID_COVER_WIDTH),
+                palette,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .truncate()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(item.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_xs()
+                            .text_color(rgb(palette.muted))
+                            .child(Self::item_metadata(item)),
+                    ),
+            )
+            .children(self.status_of(&item.status_id).map(|status| {
+                div().flex().child(Self::status_badge(
+                    status,
+                    format!("item-status-{}", item.id),
+                    palette,
+                ))
+            }))
+            .into_any_element()
+    }
+
+    pub(super) fn layout_switch(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        Self::segmented(
+            settings::Layout::ALL.map(|layout| {
+                Button::new(format!("layout-{}", layout.key()))
+                    .ghost()
+                    .icon(match layout {
+                        settings::Layout::List => IconName::List,
+                        settings::Layout::Grid => IconName::LayoutGrid,
+                    })
+                    .tooltip(layout.label())
+                    .accessibility_label(layout.label())
+                    .selected(self.layout == layout)
+                    .toggled(self.layout == layout)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_layout(layout, cx)))
+            }),
+            palette,
+        )
+    }
+
+    fn set_layout(&mut self, layout: settings::Layout, cx: &mut Context<Self>) {
+        if self.layout == layout {
+            return;
+        }
+        self.layout = layout;
+        cx.notify();
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+
+        let task = cx.background_spawn(async move {
+            let database = Database::open(path)?;
+            settings::set_layout(&database, layout)
+        });
+
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = task.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.record(&format!("Could not save the layout: {error}"), cx);
+                });
+            }
+        })
+        .detach();
     }
 
     pub(super) fn items_element(
@@ -538,13 +717,25 @@ impl Shell {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.layout == settings::Layout::Grid {
+            return div()
+                .id("items")
+                .role(Role::List)
+                .test_support()
+                .mx(px(-GRID_TILE_INSET / 2.0))
+                .flex()
+                .flex_wrap()
+                .gap_y_4()
+                .children(items.iter().map(|item| self.item_tile(item, palette, cx)))
+                .into_any_element();
+        }
+
         div()
             .id("items")
             .role(Role::List)
             .test_support()
             .flex()
             .flex_col()
-            .gap_0p5()
             .w_full()
             .children(items.iter().enumerate().map(|(index, item)| {
                 let list_actions = list_id.map(|list_id| ListItemActions {
@@ -554,12 +745,22 @@ impl Shell {
                     can_move_down: index + 1 < items.len(),
                 });
 
-                self.item_row(item, list_actions, palette, cx)
+                div()
+                    .when(index > 0, |row| {
+                        row.border_t_1().border_color(rgb(palette.line))
+                    })
+                    .py_0p5()
+                    .child(self.item_row(item, list_actions, palette, cx))
             }))
             .into_any_element()
     }
 
-    pub(super) fn delete_item_element(&self, id: &str, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn delete_item_element(
+        &self,
+        id: &str,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let title = self
             .items
             .iter()
@@ -572,6 +773,7 @@ impl Shell {
             format!("Delete \"{title}\"?"),
             Self::cancel_delete_item,
             Self::delete_item,
+            palette,
             cx,
         )
     }

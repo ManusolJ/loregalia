@@ -11,7 +11,7 @@ mod widgets;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -20,8 +20,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, FocusHandle, FontWeight, KeyBinding, Pixels,
-    Role, TestSupportExt, Window, actions, div, px, rgb,
+    AnyElement, App, AppContext, Context, Entity, FocusHandle, FontWeight, Image, ImageFormat,
+    KeyBinding, Pixels, Role, TestSupportExt, Window, actions, div, img, px, rgb,
 };
 use loregalia_core::library::{self, Shelf};
 use loregalia_core::{
@@ -40,6 +40,7 @@ use metadata_view::{default_details, default_search};
 use seasons_view::SeasonEditor;
 use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
+use widgets::EmptyPanel;
 
 const RAIL_WIDTH: f32 = 64.0;
 const SIDEBAR_WIDTH: f32 = 240.0;
@@ -47,7 +48,16 @@ const SIDEBAR_LABELS_FROM: f32 = 1024.0;
 const NAV_HEIGHT: f32 = 34.0;
 const LOADING_MESSAGE: &str = "Loading lists";
 const LOADING_BLOCK_WIDTH: f32 = 320.0;
-const CONTENT_WIDTH: f32 = 760.0;
+const CONTENT_WIDTH: f32 = 1280.0;
+const PAGE_WIDTH: f32 = 760.0;
+const BRAND_SIZE: f32 = 26.0;
+
+static BRAND_ICON: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    Arc::new(Image::from_bytes(
+        ImageFormat::Png,
+        include_bytes!("../../assets/icon.png").to_vec(),
+    ))
+});
 
 pub fn sidebar_width(window_width: Pixels) -> Pixels {
     if window_width < px(SIDEBAR_LABELS_FROM) {
@@ -90,6 +100,7 @@ pub struct Shell {
     metadata_details: MetadataDetails,
     refresh_started: bool,
     theme: settings::Theme,
+    layout: settings::Layout,
     settings_error: Option<String>,
     api_keys: keys::ApiKeys,
     secrets: Arc<dyn keys::SecretStore>,
@@ -212,6 +223,7 @@ impl Shell {
             metadata_details,
             refresh_started: false,
             theme,
+            layout: settings::Layout::default(),
             settings_error: None,
             api_keys: keys::ApiKeys::default(),
             secrets: Arc::new(keys::MemoryStore::default()),
@@ -244,8 +256,33 @@ impl Shell {
             season_status_picker: None,
             confirm_delete_season: None,
         };
+        shell.load_layout(cx);
         shell.reload(cx);
         shell
+    }
+
+    fn load_layout(&mut self, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        let task = cx.background_spawn(async move {
+            let database = Database::open(path)?;
+            settings::layout(&database)
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(layout) => this.layout = layout,
+                    Err(error) => {
+                        this.record(&format!("Could not read the layout: {error}"), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn show(&mut self, screen: Screen) {
@@ -483,15 +520,15 @@ impl Shell {
         if self.editor.is_some() {
             self.editor_element(palette, cx)
         } else if let Some(id) = &self.confirm_delete {
-            self.delete_list_element(id, cx)
+            self.delete_list_element(id, palette, cx)
         } else if self.item_editor.is_some() {
             self.item_editor_element(palette, cx)
         } else if let Some(id) = &self.confirm_delete_item {
-            self.delete_item_element(id, cx)
+            self.delete_item_element(id, palette, cx)
         } else if self.selected.is_some() {
             match self.selected_list() {
                 Some(list) => self.list_panel(list, palette, cx),
-                None => Self::empty_element(self.shelf, palette),
+                None => self.empty_element(palette, cx),
             }
         } else {
             self.shelf_element(palette, cx)
@@ -501,9 +538,9 @@ impl Shell {
     fn shelf_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let shelved = self.shelved(self.shelf);
         if shelved.is_empty() {
-            return Self::empty_element(self.shelf, palette);
+            return self.empty_element(palette, cx);
         }
-        let up_next = if self.shelf == Shelf::All {
+        let up_next = if self.shelf == Shelf::All && self.layout == settings::Layout::List {
             self.shelved(Shelf::UpNext)
         } else {
             Vec::new()
@@ -516,21 +553,68 @@ impl Shell {
             .when(!up_next.is_empty(), |content| {
                 content.child(self.up_next_element(&up_next, palette, cx))
             })
-            .child(self.items_element(&shelved, None, palette, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .when(!up_next.is_empty(), |section| {
+                        section.child(
+                            div()
+                                .text_base()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Everything"),
+                        )
+                    })
+                    .child(self.items_element(&shelved, None, palette, cx)),
+            )
             .into_any_element()
     }
 
-    fn empty_element(shelf: Shelf, palette: &Palette) -> AnyElement {
-        let message = shelf.empty_message();
+    fn empty_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let filtered = self
+            .kind_filter
+            .filter(|_| self.shelf_count(self.shelf) > 0);
+        let (icon, message, hint) = match (filtered, self.shelf) {
+            (Some(kind), _) => (
+                Self::media_kind_icon(kind),
+                format!("No {} here", kind.plural_label().to_lowercase()),
+                "Choose All to see everything on this shelf.",
+            ),
+            (None, Shelf::All) => (
+                IconName::Library,
+                self.shelf.empty_message().to_owned(),
+                "Search for a movie, show, book or game, and its cover and year come with it.",
+            ),
+            (None, Shelf::UpNext) => (
+                IconName::CirclePlay,
+                self.shelf.empty_message().to_owned(),
+                "Set something to In progress or On hold and it waits for you here.",
+            ),
+            (None, Shelf::Finished) => (
+                IconName::CircleCheck,
+                self.shelf.empty_message().to_owned(),
+                "What you finish collects here, newest first.",
+            ),
+        };
+        let action = (filtered.is_none() && self.shelf == Shelf::All).then(|| {
+            Button::new("empty-add-item")
+                .primary()
+                .icon(IconName::Plus)
+                .label("Add your first item")
+                .on_click(cx.listener(|this, _, window, cx| this.begin_create_item(window, cx)))
+        });
 
-        div()
-            .id("empty-state")
-            .role(Role::Status)
-            .test_support()
-            .aria_label(message)
-            .text_color(rgb(palette.muted))
-            .child(message)
-            .into_any_element()
+        Self::empty_panel(
+            EmptyPanel {
+                id: "empty-state",
+                icon,
+                message,
+                hint,
+            },
+            action,
+            palette,
+        )
     }
 
     fn loading_element(palette: &Palette) -> AnyElement {
@@ -622,6 +706,7 @@ impl Shell {
                         .ghost()
                         .label("All")
                         .selected(self.kind_filter.is_none())
+                        .toggled(self.kind_filter.is_none())
                         .on_click(cx.listener(|this, _, _, cx| this.set_kind_filter(None, cx))),
                 ];
                 filters.extend(MediaKind::ALL.map(|kind| {
@@ -629,13 +714,17 @@ impl Shell {
                         .ghost()
                         .label(kind.plural_label())
                         .selected(self.kind_filter == Some(kind))
+                        .toggled(self.kind_filter == Some(kind))
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.set_kind_filter(Some(kind), cx)),
                         )
                 }));
                 div()
                     .flex()
+                    .items_center()
                     .child(Self::segmented(filters, palette))
+                    .child(div().flex_1())
+                    .child(self.layout_switch(palette, cx))
                     .into_any_element()
             }
         };
@@ -645,12 +734,20 @@ impl Shell {
             .test_support()
             .flex()
             .flex_col()
-            .gap_4()
             .px_8()
             .pt_6()
             .pb_4()
-            .child(title_row)
-            .child(toolbar)
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(CONTENT_WIDTH))
+                    .mx_auto()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(title_row)
+                    .child(toolbar),
+            )
             .into_any_element()
     }
 
@@ -847,13 +944,7 @@ impl Shell {
                     .items_center()
                     .gap_2()
                     .px_2()
-                    .child(
-                        div()
-                            .size(px(22.0))
-                            .flex_none()
-                            .rounded(px(6.0))
-                            .bg(rgb(palette.accent)),
-                    )
+                    .child(img(BRAND_ICON.clone()).size(px(BRAND_SIZE)).flex_none())
                     .when(shows_labels, |brand| {
                         brand.child(
                             div()
@@ -931,7 +1022,13 @@ impl Render for Shell {
         let docked = detail_docks(window_width);
         let show_header = matches!(&self.storage, StorageState::Ready(_))
             && self.screen == Screen::Library
+            && !self.has_editor()
             && self.error.is_none();
+        let content_width = if show_header {
+            CONTENT_WIDTH
+        } else {
+            PAGE_WIDTH
+        };
         let sidebar = self.sidebar_element(width, shows_labels, &palette, cx);
         let header = show_header.then(|| self.header_element(&palette, cx));
         let main_element = self.main_element(&palette, cx);
@@ -970,7 +1067,13 @@ impl Render for Shell {
                             .px_8()
                             .pb_6()
                             .when(!show_header, |scroll| scroll.pt_8())
-                            .child(div().w_full().max_w(px(CONTENT_WIDTH)).child(main_element)),
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(content_width))
+                                    .when(show_header, |content| content.mx_auto())
+                                    .child(main_element),
+                            ),
                     ),
             )
             .children(detail)

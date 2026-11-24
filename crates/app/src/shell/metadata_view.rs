@@ -1,10 +1,15 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::input::Input;
-use gpui_kit::component::{Disableable, button::Button};
+use gpui_kit::component::{
+    Disableable, Icon, Selectable, Sizable, button::Button, button::ButtonVariants,
+};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, AppContext, Context, Role, TestSupportExt, Window, div, px, rgb};
+use gpui_kit::{
+    AnyElement, AppContext, Context, FontWeight, Role, TestSupportExt, Window, div, px, rgb,
+};
 use loregalia_core::{
     Database, Result as CoreResult, items, keys, log,
     media::MediaKind,
@@ -13,12 +18,15 @@ use loregalia_core::{
 
 use super::Shell;
 use super::items_view::ItemEditor;
+use super::widgets::{Cover, ROW_COVER_WIDTH};
 use crate::startup::StorageState;
 use crate::theme::Palette;
 
 pub type MetadataSearch = Arc<dyn Fn(MediaKind, &str) -> CoreResult<Vec<Candidate>> + Send + Sync>;
 
 pub type MetadataDetails = Arc<dyn Fn(Source, String) -> CoreResult<Candidate> + Send + Sync>;
+
+const RESULT_HEIGHT: f32 = 72.0;
 
 pub(super) const TMDB_REFRESH_AFTER_DAYS: u64 = 150;
 
@@ -255,6 +263,80 @@ impl Shell {
         cx.notify();
     }
 
+    fn candidate_row(
+        candidate: &Candidate,
+        kind: MediaKind,
+        already_added: bool,
+        chosen: bool,
+        palette: &Palette,
+    ) -> AnyElement {
+        let year = candidate
+            .release_year
+            .map_or_else(|| "Year unknown".to_owned(), |year| year.to_string());
+
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(Self::cover_element(
+                Cover {
+                    prefix: "search-cover",
+                    key: format!("{}-{}", candidate.source.key(), candidate.external_id),
+                    title: &candidate.title,
+                    kind,
+                    url: candidate.cover_url.as_deref(),
+                    width: ROW_COVER_WIDTH,
+                },
+                palette,
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .w_full()
+                            .truncate()
+                            .text_color(rgb(palette.content))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(candidate.title.clone()),
+                    )
+                    .child(div().text_xs().text_color(rgb(palette.muted)).child(year)),
+            )
+            .when(already_added, |row| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(rgb(palette.muted))
+                        .child("In your library"),
+                )
+            })
+            .when(chosen, |row| {
+                row.child(
+                    div()
+                        .id(format!(
+                            "search-chosen-{}-{}",
+                            candidate.source.key(),
+                            candidate.external_id
+                        ))
+                        .test_support()
+                        .flex_none()
+                        .child(
+                            Icon::new(IconName::Check)
+                                .with_size(px(18.0))
+                                .text_color(rgb(palette.accent)),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
     pub(super) fn has_candidate(&self, candidate: &Candidate) -> bool {
         self.items.iter().any(|item| {
             item.source.as_deref() == Some(candidate.source.key())
@@ -286,12 +368,6 @@ impl Shell {
             .gap_2()
             .child(
                 div()
-                    .text_xs()
-                    .text_color(rgb(palette.muted))
-                    .child(format!("Results from {source_label}")),
-            )
-            .child(
-                div()
                     .flex()
                     .gap_2()
                     .child(
@@ -301,6 +377,8 @@ impl Shell {
                     )
                     .child(
                         Button::new("search-metadata")
+                            .primary()
+                            .icon(IconName::Search)
                             .label("Search")
                             .disabled(query.is_empty() || searching)
                             .on_click(cx.listener(|this, _, _, cx| this.search_metadata(cx))),
@@ -308,7 +386,12 @@ impl Shell {
             );
 
         panel = match &editor.search {
-            SearchStatus::Idle => panel,
+            SearchStatus::Idle => panel.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(palette.muted))
+                    .child(format!("Searches {source_label} and fills in the rest.")),
+            ),
             SearchStatus::Searching => panel.child(
                 div()
                     .id("metadata-search-loading")
@@ -346,26 +429,52 @@ impl Shell {
                     let source = candidate.source;
                     let external_id = candidate.external_id.clone();
                     let id = format!("search-result-{}-{}", source.key(), external_id);
+                    let chosen = editor.lookup.as_ref().is_some_and(|lookup| {
+                        lookup.source == source && lookup.external_id == external_id
+                    });
+                    let content =
+                        Self::candidate_row(candidate, editor.kind, already_added, chosen, palette);
 
                     Button::new(id)
-                        .label(label)
                         .disabled(already_added)
+                        .accessibility_label(label)
+                        .ghost()
+                        .selected(chosen)
+                        .toggled(chosen)
+                        .w_full()
+                        .h(px(RESULT_HEIGHT))
+                        .flex_none()
+                        .px_2()
+                        .justify_start()
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.select_search_result(source, external_id.clone(), window, cx)
                         }))
+                        .child(content)
                 });
 
-                panel.child(
-                    div()
-                        .id("metadata-search-results")
-                        .test_support()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .max_h(px(240.0))
-                        .overflow_y_scroll()
-                        .children(results),
-                )
+                panel
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(palette.muted))
+                            .child(format!("Results from {source_label}")),
+                    )
+                    .child(
+                        div()
+                            .id("metadata-search-results")
+                            .test_support()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .p_1()
+                            .max_h(px(300.0))
+                            .overflow_y_scroll()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(rgb(palette.line))
+                            .bg(rgb(palette.surface))
+                            .children(results),
+                    )
             }
         };
 

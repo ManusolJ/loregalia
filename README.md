@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/library-dark.png" alt="Loregalia's library: an Up next shelf of covers above a list of shows, movies, books and games with their statuses" width="900">
+  <img src="docs/images/library-dark.png" alt="Loregalia's library: a grid of covers of shows, movies, books and games with their statuses" width="900">
 </p>
 
 > [!IMPORTANT]
@@ -54,7 +54,7 @@ Type a title and pick the match. Covers, years and details come from **TVmaze** 
 needed. You can also type anything in by hand.
 
 <p align="center">
-  <img src="docs/images/search-dark.png" alt="Adding a game: searching IGDB for Elden Ring shows a list of matches" width="820">
+  <img src="docs/images/search-dark.png" alt="Adding a game: searching IGDB for Elden Ring shows the matches with their covers" width="820">
 </p>
 
 ### Plan one season at a time
@@ -88,8 +88,8 @@ you like. Tag lists and items with your own labels.
 
 - **Your library stays on your computer**, in a single file you can back up. There is no account,
   and nothing is uploaded.
-- **Shows and books** are searched directly at TVmaze and Open Library, which see your IP address
-  like any website.
+- **Shows and books** are searched directly at TVmaze and Open Library, and covers load from each
+  source's image server. They see your IP address like any website.
 - **Movies and games** go through a small Loregalia server that holds the API keys. It keeps no logs
   and nothing that identifies you. You can add your own TMDB or IGDB keys in Settings to skip it;
   they are stored in Windows Credential Manager, not in a file.

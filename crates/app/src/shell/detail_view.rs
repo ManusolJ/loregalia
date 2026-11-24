@@ -88,7 +88,7 @@ impl Shell {
                         })
                         .child(self.detail_tags(item, palette, cx))
                         .child(self.detail_lists(item, palette))
-                        .child(self.detail_actions(item, cx))
+                        .child(self.detail_actions(item, palette, cx))
                         .children(item.source.as_deref().and_then(Source::from_key).map(
                             |source| {
                                 div()
@@ -130,11 +130,7 @@ impl Shell {
             .items_end()
             .gap_4()
             .child(Self::cover_element(
-                Cover {
-                    prefix: "detail-cover",
-                    item,
-                    width: TILE_COVER_WIDTH,
-                },
+                Cover::of("detail-cover", item, TILE_COVER_WIDTH),
                 palette,
             ))
             .child(
@@ -331,7 +327,12 @@ impl Shell {
             .into_any_element()
     }
 
-    fn detail_actions(&self, item: &items::Item, cx: &mut Context<Self>) -> AnyElement {
+    fn detail_actions(
+        &self,
+        item: &items::Item,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let edit_id = item.id.clone();
         let delete_id = item.id.clone();
         let remove = self.selected.clone().filter(|list_id| {
@@ -363,7 +364,7 @@ impl Shell {
             .child(
                 Button::new(format!("item-delete-{}", item.id))
                     .ghost()
-                    .danger()
+                    .text_color(rgb(palette.danger))
                     .icon(IconName::Trash)
                     .label("Delete")
                     .on_click(cx.listener(move |this, _, window, cx| {
