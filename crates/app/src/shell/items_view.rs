@@ -8,11 +8,15 @@ use gpui_kit::{
 };
 use loregalia_core::{Database, items, list_items, media::MediaKind, providers, settings};
 
+use super::detail_view::DETAIL_WIDTH;
 use super::metadata_view::SearchStatus;
 use super::widgets::{
     Confirmation, Cover, FORM_WIDTH, GRID_COVER_WIDTH, ROW_COVER_WIDTH, TILE_COVER_WIDTH,
 };
-use super::{Activate, ITEM_ROW_CONTEXT, Screen, Shell, load};
+use super::{
+    Activate, CONTENT_WIDTH, ITEM_ROW_CONTEXT, PAGE_GUTTER, Screen, Shell, detail_docks, load,
+    sidebar_width,
+};
 use crate::startup::StorageState;
 use crate::theme::{HOVER_ALPHA, Palette, SELECTED_ALPHA};
 
@@ -20,6 +24,10 @@ const UP_NEXT_LIMIT: usize = 6;
 const STATUS_COLUMN: f32 = 104.0;
 const YEAR_FIELD_WIDTH: f32 = 120.0;
 const GRID_TILE_INSET: f32 = 12.0;
+const TILE_WIDTH: f32 = GRID_COVER_WIDTH + GRID_TILE_INSET;
+const TILE_HEIGHT: f32 = 312.0;
+const TILE_PITCH: f32 = TILE_HEIGHT + 16.0;
+const ROW_PITCH: f32 = 85.0;
 
 const DELETE_ITEM: Confirmation = Confirmation {
     id: "item-delete-confirmation",
@@ -83,7 +91,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(item) = self.items.iter().find(|item| item.id == id) else {
+        let Some(item) = self.item(&id) else {
             return;
         };
         let (kind, title_value, year_value) = (
@@ -495,17 +503,19 @@ impl Shell {
                     .child(
                         div()
                             .flex()
-                            .flex_wrap()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
                             .items_center()
                             .gap_x_2()
                             .text_xs()
                             .text_color(rgb(palette.muted))
-                            .child(Self::item_metadata(item))
+                            .child(div().flex_none().child(Self::item_metadata(item)))
                             .children(Self::finished_label(item).map(|finished| {
                                 div()
                                     .id(format!("item-finished-{}", item.id))
                                     .test_support()
                                     .aria_label(finished.clone())
+                                    .flex_none()
                                     .child(format!("· {finished}"))
                             }))
                             .children(tags.into_iter().map(|tag| {
@@ -513,6 +523,7 @@ impl Shell {
                                     .id(format!("item-tag-{}-{}", item.id, tag.id))
                                     .test_support()
                                     .aria_label(tag.name.clone())
+                                    .flex_none()
                                     .child(format!("#{}", tag.name))
                             })),
                     ),
@@ -626,7 +637,8 @@ impl Shell {
                 let id = item.id.clone();
                 move |this, _: &Activate, _, cx| this.open_detail(id.clone(), cx)
             }))
-            .w(px(GRID_COVER_WIDTH + GRID_TILE_INSET))
+            .w(px(TILE_WIDTH))
+            .h(px(TILE_HEIGHT))
             .flex_none()
             .p_1()
             .flex()
@@ -656,6 +668,7 @@ impl Shell {
                     .child(
                         div()
                             .truncate()
+                            .line_height(px(22.0))
                             .font_weight(FontWeight::MEDIUM)
                             .child(item.title.clone()),
                     )
@@ -663,6 +676,7 @@ impl Shell {
                         div()
                             .truncate()
                             .text_xs()
+                            .line_height(px(20.0))
                             .text_color(rgb(palette.muted))
                             .child(Self::item_metadata(item)),
                     ),
@@ -701,6 +715,7 @@ impl Shell {
             return;
         }
         self.layout = layout;
+        self.viewport.to_top();
         cx.notify();
         let StorageState::Ready(path) = self.storage.clone() else {
             return;
@@ -728,42 +743,79 @@ impl Shell {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.layout == settings::Layout::Grid {
-            return div()
-                .id("items")
-                .role(Role::List)
-                .test_support()
-                .mx(px(-GRID_TILE_INSET / 2.0))
-                .flex()
-                .flex_wrap()
-                .gap_y_4()
-                .children(items.iter().map(|item| self.item_tile(item, palette, cx)))
-                .into_any_element();
+        let (columns, pitch) = self.list_shape();
+        let rows = items.len().div_ceil(columns);
+        let mut drawn: Vec<usize> = self.viewport.rows(pitch, rows).collect();
+        if let Some(id) = &self.followed
+            && let Some(index) = items.iter().position(|item| &item.id == id)
+            && !drawn.contains(&(index / columns))
+        {
+            drawn.push(index / columns);
+            drawn.sort_unstable();
         }
+        let grid = self.layout == settings::Layout::Grid;
+        let viewport = self.viewport.clone();
 
         div()
+            .on_children_prepainted(move |bounds, window, _| {
+                if let Some(marker) = bounds.first()
+                    && viewport.place_list(marker.origin.y)
+                {
+                    window.on_next_frame(|window, _| window.refresh());
+                }
+            })
             .id("items")
             .role(Role::List)
             .test_support()
-            .flex()
-            .flex_col()
-            .w_full()
-            .children(items.iter().enumerate().map(|(index, item)| {
+            .relative()
+            .h(px(pitch * rows as f32))
+            .when(grid, |list| list.mx(px(-GRID_TILE_INSET / 2.0)))
+            .when(!grid, |list| list.w_full())
+            .child(div().absolute().top_0().left_0().w_full().h(px(0.0)))
+            .children(drawn.into_iter().map(|row| {
+                let place = div()
+                    .absolute()
+                    .top(px(pitch * row as f32))
+                    .left_0()
+                    .right_0()
+                    .h(px(pitch));
+                if grid {
+                    let start = row * columns;
+                    let end = (start + columns).min(items.len());
+                    return place.flex().children(
+                        items[start..end]
+                            .iter()
+                            .map(|item| self.item_tile(item, palette, cx)),
+                    );
+                }
+
                 let list_actions = list_id.map(|list_id| ListItemActions {
                     list_id,
                     manual: self.sort == list_items::Sort::Manual && !self.find.filter.is_active(),
-                    can_move_up: index > 0,
-                    can_move_down: index + 1 < items.len(),
+                    can_move_up: row > 0,
+                    can_move_down: row + 1 < items.len(),
                 });
-
-                div()
-                    .when(index > 0, |row| {
-                        row.border_t_1().border_color(rgb(palette.line))
-                    })
+                place
+                    .border_t_1()
+                    .border_color(rgb(palette.line).alpha(if row > 0 { 1.0 } else { 0.0 }))
                     .py_0p5()
-                    .child(self.item_row(item, list_actions, palette, cx))
+                    .child(self.item_row(items[row], list_actions, palette, cx))
             }))
             .into_any_element()
+    }
+
+    pub(super) fn list_shape(&self) -> (usize, f32) {
+        if self.layout == settings::Layout::List {
+            return (1, ROW_PITCH);
+        }
+        let window = px(self.window_width);
+        let docked = detail_docks(window) && self.detail_item().is_some();
+        let detail = if docked { DETAIL_WIDTH } else { 0.0 };
+        let page =
+            self.window_width - f32::from(sidebar_width(window)) - detail - 2.0 * PAGE_GUTTER;
+        let content = page.min(CONTENT_WIDTH) + GRID_TILE_INSET;
+
+        (((content / TILE_WIDTH).floor() as usize).max(1), TILE_PITCH)
     }
 
     pub(super) fn delete_item_element(

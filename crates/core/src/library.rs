@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::collections::HashSet;
 
 use crate::items::Item;
 use crate::media::MediaKind;
@@ -113,22 +114,42 @@ impl Filter {
         }
     }
 
-    pub fn keeps(&self, item: &Item, item_tags: &[Tagging]) -> bool {
-        matches_text(&item.title, &self.text)
-            && self.tags.iter().all(|tag_id| {
+    pub fn keep(&self, items: &mut Vec<&Item>, item_tags: &[Tagging]) {
+        if !self.is_active() {
+            return;
+        }
+        let text = fold(&self.text);
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let tagged: Vec<HashSet<&str>> = self
+            .tags
+            .iter()
+            .map(|tag_id| {
                 item_tags
                     .iter()
-                    .any(|link| link.owner_id == item.id && &link.tag_id == tag_id)
+                    .filter(|link| &link.tag_id == tag_id)
+                    .map(|link| link.owner_id.as_str())
+                    .collect()
             })
+            .collect();
+
+        items.retain(|item| {
+            tagged
+                .iter()
+                .all(|owners| owners.contains(item.id.as_str()))
+                && (words.is_empty() || has_words(&fold(&item.title), &words))
+        });
     }
 }
 
-pub fn matches_text(title: &str, text: &str) -> bool {
-    let title = fold(title);
+fn has_words(title: &str, words: &[&str]) -> bool {
+    words.iter().all(|word| title.contains(word))
+}
 
-    fold(text)
-        .split_whitespace()
-        .all(|word| title.contains(word))
+pub fn matches_text(title: &str, text: &str) -> bool {
+    let text = fold(text);
+    let words: Vec<&str> = text.split_whitespace().collect();
+
+    has_words(&fold(title), &words)
 }
 
 pub(crate) fn fold(text: &str) -> String {
@@ -225,18 +246,24 @@ mod tests {
         tags::attach_to_item(&database, &both.id, &short.id).unwrap();
         tags::attach_to_item(&database, &one.id, &cozy.id).unwrap();
         let links = tags::item_taggings(&database).unwrap();
+        let all = items::all(&database).unwrap();
+        let kept = |filter: &Filter| {
+            let mut view: Vec<&items::Item> = all.iter().collect();
+            filter.keep(&mut view, &links);
+            titles_of(&view)
+        };
 
         let mut filter = Filter::default();
         assert!(!filter.is_active());
         filter.toggle_tag(&cozy.id);
         assert!(filter.is_active());
-        assert!(filter.keeps(&both, &links) && filter.keeps(&one, &links));
+        assert_eq!(kept(&filter), ["Both", "One"]);
         filter.toggle_tag(&short.id);
-        assert!(filter.keeps(&both, &links) && !filter.keeps(&one, &links));
+        assert_eq!(kept(&filter), ["Both"]);
         filter.toggle_tag(&short.id);
-        assert!(filter.keeps(&one, &links));
+        assert_eq!(kept(&filter), ["Both", "One"]);
         filter.text = "bot".to_owned();
-        assert!(filter.keeps(&both, &links) && !filter.keeps(&one, &links));
+        assert_eq!(kept(&filter), ["Both"]);
     }
 
     #[test]

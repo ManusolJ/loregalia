@@ -90,6 +90,10 @@ detail.
   All items opens with an Up next shelf of 112 px covers for items in progress or on hold.
 - **Grid:** 144 px covers with title, kind, year and status, 12 px apart. Manual reordering is in the
   list. The choice is remembered in the `settings` table, and new libraries start as a list.
+- **Large libraries:** a list row is 85 px and a grid tile 312 px tall, whatever is in them, because
+  only those near the window are drawn. Text that does not fit is cut, never wrapped. Changing an item,
+  opening a form or opening the details keeps your place; a new shelf, search, sort or layout starts
+  at the top.
 - **Finding:** the search box matches every word of a title, ignoring accents and case. Sort and
   filter opens a panel under the toolbar with the sort order and the tags; an item needs every chosen
   tag. Leaving the page clears the search and the tags, not the sort. While a list is filtered, its

@@ -178,8 +178,10 @@ impl Shell {
         match outcome {
             Ok(updated) => {
                 self.refresh.failures = 0;
+                self.reloads.interrupt();
                 if let Some(item) = updated
-                    && let Some(slot) = self.items.iter_mut().find(|slot| slot.id == item.id)
+                    && let Some(index) = self.item_index.get(&item.id)
+                    && let Some(slot) = self.items.get_mut(*index)
                 {
                     *slot = item;
                 }
