@@ -82,3 +82,4 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Covers only from the sources' image servers (D-37)
 - [x] Deploy the relay that serves details, then check a movie and a game against live data
 - [x] Rank original games above ports and editions, and label those
+- [x] Retry connections that stall, and covers that failed (D-38)
