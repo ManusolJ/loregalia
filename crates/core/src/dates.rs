@@ -1,6 +1,17 @@
+use crate::log;
+use std::time::SystemTime;
+
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+
+pub fn today() -> String {
+    rusqlite::Connection::open_in_memory()
+        .and_then(|connection| {
+            connection.query_row("SELECT date('now', 'localtime')", [], |row| row.get(0))
+        })
+        .unwrap_or_else(|_| log::timestamp(SystemTime::now())[..10].to_owned())
+}
 
 pub fn short(date: &str) -> Option<String> {
     let mut parts = date.get(..10)?.split('-');
@@ -17,7 +28,13 @@ pub fn short(date: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::short;
+    use super::{short, today};
+
+    #[test]
+    fn today_is_a_date() {
+        assert!(short(&today()).is_some());
+        assert_eq!(today().len(), 10);
+    }
 
     #[test]
     fn a_date_reads_as_day_month_year() {

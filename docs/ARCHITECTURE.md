@@ -103,6 +103,8 @@ them.
   beyond its provider module.
 - Overlapping changes: a reload that arrives while another is running is not shown, and one more runs
   after the last (`Reloads` in `viewport.rs`), so an older result never replaces a newer one.
+- Exports are written to a `.partial` file beside the target and renamed, so a failed save keeps the
+  older file. The library in use is never a valid target (`core::export`).
 - Every request has a timeout, 3 seconds to connect, and one retry if it never got through (D-38). Debounce search-as-you-type, respect each source's rate limit, and
   bound every cache.
 - Never build a URL from unchecked input. Choose the source by enum and pass values as parameters.
