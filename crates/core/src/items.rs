@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use uuid::Uuid;
 
-pub(crate) const COLUMNS: &str = "items.id, items.title, items.media_kind, items.release_year, items.release_date, items.finished_at, items.status_id, items.source, items.external_id, items.cover_url, items.source_data, items.source_refreshed_at";
+pub(crate) const COLUMNS: &str = "items.id, items.title, items.media_kind, items.release_year, items.release_date, items.finished_at, items.status_id, items.source, items.external_id, items.cover_url, items.source_data, items.source_refreshed_at, date(items.finished_at, 'localtime')";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceData {
@@ -39,6 +39,7 @@ pub struct Item {
     pub cover_url: Option<String>,
     pub source_data: Option<SourceData>,
     pub source_refreshed_at: Option<String>,
+    pub finished_on: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +64,7 @@ impl Item {
             cover_url: row.get(9)?,
             source_data: source_data(row, 10)?,
             source_refreshed_at: row.get(11)?,
+            finished_on: row.get(12)?,
         })
     }
 }
@@ -860,5 +862,23 @@ mod tests {
 
         assert!(!delete(&database, "missing").unwrap());
         assert_eq!(all(&database).unwrap(), vec![item]);
+    }
+
+    #[test]
+    fn a_finished_item_knows_its_local_finish_day() {
+        let database = Database::open_in_memory().unwrap();
+        let item = create(&database, MediaKind::Book, "Piranesi", None).unwrap();
+        assert_eq!(item.finished_on, None);
+
+        database
+            .connection()
+            .execute(
+                "UPDATE items SET finished_at = '2026-11-24T12:00:00.000Z' WHERE id = ?1",
+                [&item.id],
+            )
+            .unwrap();
+
+        let stored = super::get(&database, &item.id).unwrap().unwrap();
+        assert_eq!(stored.finished_on.as_deref(), Some("2026-11-24"));
     }
 }

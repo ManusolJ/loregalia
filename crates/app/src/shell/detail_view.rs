@@ -87,7 +87,7 @@ impl Shell {
                             body.child(self.seasons_section(item, palette, cx))
                         })
                         .child(self.detail_tags(item, palette, cx))
-                        .child(self.detail_lists(item, palette))
+                        .child(self.detail_lists(item, palette, cx))
                         .child(self.detail_actions(item, palette, cx))
                         .children(item.source.as_deref().and_then(Source::from_key).map(
                             |source| {
@@ -155,7 +155,16 @@ impl Shell {
                             .text_sm()
                             .text_color(rgb(palette.muted))
                             .child(Self::item_metadata(item)),
-                    ),
+                    )
+                    .children(Self::finished_label(item).map(|finished| {
+                        div()
+                            .id("detail-finished")
+                            .test_support()
+                            .aria_label(finished.clone())
+                            .text_sm()
+                            .text_color(rgb(palette.muted))
+                            .child(finished)
+                    })),
             )
             .into_any_element()
     }
@@ -280,7 +289,15 @@ impl Shell {
             .into_any_element()
     }
 
-    fn detail_lists(&self, item: &items::Item, palette: &Palette) -> AnyElement {
+    fn detail_lists(
+        &self,
+        item: &items::Item,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let picker_id = item.id.clone();
+        let picker = (self.list_picker.as_deref() == Some(item.id.as_str()))
+            .then(|| self.list_picker_element(item, palette, cx));
         let lists: Vec<_> = self
             .lists
             .iter()
@@ -296,16 +313,11 @@ impl Shell {
             .flex_col()
             .gap_2()
             .child(Self::section_label("In lists", palette))
-            .child(if lists.is_empty() {
-                div()
-                    .text_xs()
-                    .text_color(rgb(palette.muted))
-                    .child("Not in any list yet")
-                    .into_any_element()
-            } else {
+            .child(
                 div()
                     .flex()
                     .flex_wrap()
+                    .items_center()
                     .gap_2()
                     .children(lists.into_iter().map(|list| {
                         div()
@@ -322,8 +334,18 @@ impl Shell {
                             .text_xs()
                             .child(list.name.clone())
                     }))
-                    .into_any_element()
-            })
+                    .child(
+                        Button::new(format!("item-lists-{}", item.id))
+                            .ghost()
+                            .small()
+                            .icon(IconName::ListPlus)
+                            .label("Edit lists")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_list_picker(picker_id.clone(), cx)
+                            })),
+                    ),
+            )
+            .children(picker)
             .into_any_element()
     }
 

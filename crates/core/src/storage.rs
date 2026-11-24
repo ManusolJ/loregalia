@@ -122,6 +122,11 @@ const MIGRATIONS: &[&str] = &[
     ) STRICT;",
     "ALTER TABLE items ADD COLUMN source_data TEXT;
      ALTER TABLE items ADD COLUMN source_refreshed_at TEXT;",
+    "CREATE INDEX list_items_by_item ON list_items (item_id);
+     CREATE INDEX item_tags_by_tag ON item_tags (tag_id);
+     CREATE INDEX list_tags_by_tag ON list_tags (tag_id);
+     CREATE INDEX seasons_by_status ON seasons (status_id);
+     CREATE INDEX items_by_status ON items (status_id);",
 ];
 
 fn latest_version() -> u32 {
@@ -564,7 +569,7 @@ mod tests {
                 ("movie-1".to_owned(), "movie-planned".to_owned()),
             ]
         );
-        assert_eq!(schema_version(database.connection()), 10);
+        assert_eq!(schema_version(database.connection()), 11);
     }
 
     #[test]
@@ -600,7 +605,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(title, "Dune");
-        assert_eq!(schema_version(database.connection()), 10);
+        assert_eq!(schema_version(database.connection()), 11);
     }
 
     #[test]
@@ -635,7 +640,7 @@ mod tests {
             .unwrap();
         assert_eq!(source_data, None);
         assert_eq!(refreshed_at, None);
-        assert_eq!(schema_version(database.connection()), 10);
+        assert_eq!(schema_version(database.connection()), 11);
     }
 
     #[test]
@@ -892,20 +897,21 @@ mod tests {
         {
             let connection = Connection::open(&path).unwrap();
             connection
-                .execute_batch("PRAGMA user_version = 11;")
+                .execute_batch(&format!("PRAGMA user_version = {};", latest_version() + 1))
                 .unwrap();
         }
 
         assert!(matches!(
             Database::open(&path),
             Err(Error::SchemaTooNew {
-                found: 11,
-                supported: 10
-            })
+                found,
+                supported
+            }) if found == i64::from(latest_version()) + 1
+                && supported == latest_version()
         ));
 
         let connection = Connection::open(&path).unwrap();
-        assert_eq!(schema_version(&connection), 11);
+        assert_eq!(schema_version(&connection), i64::from(latest_version()) + 1);
         let list_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lists'",

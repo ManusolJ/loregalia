@@ -1,6 +1,9 @@
+use std::cmp::Reverse;
+
 use crate::items::Item;
 use crate::media::MediaKind;
 use crate::statuses::{Category, Status};
+use crate::tags::Tagging;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shelf {
@@ -45,6 +48,115 @@ impl Shelf {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Sort {
+    #[default]
+    Shelf,
+    Title,
+    Newest,
+    Oldest,
+}
+
+impl Sort {
+    pub const ALL: [Self; 4] = [Self::Shelf, Self::Title, Self::Newest, Self::Oldest];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Shelf => "shelf",
+            Self::Title => "title",
+            Self::Newest => "newest",
+            Self::Oldest => "oldest",
+        }
+    }
+
+    pub const fn label(self, shelf: Shelf) -> &'static str {
+        match (self, shelf) {
+            (Self::Shelf, Shelf::All) => "Order added",
+            (Self::Shelf, Shelf::UpNext) => "In progress first",
+            (Self::Shelf, Shelf::Finished) => "Last finished",
+            (Self::Title, _) => "Title",
+            (Self::Newest, _) => "Newest",
+            (Self::Oldest, _) => "Oldest",
+        }
+    }
+}
+
+pub fn sort_items(items: &mut [&Item], sort: Sort) {
+    match sort {
+        Sort::Shelf => {}
+        Sort::Title => items.sort_by_cached_key(|item| fold(&item.title)),
+        Sort::Newest => {
+            items.sort_by_key(|item| (item.release_year.is_none(), item.release_year.map(Reverse)));
+        }
+        Sort::Oldest => {
+            items.sort_by_key(|item| (item.release_year.is_none(), item.release_year));
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Filter {
+    pub text: String,
+    pub tags: Vec<String>,
+}
+
+impl Filter {
+    pub fn is_active(&self) -> bool {
+        !self.text.trim().is_empty() || !self.tags.is_empty()
+    }
+
+    pub fn toggle_tag(&mut self, tag_id: &str) {
+        if self.tags.iter().any(|tag| tag == tag_id) {
+            self.tags.retain(|tag| tag != tag_id);
+        } else {
+            self.tags.push(tag_id.to_owned());
+        }
+    }
+
+    pub fn keeps(&self, item: &Item, item_tags: &[Tagging]) -> bool {
+        matches_text(&item.title, &self.text)
+            && self.tags.iter().all(|tag_id| {
+                item_tags
+                    .iter()
+                    .any(|link| link.owner_id == item.id && &link.tag_id == tag_id)
+            })
+    }
+}
+
+pub fn matches_text(title: &str, text: &str) -> bool {
+    let title = fold(title);
+
+    fold(text)
+        .split_whitespace()
+        .all(|word| title.contains(word))
+}
+
+fn fold(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .filter(|letter| !('\u{0300}'..='\u{036f}').contains(letter))
+        .map(|letter| match letter {
+            'à'..='å' | 'ā' | 'ă' | 'ą' => 'a',
+            'ç' | 'ć' | 'č' => 'c',
+            'ď' | 'đ' => 'd',
+            'è'..='ë' | 'ē' | 'ė' | 'ę' | 'ě' => 'e',
+            'ğ' => 'g',
+            'ì'..='ï' | 'ī' | 'ı' => 'i',
+            'ł' => 'l',
+            'ñ' | 'ń' | 'ň' => 'n',
+            'ò'..='ö' | 'ø' | 'ō' | 'ő' => 'o',
+            'ř' => 'r',
+            'ś' | 'ş' | 'š' => 's',
+            'ť' | 'ţ' => 't',
+            'ù'..='ü' | 'ū' | 'ů' | 'ű' => 'u',
+            'ý' | 'ÿ' => 'y',
+            'ź' | 'ż' | 'ž' => 'z',
+            '’' | '‘' => '\'',
+            other => other,
+        })
+        .collect()
+}
+
 pub fn category_of(statuses: &[Status], status_id: &str) -> Option<Category> {
     statuses
         .iter()
@@ -76,10 +188,93 @@ pub fn shelve<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Shelf, category_of, shelve};
+    use super::{Filter, Shelf, Sort, category_of, matches_text, shelve, sort_items};
     use crate::media::MediaKind;
     use crate::statuses::Category;
-    use crate::{Database, items, statuses};
+    use crate::{Database, items, statuses, tags};
+
+    #[test]
+    fn text_matches_every_word_in_any_order() {
+        assert!(matches_text("Dune: Part Two", "two dune"));
+        assert!(matches_text("Dune: Part Two", "  DUN "));
+        assert!(!matches_text("Dune: Part Two", "dune three"));
+    }
+
+    #[test]
+    fn empty_text_matches_everything() {
+        assert!(matches_text("Dune", ""));
+        assert!(matches_text("Dune", "   "));
+    }
+
+    #[test]
+    fn text_ignores_accents_in_both_directions() {
+        assert!(matches_text("Pokémon Ñandú", "pokemon nandu"));
+        assert!(matches_text("Amelie", "Amélie"));
+        assert!(matches_text("Ame\u{301}lie", "amelie"));
+        assert!(matches_text("Howl’s Moving Castle", "howl's"));
+    }
+
+    #[test]
+    fn a_filter_needs_every_chosen_tag() {
+        let database = Database::open_in_memory().unwrap();
+        let both = items::create(&database, MediaKind::Movie, "Both", None).unwrap();
+        let one = items::create(&database, MediaKind::Movie, "One", None).unwrap();
+        let cozy = tags::create(&database, "cozy").unwrap();
+        let short = tags::create(&database, "short").unwrap();
+        tags::attach_to_item(&database, &both.id, &cozy.id).unwrap();
+        tags::attach_to_item(&database, &both.id, &short.id).unwrap();
+        tags::attach_to_item(&database, &one.id, &cozy.id).unwrap();
+        let links = tags::item_taggings(&database).unwrap();
+
+        let mut filter = Filter::default();
+        assert!(!filter.is_active());
+        filter.toggle_tag(&cozy.id);
+        assert!(filter.is_active());
+        assert!(filter.keeps(&both, &links) && filter.keeps(&one, &links));
+        filter.toggle_tag(&short.id);
+        assert!(filter.keeps(&both, &links) && !filter.keeps(&one, &links));
+        filter.toggle_tag(&short.id);
+        assert!(filter.keeps(&one, &links));
+        filter.text = "bot".to_owned();
+        assert!(filter.keeps(&both, &links) && !filter.keeps(&one, &links));
+    }
+
+    #[test]
+    fn sorting_by_year_leaves_unknown_years_last_both_ways() {
+        let database = Database::open_in_memory().unwrap();
+        for (title, year) in [("Unknown", None), ("Old", Some(1969)), ("New", Some(2024))] {
+            items::create(&database, MediaKind::Book, title, year).unwrap();
+        }
+        let items = items::all(&database).unwrap();
+        let sorted = |sort| {
+            let mut view: Vec<&items::Item> = items.iter().collect();
+            sort_items(&mut view, sort);
+            view.iter()
+                .map(|item| item.title.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(sorted(Sort::Newest), ["New", "Old", "Unknown"]);
+        assert_eq!(sorted(Sort::Oldest), ["Old", "New", "Unknown"]);
+        assert_eq!(sorted(Sort::Shelf), ["Unknown", "Old", "New"]);
+    }
+
+    #[test]
+    fn sorting_by_title_ignores_case_and_accents() {
+        let database = Database::open_in_memory().unwrap();
+        for title in ["zebra", "Éclair", "apple", "Dune"] {
+            items::create(&database, MediaKind::Book, title, None).unwrap();
+        }
+        let items = items::all(&database).unwrap();
+        let mut view: Vec<&items::Item> = items.iter().collect();
+        sort_items(&mut view, Sort::Title);
+
+        assert_eq!(titles_of(&view), ["apple", "Dune", "Éclair", "zebra"]);
+    }
+
+    fn titles_of(items: &[&items::Item]) -> Vec<String> {
+        items.iter().map(|item| item.title.clone()).collect()
+    }
 
     fn titles(items: &[&items::Item]) -> Vec<String> {
         items.iter().map(|item| item.title.clone()).collect()
