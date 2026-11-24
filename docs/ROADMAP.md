@@ -80,4 +80,5 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Details on every item, filled in gently in the background (D-35, D-36)
 - [x] Seasons from TVmaze
 - [x] Covers only from the sources' image servers (D-37)
-- [ ] Deploy the relay that serves details, then check a movie and a game against live data
+- [x] Deploy the relay that serves details, then check a movie and a game against live data
+- [x] Rank original games above ports and editions, and label those

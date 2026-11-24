@@ -71,6 +71,7 @@ impl ApiShow {
             release_year: year_of(self.premiered.as_deref()),
             cover_url: self.image.and_then(|image| image.medium.or(image.original)),
             details: None,
+            edition: None,
         }
     }
 }
@@ -175,6 +176,7 @@ mod tests {
                         .to_owned()
                 ),
                 details: None,
+                edition: None,
             }
         );
     }
@@ -209,6 +211,7 @@ mod tests {
                 release_year: None,
                 cover_url: None,
                 details: None,
+                edition: None,
             }]
         );
     }

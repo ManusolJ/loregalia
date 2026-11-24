@@ -116,7 +116,8 @@ at most 20,000 entries and removes the soonest to expire first.
 | TMDB movie and IGDB game details | 30 days | IGDB removes a replaced cover image after 30 days |
 
 Details keys carry a version (`v2`), so a relay that learns new fields does not serve old entries
-without them. Bump `DETAILS_VERSION` when the fields change. The fields are additive under `/v1`: an
+without them. IGDB search keys carry one too. Bump
+`DETAILS_VERSION` or `SEARCH_VERSION` when the fields or the order change. The fields are additive under `/v1`: an
 older app ignores them, and a newer app accepts a relay without them.
 
 Search keys ignore case and extra spaces, so "Outer Wilds" and " outer  wilds" share one entry.

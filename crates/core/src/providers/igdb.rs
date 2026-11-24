@@ -1,16 +1,41 @@
 use crate::details::Details;
 use crate::http;
 use crate::providers::{Candidate, Source, full_date, numeric, positive};
-use crate::{Error, Result, log, text};
+use crate::{Error, Result, library, log, text};
 use serde::Deserialize;
 use serde_json::Value;
+use std::cmp::Reverse;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const BASE_URL: &str = "https://api.igdb.com/v4";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
 const IMAGE_BASE_URL: &str = "https://images.igdb.com/igdb/image/upload/t_cover_big";
-const FIELDS: &str = "name,cover.image_id,first_release_date";
+const FIELDS: &str =
+    "name,cover.image_id,first_release_date,game_type.type,version_parent,total_rating_count";
+const SEARCH_LIMIT: usize = 50;
+const MAX_RESULTS: usize = 20;
+const MAIN_GAME: &str = "main game";
+const SECONDARY_WORDS: [&str; 10] = [
+    "mod", "port", "fork", "pack", "addon", "update", "bundle", "episode", "season", "dlc",
+];
+const GAME_TYPES: [&str; 15] = [
+    "Main game",
+    "DLC",
+    "Expansion",
+    "Bundle",
+    "Standalone expansion",
+    "Mod",
+    "Episode",
+    "Season",
+    "Remake",
+    "Remaster",
+    "Expanded game",
+    "Port",
+    "Fork",
+    "Pack",
+    "Update",
+];
 const DETAIL_FIELDS: &str = "name,cover.image_id,first_release_date,summary,genres.name,involved_companies.developer,involved_companies.company.name";
 const TIME_FIELDS: &str = "normally,hastily,completely";
 
@@ -37,6 +62,11 @@ struct ApiGame {
     genres: Value,
     #[serde(default)]
     involved_companies: Value,
+    #[serde(default)]
+    game_type: Value,
+    #[serde(default)]
+    version_parent: Value,
+    total_rating_count: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +74,14 @@ struct ApiTime {
     normally: Option<i64>,
     hastily: Option<i64>,
     completely: Option<i64>,
+}
+
+fn comparable(title: &str) -> String {
+    library::fold(title)
+        .split(|letter: char| !letter.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn entries(value: &Value) -> impl Iterator<Item = &Value> {
@@ -60,6 +98,45 @@ struct ApiCover {
 }
 
 impl ApiGame {
+    fn kind(&self) -> Option<String> {
+        let name = match &self.game_type {
+            Value::Number(number) => number
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| GAME_TYPES.get(index))
+                .map(|name| (*name).to_owned())?,
+            value => value.get("type")?.as_str()?.trim().replace('_', " "),
+        };
+
+        (!name.is_empty() && !name.eq_ignore_ascii_case(MAIN_GAME)).then_some(name)
+    }
+
+    fn edition(&self) -> Option<String> {
+        self.kind()
+            .or_else(|| (!self.version_parent.is_null()).then(|| "Edition".to_owned()))
+    }
+
+    fn is_secondary(&self) -> bool {
+        !self.version_parent.is_null()
+            || self.kind().is_some_and(|kind| {
+                kind.to_lowercase()
+                    .split(|letter: char| !letter.is_alphanumeric())
+                    .any(|word| SECONDARY_WORDS.contains(&word))
+            })
+    }
+
+    fn rank(&self, wanted: &str) -> (u8, Reverse<i64>) {
+        let exact = self
+            .name
+            .as_deref()
+            .is_some_and(|name| comparable(name) == wanted);
+        match (self.is_secondary(), exact) {
+            (false, true) => (0, Reverse(self.total_rating_count.unwrap_or(0))),
+            (false, false) => (1, Reverse(0)),
+            (true, _) => (2, Reverse(0)),
+        }
+    }
+
     fn details(&self) -> Details {
         Details {
             synopsis: self.summary.as_deref().and_then(text::tidy),
@@ -80,6 +157,7 @@ impl ApiGame {
     }
 
     fn into_candidate(self) -> Option<Candidate> {
+        let edition = self.edition();
         let title = self.name?.trim().to_owned();
         if title.is_empty() {
             return None;
@@ -95,6 +173,7 @@ impl ApiGame {
                 .and_then(|cover| cover.image_id)
                 .map(|image_id| format!("{IMAGE_BASE_URL}/{image_id}.jpg")),
             details: None,
+            edition,
         })
     }
 }
@@ -235,7 +314,7 @@ fn search_clause(query: &str) -> String {
         })
         .collect();
     format!(
-        "search \"{}\"; fields {FIELDS}; limit 20;",
+        "search \"{}\"; fields {FIELDS}; limit {SEARCH_LIMIT};",
         cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
     )
 }
@@ -287,7 +366,7 @@ fn search_at(
 ) -> Result<Vec<Candidate>> {
     let clause = search_clause(query);
     let text = post(base_url, GAMES, client_id, token, &clause, timeout)?;
-    parse_search(&text)
+    parse_search(&text, query)
 }
 
 pub fn details(client_id: &str, token: &str, id: &str) -> Result<Candidate> {
@@ -379,11 +458,14 @@ pub fn parse_token(body: &str) -> Result<IgdbToken> {
     })
 }
 
-pub fn parse_search(body: &str) -> Result<Vec<Candidate>> {
-    let games: Vec<ApiGame> = serde_json::from_str(body)?;
+pub fn parse_search(body: &str, query: &str) -> Result<Vec<Candidate>> {
+    let mut games: Vec<ApiGame> = serde_json::from_str(body)?;
+    let wanted = comparable(query);
+    games.sort_by_key(|game| game.rank(&wanted));
 
     Ok(games
         .into_iter()
+        .take(MAX_RESULTS)
         .filter_map(ApiGame::into_candidate)
         .collect())
 }
@@ -552,7 +634,8 @@ mod tests {
         assert_eq!(
             clause,
             format!(
-                "search \"zelda ; fields *; limit 500; where id = 1\"; fields {FIELDS}; limit 20;"
+                "search \"zelda ; fields *; limit 500; where id = 1\"; fields {FIELDS}; limit {};",
+                super::SEARCH_LIMIT
             )
         );
         assert_eq!(clause.matches('"').count(), 2);
@@ -588,6 +671,7 @@ mod tests {
             release_year: Some(2019),
             cover_url: Some(format!("{IMAGE_BASE_URL}/co65ac.jpg")),
             details: None,
+            edition: None,
         }
     }
 
@@ -595,7 +679,7 @@ mod tests {
     fn maps_a_saved_search_response() {
         let body = include_str!("../../tests/fixtures/igdb/search-outer-wilds.json");
 
-        let games = parse_search(body).unwrap();
+        let games = parse_search(body, "outer wilds").unwrap();
 
         assert_eq!(games[0], game());
         assert_eq!(games[1].title, "Outer Wilds: Echoes of the Eye");
@@ -624,7 +708,7 @@ mod tests {
             {"id":2,"name":"Bare","cover":null,"first_release_date":null}
         ]"#;
 
-        let games = parse_search(body).unwrap();
+        let games = parse_search(body, "outer wilds").unwrap();
 
         assert_eq!(games.len(), 1);
         assert_eq!(games[0].title, "Bare");
@@ -752,5 +836,123 @@ mod tests {
                 .contains("game_id = 11737;")
         );
         assert!(super::time_clause("1; fields *").is_err());
+    }
+
+    fn titles(body: &str, query: &str) -> Vec<(String, Option<i32>, Option<String>)> {
+        parse_search(body, query)
+            .unwrap()
+            .into_iter()
+            .map(|game| (game.title, game.release_year, game.edition))
+            .collect()
+    }
+
+    #[test]
+    fn the_original_comes_before_its_ports_and_editions() {
+        let body = r#"[
+            {"id":1,"name":"Hollow Knight","first_release_date":1699833600,"game_type":{"id":11,"type":"Port"}},
+            {"id":2,"name":"Hollow Knight: Voidheart Edition","first_release_date":1537833600,"version_parent":4},
+            {"id":3,"name":"Hollow Knight: Silksong","first_release_date":1757000000,"game_type":{"id":0,"type":"Main Game"}},
+            {"id":4,"name":"Hollow Knight","first_release_date":1487894400,"game_type":{"id":0,"type":"Main Game"},"total_rating_count":1500}
+        ]"#;
+
+        assert_eq!(
+            titles(body, "hollow knight"),
+            [
+                ("Hollow Knight".to_owned(), Some(2017), None),
+                ("Hollow Knight: Silksong".to_owned(), Some(2025), None),
+                (
+                    "Hollow Knight".to_owned(),
+                    Some(2023),
+                    Some("Port".to_owned())
+                ),
+                (
+                    "Hollow Knight: Voidheart Edition".to_owned(),
+                    Some(2018),
+                    Some("Edition".to_owned())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_best_known_game_wins_when_the_types_do_not_help() {
+        let body = r#"[
+            {"id":1,"name":"Disco Elysium","first_release_date":1754352000},
+            {"id":2,"name":"Disco Elysium","first_release_date":1571097600,"total_rating_count":900}
+        ]"#;
+
+        assert_eq!(titles(body, "Disco  Elysium")[0].1, Some(2019));
+    }
+
+    #[test]
+    fn a_remake_keeps_its_place_and_says_what_it_is() {
+        let body = r#"[
+            {"id":1,"name":"Dead Space","game_type":{"id":8,"type":"Remake"},"total_rating_count":700},
+            {"id":2,"name":"Dead Space","game_type":{"id":0,"type":"Main Game"},"total_rating_count":600}
+        ]"#;
+
+        assert_eq!(titles(body, "dead space")[0].2.as_deref(), Some("Remake"));
+        assert_eq!(titles(body, "dead space")[1].2, None);
+    }
+
+    #[test]
+    fn an_exact_title_comes_before_longer_ones_whatever_its_punctuation() {
+        let body = r#"[
+            {"id":1,"name":"Elden Ring Nightreign"},
+            {"id":2,"name":"ELDEN RING\u2122"}
+        ]"#;
+
+        assert_eq!(titles(body, "elden ring")[0].0, "ELDEN RING\u{2122}");
+    }
+
+    #[test]
+    fn other_results_keep_the_order_igdb_gave_them() {
+        let body = r#"[
+            {"id":1,"name":"Zelda B","total_rating_count":1},
+            {"id":2,"name":"Zelda A","total_rating_count":900},
+            {"id":3,"name":"Zelda C"}
+        ]"#;
+        let names: Vec<String> = titles(body, "zelda")
+            .into_iter()
+            .map(|game| game.0)
+            .collect();
+
+        assert_eq!(names, ["Zelda B", "Zelda A", "Zelda C"]);
+    }
+
+    #[test]
+    fn unexpanded_and_odd_types_are_read_or_ignored() {
+        let body = r#"[
+            {"id":1,"name":"A","game_type":11},
+            {"id":2,"name":"B","game_type":0},
+            {"id":3,"name":"C","game_type":99},
+            {"id":4,"name":"D","game_type":"port"},
+            {"id":5,"name":"E","game_type":{"id":1,"type":"Pack / Addon"}},
+            {"id":6,"name":"F","game_type":{"type":"main_game"}}
+        ]"#;
+        let found = titles(body, "x");
+        let edition = |name: &str| {
+            found
+                .iter()
+                .find(|game| game.0 == name)
+                .and_then(|game| game.2.clone())
+        };
+
+        assert_eq!(edition("A").as_deref(), Some("Port"));
+        for main in ["B", "C", "D", "F"] {
+            assert_eq!(edition(main), None, "{main}");
+        }
+        assert_eq!(edition("E").as_deref(), Some("Pack / Addon"));
+        assert_eq!(found.last().map(|game| game.0.as_str()), Some("E"));
+    }
+
+    #[test]
+    fn a_search_asks_for_more_than_it_shows() {
+        let games: Vec<String> = (0..50)
+            .map(|id| format!(r#"{{"id":{id},"name":"Game {id}"}}"#))
+            .collect();
+        let body = format!("[{}]", games.join(","));
+
+        assert_eq!(titles(&body, "game").len(), super::MAX_RESULTS);
     }
 }

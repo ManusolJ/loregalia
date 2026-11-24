@@ -48,6 +48,10 @@ commercial license, and IGDB needs a partnership.
   Library's search by work key (authors, pages, subjects) plus `/works/{id}.json` (description); and
   IGDB `/games` plus `/game_time_to_beats`, whose times are in seconds. Open Library subjects are
   free text, so only a fixed list of genre names is kept.
+- **IGDB search lists ports and editions with the original's exact title.** The search asks for
+  `game_type`, `version_parent` and `total_rating_count`, puts exact titles of main games first with the
+  most rated on top, and puts ports, mods, packs, bundles and editions last, with a label. Two
+  Hollow Knights and two Disco Elysiums showed this on 2026-11-24.
 - **Open Library can be slow:** on 2026-11-24 it timed out twice before answering, which is why one
   failure does not stop the background refresh.
 - **Cover shapes:** TVmaze has poster images, and IGDB's `cover_big` is 264 x 374, both close to the

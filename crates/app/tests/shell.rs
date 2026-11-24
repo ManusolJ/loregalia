@@ -168,6 +168,7 @@ fn found_show() -> Candidate {
         release_year: Some(2017),
         cover_url: Some("https://example.test/dark.jpg".to_owned()),
         details: None,
+        edition: None,
     }
 }
 
@@ -181,6 +182,7 @@ fn found_book() -> Candidate {
             "https://covers.openlibrary.org/b/id/10226290-M.jpg?default=false".to_owned(),
         ),
         details: None,
+        edition: None,
     }
 }
 
@@ -194,6 +196,7 @@ fn found_movie() -> Candidate {
             "https://image.tmdb.org/t/p/w342/v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg".to_owned(),
         ),
         details: None,
+        edition: None,
     }
 }
 
@@ -207,6 +210,7 @@ fn found_game() -> Candidate {
             "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg".to_owned(),
         ),
         details: None,
+        edition: None,
     }
 }
 
@@ -218,6 +222,7 @@ fn refreshed_movie() -> Candidate {
         release_year: Some(2021),
         cover_url: Some("https://image.tmdb.org/t/p/w342/refreshed.jpg".to_owned()),
         details: None,
+        edition: None,
     }
 }
 
@@ -5389,6 +5394,7 @@ fn detailed(source: Source, external_id: &str, title: &str) -> Candidate {
             creators: vec!["Someone".to_owned()],
             release_date: Some("2020-05-01".to_owned()),
         }),
+        edition: None,
     }
 }
 
@@ -5816,4 +5822,60 @@ fn the_image_client_refuses_addresses_off_the_list(cx: &mut TestAppContext) {
 
     let error = result.lock().unwrap().take().unwrap().unwrap_err();
     assert!(error.to_string().contains("not on a metadata source"));
+}
+
+#[gpui_kit::test]
+fn a_port_is_labelled_in_the_search_results(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let search: MetadataSearch = Arc::new(|_, _| {
+        Ok(vec![
+            found_game(),
+            Candidate {
+                external_id: "7".to_owned(),
+                edition: Some("Port".to_owned()),
+                ..found_game()
+            },
+        ])
+    });
+    let handle = open_shell_with_search(
+        cx,
+        size(px(1280.0), px(800.0)),
+        ready(&temporary),
+        None,
+        search,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+        window.click("item-kind-game", cx);
+        window.render_frame(cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "outer wilds");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("search-result-igdb-7").label(),
+            Some("Outer Wilds (2019, Port)")
+        );
+        assert_eq!(
+            window
+                .find(format!("search-result-igdb-{}", found_game().external_id))
+                .label(),
+            Some("Outer Wilds (2019)")
+        );
+    })
+    .unwrap();
 }
