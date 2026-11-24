@@ -1,5 +1,6 @@
 mod about_view;
 mod detail_view;
+mod export_view;
 mod find_view;
 mod items_view;
 mod lists_view;
@@ -35,6 +36,7 @@ use crate::startup::StorageState;
 use crate::theme::{DISPLAY_FONT, Palette};
 
 use detail_view::DOCKED_FROM;
+use export_view::ExportStatus;
 use find_view::FindState;
 use items_view::ItemEditor;
 use lists_view::{AddPicker, Editor};
@@ -118,6 +120,7 @@ pub struct Shell {
     items: Vec<items::Item>,
     item_index: HashMap<String, usize>,
     viewport: Viewport,
+    export: Option<ExportStatus>,
     window_width: f32,
     columns: usize,
     followed: Option<String>,
@@ -253,6 +256,7 @@ impl Shell {
             items: Vec::new(),
             item_index: HashMap::new(),
             viewport: Viewport::default(),
+            export: None,
             window_width: 0.0,
             columns: 0,
             followed: None,

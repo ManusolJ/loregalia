@@ -14,6 +14,7 @@ which episode or page you stopped at.
   level, with no episode tracking.
 - **Statuses:** move an item between states such as To watch, Watched, In progress, Dropped and On
   hold. The set is data, so it can grow.
+- **Export and backup:** save a complete copy of the library, or the user's own data as JSON or CSV.
 - **Metadata lookup:** search public APIs to add an item with its title, cover and details filled
   in, instead of typing them by hand.
 
@@ -30,6 +31,6 @@ The data model should leave room for these, but do not build them.
 - Episode-level tracking
 - Ratings, reviews and notes
 - Statistics, such as books read this year
-- JSON or CSV export and import
+- Importing a JSON or CSV export
 - Import from services like Goodreads or Letterboxd
 - Sync across devices, and a mobile version

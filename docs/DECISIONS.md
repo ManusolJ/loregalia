@@ -51,6 +51,7 @@ one, move it to Decided, with the date.
 | D-37 | Covers load only over HTTPS, and only from the four sources' image servers | A compromised source or relay cannot make the app call other addresses. Redirects must stay on HTTPS; Open Library redirects to archive.org | 2026-11-24 |
 | D-38 | A connection that is not made within 3 seconds, or is dropped, is tried once more. A server that is only slow to answer is not asked twice. Covers are tried again after 5 and 20 seconds | Home connections stall: on 2026-11-24 plain requests to IGDB and TMDB took 3 to 12 seconds at random, almost always while connecting | 2026-11-24 |
 | D-39 | Rows and tiles have fixed heights, and only those near the window are drawn. The focused one is always drawn | Frame time no longer depends on library size: 3,000 items took 255 ms a frame and now take 2 to 6. Fixed heights make the visible range arithmetic, and an undrawn focused row would leave the keyboard shortcuts with nowhere to go | 2026-11-25 |
+| D-40 | Settings saves a backup (a verified copy of the database), JSON or CSV. JSON and CSV hold the user's own data and source IDs, not synopses, lengths or covers. CSV cells that could run as a formula get a leading apostrophe | A local-first app should make leaving easy. Source content can be fetched again by its ID, and TMDB limits how long copies may be kept | 2026-11-25 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 

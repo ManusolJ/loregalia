@@ -6313,3 +6313,108 @@ fn opening_details_keeps_the_clicked_tile_in_view(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+fn open_settings(cx: &mut TestAppContext, path: &Path) -> Result<AnyWindowHandle> {
+    let handle = open_library(cx, path)?;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+        window.render_frame(cx);
+    })?;
+    Ok(handle)
+}
+
+fn export_message(cx: &mut TestAppContext, handle: AnyWindowHandle) -> Option<(Role, String)> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let message = window.try_find("export-message")?;
+        Some((message.role()?, message.label()?.to_owned()))
+    })
+    .ok()
+    .flatten()
+}
+
+#[gpui_kit::test]
+fn every_export_saves_where_the_user_chose(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    for (button, name) in [
+        ("export-backup", "copy.db"),
+        ("export-json", "copy.json"),
+        ("export-csv", "copy.csv"),
+    ] {
+        let target = temporary.path().join(name);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(button, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.did_prompt_for_new_path(), "{button}");
+        let chosen = target.clone();
+        cx.simulate_new_path_selection(move |_| Some(chosen));
+        cx.run_until_parked();
+
+        assert!(target.exists(), "{button}");
+        let (role, message) = export_message(cx, handle).unwrap();
+        assert_eq!(role, Role::Status);
+        assert_eq!(message, format!("Saved 1 item to {}", target.display()));
+    }
+}
+
+#[gpui_kit::test]
+fn cancelling_the_save_dialog_says_nothing_and_writes_nothing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+    let before = std::fs::read_dir(temporary.path()).unwrap().count();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("export-json", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("export-csv").disabled(), Some(true));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.simulate_new_path_selection(|_| None);
+    cx.run_until_parked();
+
+    assert_eq!(export_message(cx, handle), None);
+    assert_eq!(std::fs::read_dir(temporary.path()).unwrap().count(), before);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_ne!(window.find("export-csv").disabled(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn choosing_the_library_itself_is_refused(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("export-backup", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let chosen = path.clone();
+    cx.simulate_new_path_selection(move |_| Some(chosen));
+    cx.run_until_parked();
+
+    let (role, message) = export_message(cx, handle).unwrap();
+    assert_eq!(role, Role::Alert);
+    assert!(message.contains("is the library Loregalia is using"));
+    assert_eq!(
+        items::all(&Database::open(&path).unwrap()).unwrap().len(),
+        1
+    );
+}

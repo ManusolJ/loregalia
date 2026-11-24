@@ -21,6 +21,8 @@ pub enum Error {
     Json(serde_json::Error),
     SecretStore(String),
     BlockedAddress,
+    WouldReplaceLibrary,
+    DamagedCopy,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -78,6 +80,10 @@ impl std::fmt::Display for Error {
             }
             Self::Json(error) => write!(formatter, "invalid response: {error}"),
             Self::SecretStore(reason) => write!(formatter, "key storage error: {reason}"),
+            Self::WouldReplaceLibrary => {
+                formatter.write_str("that file is the library Loregalia is using")
+            }
+            Self::DamagedCopy => formatter.write_str("the copy could not be verified"),
             Self::BlockedAddress => {
                 formatter.write_str("the cover is not on a metadata source's image server")
             }
@@ -108,7 +114,9 @@ impl std::error::Error for Error {
             | Self::RateLimited
             | Self::HttpStatus { .. }
             | Self::SecretStore(_)
-            | Self::BlockedAddress => None,
+            | Self::BlockedAddress
+            | Self::WouldReplaceLibrary
+            | Self::DamagedCopy => None,
         }
     }
 }

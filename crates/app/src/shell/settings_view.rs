@@ -30,6 +30,9 @@ impl Shell {
     pub(super) fn begin_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show(Screen::Settings);
         self.settings_error = None;
+        if !matches!(self.export, Some(super::ExportStatus::Working)) {
+            self.export = None;
+        }
         self.key_inputs = Some(KeyInputs {
             tmdb: cx.new(|cx| {
                 InputState::new(window, cx)
@@ -254,6 +257,7 @@ impl Shell {
                                 })),
                         ),
                 )
+                .child(self.export_section(palette, cx))
                 .child(self.keys_section(palette, cx));
 
         if let Some(message) = &self.settings_error {

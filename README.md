@@ -87,8 +87,9 @@ you like. Tag lists and items with your own labels, then filter by them.
 
 ## Privacy
 
-- **Your library stays on your computer**, in a single file you can back up. There is no account,
-  and nothing is uploaded.
+- **Your library stays on your computer**, in a single file. There is no account, and nothing is
+  uploaded. Settings saves a backup, or your own data as JSON or CSV. To restore a backup, close
+  Loregalia and copy it over the data file shown in About.
 - **Shows and books** are searched directly at TVmaze and Open Library, and covers load from each
   source's image server. They see your IP address like any website. Details for your library are
   fetched in the background, a few at a time, by each item's ID at its source.
