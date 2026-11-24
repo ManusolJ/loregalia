@@ -2,6 +2,7 @@ use crate::{Database, Error, Result};
 use rusqlite::OptionalExtension;
 
 const THEME_KEY: &str = "theme";
+const LAYOUT_KEY: &str = "layout";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Theme {
@@ -35,6 +36,35 @@ impl Theme {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Layout {
+    #[default]
+    List,
+    Grid,
+}
+
+impl Layout {
+    pub const ALL: [Self; 2] = [Self::List, Self::Grid];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Grid => "grid",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::List => "List",
+            Self::Grid => "Grid",
+        }
+    }
+
+    pub fn from_key(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|layout| layout.key() == value)
+    }
+}
+
 pub fn get(database: &Database, key: &str) -> Result<Option<String>> {
     database
         .connection()
@@ -65,9 +95,19 @@ pub fn set_theme(database: &Database, theme: Theme) -> Result<()> {
     set(database, THEME_KEY, theme.key())
 }
 
+pub fn layout(database: &Database) -> Result<Layout> {
+    Ok(get(database, LAYOUT_KEY)?
+        .and_then(|value| Layout::from_key(&value))
+        .unwrap_or_default())
+}
+
+pub fn set_layout(database: &Database, layout: Layout) -> Result<()> {
+    set(database, LAYOUT_KEY, layout.key())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Theme, get, set, set_theme, theme};
+    use super::{Layout, Theme, get, layout, set, set_layout, set_theme, theme};
     use crate::Database;
 
     fn database() -> Database {
@@ -104,6 +144,29 @@ mod tests {
         set(&database, "theme", "neon").unwrap();
 
         assert_eq!(theme(&database).unwrap(), Theme::Dark);
+    }
+
+    #[test]
+    fn a_fresh_database_defaults_to_the_list_layout() {
+        assert_eq!(layout(&database()).unwrap(), Layout::List);
+    }
+
+    #[test]
+    fn every_layout_round_trips() {
+        for expected in Layout::ALL {
+            let database = database();
+            set_layout(&database, expected).unwrap();
+
+            assert_eq!(layout(&database).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn an_unknown_layout_value_falls_back_to_the_list() {
+        let database = database();
+        set(&database, "layout", "spiral").unwrap();
+
+        assert_eq!(layout(&database).unwrap(), Layout::List);
     }
 
     #[test]

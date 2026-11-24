@@ -7,21 +7,47 @@ use gpui_kit::{
 use loregalia_core::{items, media::MediaKind, statuses, tags};
 
 use super::Shell;
-use crate::theme::{Palette, SELECTED_ALPHA};
+use crate::theme::{DISPLAY_FONT, Palette, SELECTED_ALPHA};
 
 pub(super) const ROW_COVER_WIDTH: f32 = 40.0;
 pub(super) const TILE_COVER_WIDTH: f32 = 112.0;
+pub(super) const GRID_COVER_WIDTH: f32 = 144.0;
+pub(super) const FORM_WIDTH: f32 = 640.0;
 
 pub(super) struct Confirmation {
     pub(super) id: &'static str,
     pub(super) cancel_id: &'static str,
     pub(super) confirm_id: &'static str,
+    pub(super) consequence: &'static str,
+}
+
+pub(super) struct EmptyPanel {
+    pub(super) id: &'static str,
+    pub(super) icon: IconName,
+    pub(super) message: String,
+    pub(super) hint: &'static str,
 }
 
 pub(super) struct Cover<'a> {
     pub(super) prefix: &'static str,
-    pub(super) item: &'a items::Item,
+    pub(super) key: String,
+    pub(super) title: &'a str,
+    pub(super) kind: MediaKind,
+    pub(super) url: Option<&'a str>,
     pub(super) width: f32,
+}
+
+impl<'a> Cover<'a> {
+    pub(super) fn of(prefix: &'static str, item: &'a items::Item, width: f32) -> Self {
+        Self {
+            prefix,
+            key: item.id.clone(),
+            title: &item.title,
+            kind: item.media_kind,
+            url: item.cover_url.as_deref(),
+            width,
+        }
+    }
 }
 
 impl Shell {
@@ -30,6 +56,7 @@ impl Shell {
         message: String,
         cancel: impl Fn(&mut Self, &mut Context<Self>) + 'static,
         confirm: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         div()
@@ -37,11 +64,27 @@ impl Shell {
             .role(Role::Alert)
             .test_support()
             .aria_label(message.clone())
+            .max_w(px(FORM_WIDTH))
+            .p_6()
             .flex()
             .flex_col()
             .items_start()
-            .gap_3()
-            .child(message)
+            .gap_4()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(palette.line))
+            .bg(rgb(palette.surface))
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(message),
+            )
+            .child(
+                div()
+                    .text_color(rgb(palette.muted))
+                    .child(confirmation.consequence),
+            )
             .child(
                 div()
                     .flex()
@@ -67,6 +110,71 @@ impl Shell {
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(rgb(palette.muted))
             .child(label)
+            .into_any_element()
+    }
+
+    pub(super) fn form_heading(title: &'static str) -> AnyElement {
+        div()
+            .id("form-heading")
+            .role(Role::Heading)
+            .test_support()
+            .aria_label(title)
+            .font_family(DISPLAY_FONT)
+            .text_size(px(28.0))
+            .line_height(px(34.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(title)
+            .into_any_element()
+    }
+
+    pub(super) fn empty_panel(
+        empty: EmptyPanel,
+        action: Option<Button>,
+        palette: &Palette,
+    ) -> AnyElement {
+        div()
+            .id(empty.id)
+            .role(Role::Status)
+            .test_support()
+            .aria_label(empty.message.clone())
+            .w_full()
+            .py(px(64.0))
+            .px_6()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .size(px(56.0))
+                    .mb_2()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(rgb(palette.surface))
+                    .border_1()
+                    .border_color(rgb(palette.line))
+                    .child(
+                        Icon::new(empty.icon)
+                            .with_size(px(24.0))
+                            .text_color(rgb(palette.muted)),
+                    ),
+            )
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(empty.message),
+            )
+            .child(
+                div()
+                    .max_w(px(420.0))
+                    .text_center()
+                    .text_color(rgb(palette.muted))
+                    .child(empty.hint),
+            )
+            .children(action.map(|action| div().pt_4().child(action)))
             .into_any_element()
     }
 
@@ -194,7 +302,10 @@ impl Shell {
     pub(super) fn cover_element(cover: Cover<'_>, palette: &Palette) -> AnyElement {
         let Cover {
             prefix,
-            item,
+            key,
+            title,
+            kind,
+            url,
             width,
         } = cover;
         let icon_size = if width >= TILE_COVER_WIDTH {
@@ -203,10 +314,10 @@ impl Shell {
             16.0
         };
         let mut element = div()
-            .id(format!("{prefix}-{}", item.id))
+            .id(format!("{prefix}-{key}"))
             .role(Role::Image)
             .test_support()
-            .aria_label(format!("Cover for {}", item.title))
+            .aria_label(format!("Cover for {title}"))
             .relative()
             .w(px(width))
             .h(px(width * 1.5))
@@ -218,23 +329,23 @@ impl Shell {
             .bg(rgb(palette.sunken))
             .child(
                 div()
-                    .id(format!("{prefix}-fallback-{}", item.id))
+                    .id(format!("{prefix}-fallback-{key}"))
                     .test_support()
                     .size_full()
                     .flex()
                     .items_center()
                     .justify_center()
                     .child(
-                        Icon::new(Self::media_kind_icon(item.media_kind))
+                        Icon::new(Self::media_kind_icon(kind))
                             .with_size(px(icon_size))
                             .text_color(rgb(palette.muted)),
                     ),
             );
 
-        if let Some(url) = &item.cover_url {
+        if let Some(url) = url {
             element = element.child(
-                img(url.clone())
-                    .id(format!("{prefix}-image-{}", item.id))
+                img(url.to_owned())
+                    .id(format!("{prefix}-image-{key}"))
                     .absolute()
                     .top_0()
                     .left_0()
