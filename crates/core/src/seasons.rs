@@ -70,6 +70,19 @@ pub fn create(database: &Database, show_id: &str, season_number: i32) -> Result<
         .map_err(Error::from)
 }
 
+pub fn create_missing(database: &Database, show_id: &str, numbers: &[i32]) -> Result<usize> {
+    let mut added = 0;
+    for number in numbers {
+        match create(database, show_id, *number) {
+            Ok(_) => added += 1,
+            Err(Error::DuplicateSeason) => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(added)
+}
+
 pub fn all(database: &Database, show_id: &str) -> Result<Vec<Season>> {
     database.select(
         &format!("SELECT {COLUMNS} FROM seasons WHERE show_id = ?1 ORDER BY season_number"),
@@ -310,5 +323,28 @@ mod tests {
 
         assert_eq!(stored.len(), 3);
         assert_eq!(first_seasons, [1, 2]);
+    }
+
+    #[test]
+    fn missing_seasons_are_added_and_existing_ones_left_alone() {
+        let database = Database::open_in_memory().unwrap();
+        let show = items::create(&database, MediaKind::Show, "Severance", None).unwrap();
+        let first = create(&database, &show.id, 1).unwrap();
+        set_status(&database, &first.id, "show-done").unwrap();
+
+        assert_eq!(
+            super::create_missing(&database, &show.id, &[1, 2, 3]).unwrap(),
+            2
+        );
+        assert_eq!(
+            super::create_missing(&database, &show.id, &[1, 2, 3]).unwrap(),
+            0
+        );
+
+        let stored = all(&database, &show.id).unwrap();
+        let numbers: Vec<i32> = stored.iter().map(|season| season.season_number).collect();
+        assert_eq!(numbers, [1, 2, 3]);
+        assert_eq!(stored[0].status_id, "show-done");
+        assert_eq!(stored[1].status_id, "show-planned");
     }
 }

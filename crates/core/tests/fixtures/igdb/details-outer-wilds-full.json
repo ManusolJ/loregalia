@@ -1,0 +1,40 @@
+[
+  {
+    "id": 11737,
+    "cover": {
+      "id": 286788,
+      "image_id": "co65ac"
+    },
+    "first_release_date": 1559001600,
+    "name": "Outer Wilds",
+    "summary": "Explore for the sake of exploration in a handcrafted solar system.",
+    "genres": [
+      {
+        "id": 12,
+        "name": "Role-playing (RPG)"
+      },
+      {
+        "id": 31,
+        "name": "Adventure"
+      }
+    ],
+    "involved_companies": [
+      {
+        "id": 1,
+        "company": {
+          "id": 2,
+          "name": "Mobius Digital"
+        },
+        "developer": true
+      },
+      {
+        "id": 3,
+        "company": {
+          "id": 4,
+          "name": "Annapurna Interactive"
+        },
+        "developer": false
+      }
+    ]
+  }
+]

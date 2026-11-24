@@ -1,8 +1,10 @@
-﻿use crate::providers::{Candidate, Source};
+use crate::details::Details;
+use crate::providers::{Candidate, Source};
 use crate::storage::keyed_column;
 use crate::{Database, Error, Result, media::MediaKind};
 use rusqlite::{OptionalExtension, Row, params, types::Type};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::SystemTime;
 use uuid::Uuid;
 
@@ -13,6 +15,8 @@ pub struct SourceData {
     pub title: String,
     pub release_year: Option<i32>,
     pub cover_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Details>,
 }
 
 impl From<Candidate> for SourceData {
@@ -21,6 +25,7 @@ impl From<Candidate> for SourceData {
             title: candidate.title,
             release_year: candidate.release_year,
             cover_url: candidate.cover_url,
+            details: candidate.details,
         }
     }
 }
@@ -50,6 +55,10 @@ pub struct Lookup {
 }
 
 impl Item {
+    pub fn details(&self) -> Option<&Details> {
+        self.source_data.as_ref()?.details.as_ref()
+    }
+
     pub(crate) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
@@ -117,6 +126,7 @@ pub fn create_from_lookup(
         title: title.to_owned(),
         release_year,
         cover_url: lookup.cover_url.clone(),
+        details: None,
     };
     let source_data_json = serde_json::to_string(&source_data)?;
     let refreshed_at = crate::log::timestamp(SystemTime::now());
@@ -196,8 +206,11 @@ pub struct Refresh {
     pub source_data: SourceData,
 }
 
-pub fn refreshed(item: &Item, latest: SourceData) -> Refresh {
+pub fn refreshed(item: &Item, mut latest: SourceData) -> Refresh {
     let previous = item.source_data.as_ref();
+    if latest.details.is_none() {
+        latest.details = item.details().cloned();
+    }
 
     Refresh {
         title: if previous.is_some_and(|old| old.title == item.title) {
@@ -234,13 +247,19 @@ pub fn apply_refresh(
 
     let refresh = refreshed(&item, latest);
     let source_data = serde_json::to_string(&refresh.source_data)?;
+    let release_date = refresh
+        .source_data
+        .details
+        .as_ref()
+        .and_then(|details| details.release_date.clone());
     let changed = database.connection().execute(
         "UPDATE items
          SET title = ?1,
              release_year = ?2,
              cover_url = ?3,
              source_data = ?4,
-             source_refreshed_at = ?5
+             source_refreshed_at = ?5,
+             release_date = COALESCE(?7, release_date)
          WHERE id = ?6",
         params![
             refresh.title,
@@ -248,11 +267,55 @@ pub fn apply_refresh(
             refresh.cover_url,
             source_data,
             refreshed_at,
-            id
+            id,
+            release_date
         ],
     )?;
 
     Ok(changed > 0)
+}
+
+pub fn mark_without_details(database: &Database, id: &str) -> Result<bool> {
+    let Some(item) = get(database, id)? else {
+        return Ok(false);
+    };
+    let data = SourceData {
+        details: Some(Details::default()),
+        ..item.source_data.unwrap_or(SourceData {
+            title: item.title,
+            release_year: item.release_year,
+            cover_url: item.cover_url,
+            details: None,
+        })
+    };
+    let changed = database.connection().execute(
+        "UPDATE items SET source_data = ?1 WHERE id = ?2",
+        params![serde_json::to_string(&data)?, id],
+    )?;
+
+    Ok(changed > 0)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Due {
+    pub id: String,
+    pub source: Source,
+    pub external_id: String,
+}
+
+pub fn next_due(items: &[Item], cutoff: &str, skip: &HashSet<String>) -> Option<Due> {
+    let missing = items.iter().rev().filter(|item| item.details().is_none());
+
+    missing
+        .chain(due_for_refresh(items, cutoff))
+        .filter(|item| !skip.contains(&item.id))
+        .find_map(|item| {
+            Some(Due {
+                id: item.id.clone(),
+                source: Source::from_key(item.source.as_deref()?)?,
+                external_id: item.external_id.clone()?,
+            })
+        })
 }
 
 pub fn due_for_refresh<'a>(items: &'a [Item], cutoff: &str) -> Vec<&'a Item> {
@@ -356,6 +419,7 @@ mod tests {
     use crate::Database;
     use crate::Error;
     use crate::media::MediaKind;
+    use crate::providers::Source;
 
     fn database() -> Database {
         Database::open_in_memory().unwrap()
@@ -373,6 +437,7 @@ mod tests {
             title: "Dune".to_owned(),
             release_year: Some(2021),
             cover_url: Some("https://image.example/dune.jpg".to_owned()),
+            details: None,
         };
 
         assert_eq!(
@@ -381,6 +446,7 @@ mod tests {
                 title: "Dune".to_owned(),
                 release_year: Some(2021),
                 cover_url: Some("https://image.example/dune.jpg".to_owned()),
+                details: None,
             }
         );
     }
@@ -546,6 +612,7 @@ mod tests {
                 title: "A Confession".to_owned(),
                 release_year: Some(2019),
                 cover_url: Some("https://example.test/poster.jpg".to_owned()),
+                details: None,
             })
         );
         assert!(
@@ -571,6 +638,7 @@ mod tests {
             title: "Dune: Part One".to_owned(),
             release_year: Some(2021),
             cover_url: Some("https://image.example/new.jpg".to_owned()),
+            details: None,
         };
 
         assert!(
@@ -619,6 +687,7 @@ mod tests {
             title: "Dune: Part One".to_owned(),
             release_year: Some(2021),
             cover_url: Some("https://image.example/new.jpg".to_owned()),
+            details: None,
         };
 
         apply_refresh(
@@ -646,6 +715,7 @@ mod tests {
             title: "Dune: Part One".to_owned(),
             release_year: Some(2024),
             cover_url: Some("https://image.example/new.jpg".to_owned()),
+            details: None,
         };
 
         assert!(
@@ -717,6 +787,7 @@ mod tests {
             title: "Dune: Part One".to_owned(),
             release_year: Some(2024),
             cover_url: Some("https://image.example/new.jpg".to_owned()),
+            details: None,
         };
 
         let result = refreshed(&item, latest.clone());
@@ -880,5 +951,137 @@ mod tests {
 
         let stored = super::get(&database, &item.id).unwrap().unwrap();
         assert_eq!(stored.finished_on.as_deref(), Some("2026-11-24"));
+    }
+
+    fn looked_up(database: &Database, kind: MediaKind, source: Source, id: &str) -> Item {
+        create_from_lookup(
+            database,
+            kind,
+            "Title",
+            Some(2020),
+            &Lookup {
+                source,
+                external_id: id.to_owned(),
+                cover_url: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn with_details(minutes: u32) -> SourceData {
+        SourceData {
+            title: "Title".to_owned(),
+            release_year: Some(2020),
+            cover_url: None,
+            details: Some(crate::details::Details {
+                minutes: Some(minutes),
+                release_date: Some("2020-05-01".to_owned()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn refreshing_stores_details_and_the_full_release_date() {
+        let database = Database::open_in_memory().unwrap();
+        let item = looked_up(&database, MediaKind::Show, Source::TvMaze, "1");
+        assert_eq!(item.details(), None);
+
+        apply_refresh(
+            &database,
+            &item.id,
+            with_details(49),
+            "2026-11-24T00:00:00.000Z",
+        )
+        .unwrap();
+
+        let stored = get(&database, &item.id).unwrap().unwrap();
+        assert_eq!(stored.details().unwrap().minutes, Some(49));
+        assert_eq!(stored.release_date.as_deref(), Some("2020-05-01"));
+    }
+
+    #[test]
+    fn a_refresh_without_details_keeps_the_ones_already_stored() {
+        let database = Database::open_in_memory().unwrap();
+        let item = looked_up(&database, MediaKind::Movie, Source::Tmdb, "1");
+        apply_refresh(
+            &database,
+            &item.id,
+            with_details(90),
+            "2026-11-24T00:00:00.000Z",
+        )
+        .unwrap();
+        let older = SourceData {
+            details: None,
+            ..with_details(90)
+        };
+
+        apply_refresh(&database, &item.id, older, "2026-11-25T00:00:00.000Z").unwrap();
+
+        let stored = get(&database, &item.id).unwrap().unwrap();
+        assert_eq!(stored.details().unwrap().minutes, Some(90));
+    }
+
+    #[test]
+    fn details_never_replace_what_the_user_typed() {
+        let database = Database::open_in_memory().unwrap();
+        let item = looked_up(&database, MediaKind::Movie, Source::Tmdb, "1");
+        update(
+            &database,
+            &item.id,
+            MediaKind::Movie,
+            "My title",
+            Some(1999),
+        )
+        .unwrap();
+
+        apply_refresh(
+            &database,
+            &item.id,
+            with_details(90),
+            "2026-11-24T00:00:00.000Z",
+        )
+        .unwrap();
+
+        let stored = get(&database, &item.id).unwrap().unwrap();
+        assert_eq!(stored.title, "My title");
+        assert_eq!(stored.release_year, Some(1999));
+        assert_eq!(stored.details().unwrap().minutes, Some(90));
+    }
+
+    #[test]
+    fn the_newest_item_without_details_is_due_first() {
+        let database = Database::open_in_memory().unwrap();
+        create(&database, MediaKind::Book, "By hand", None).unwrap();
+        let old = looked_up(&database, MediaKind::Show, Source::TvMaze, "1");
+        let new = looked_up(&database, MediaKind::Book, Source::OpenLibrary, "OL1W");
+        let items = all(&database).unwrap();
+        let mut skip = std::collections::HashSet::new();
+        let cutoff = "2000-01-01T00:00:00.000Z";
+
+        let first = super::next_due(&items, cutoff, &skip).unwrap();
+        assert_eq!(first.id, new.id);
+        assert_eq!(first.source, Source::OpenLibrary);
+        skip.insert(first.id);
+        assert_eq!(super::next_due(&items, cutoff, &skip).unwrap().id, old.id);
+        skip.insert(old.id);
+        assert_eq!(super::next_due(&items, cutoff, &skip), None);
+    }
+
+    #[test]
+    fn an_item_the_source_no_longer_has_is_not_asked_for_again() {
+        let database = Database::open_in_memory().unwrap();
+        let item = looked_up(&database, MediaKind::Show, Source::TvMaze, "1");
+
+        assert!(super::mark_without_details(&database, &item.id).unwrap());
+
+        let items = all(&database).unwrap();
+        assert_eq!(items[0].details(), Some(&Default::default()));
+        assert_eq!(items[0].title, "Title");
+        assert_eq!(
+            super::next_due(&items, "2000-01-01T00:00:00.000Z", &Default::default()),
+            None
+        );
+        assert!(!super::mark_without_details(&database, "missing").unwrap());
     }
 }

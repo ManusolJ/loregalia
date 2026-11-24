@@ -2,8 +2,8 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
-use loregalia_core::providers::Candidate;
 use loregalia_core::providers::relay::SearchResponse;
+use loregalia_core::providers::{Candidate, igdb};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -25,6 +25,7 @@ const CLIENT_WINDOW_SECONDS: i64 = 60;
 const DAY_SECONDS: i64 = 24 * 60 * 60;
 const SEARCH_TTL_SECONDS: i64 = 7 * DAY_SECONDS;
 const DETAILS_TTL_SECONDS: i64 = 30 * DAY_SECONDS;
+const DETAILS_VERSION: &str = "v2";
 const MAX_CACHE_ENTRIES: usize = 20_000;
 const MAX_QUERY_CHARS: usize = 100;
 const MAX_ID_DIGITS: usize = 20;
@@ -175,7 +176,7 @@ async fn movie_details(
 
     cached(
         &state,
-        format!("tmdb:movie:{id}"),
+        format!("tmdb:movie:{DETAILS_VERSION}:{id}"),
         now,
         DETAILS_TTL_SECONDS,
         async move {
@@ -234,15 +235,20 @@ async fn game_details(
 
     cached(
         &state,
-        format!("igdb:game:{id}"),
+        format!("igdb:game:{DETAILS_VERSION}:{id}"),
         now,
         DETAILS_TTL_SECONDS,
         async move {
             let upstream = upstream.ok_or(RelayError::NotConfigured)?;
-            throttle
-                .run(upstream.details(id))
+            let game = throttle
+                .run(upstream.details(id.clone()))
                 .await?
-                .map_err(RelayError::upstream)
+                .map_err(RelayError::upstream)?;
+            let minutes = throttle
+                .run(upstream.time_to_beat(id))
+                .await?
+                .map_err(RelayError::upstream)?;
+            Ok(igdb::with_time(game, minutes))
         },
     )
     .await
@@ -368,6 +374,7 @@ mod tests {
             title: "Dune".to_owned(),
             release_year: Some(2021),
             cover_url: Some("https://image.example/dune.jpg".to_owned()),
+            details: None,
         }
     }
 
@@ -636,12 +643,15 @@ mod tests {
             cover_url: Some(
                 "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg".to_owned(),
             ),
+            details: None,
         }
     }
 
     struct FakeIgdb {
         searches: Mutex<usize>,
         details: Mutex<usize>,
+        times: Mutex<usize>,
+        times_fail: bool,
     }
 
     impl FakeIgdb {
@@ -649,6 +659,8 @@ mod tests {
             Self {
                 searches: Mutex::new(0),
                 details: Mutex::new(0),
+                times: Mutex::new(0),
+                times_fail: false,
             }
         }
     }
@@ -664,6 +676,19 @@ mod tests {
             let mut calls = self.details.lock().unwrap();
             *calls += 1;
             Box::pin(async move { Ok(game_candidate()) })
+        }
+
+        fn time_to_beat(&self, _id: String) -> UpstreamResult<Option<u32>> {
+            let mut calls = self.times.lock().unwrap();
+            *calls += 1;
+            let failed = self.times_fail;
+            Box::pin(async move {
+                if failed {
+                    Err(Error::RateLimited)
+                } else {
+                    Ok(Some(1_310))
+                }
+            })
         }
     }
 
@@ -721,10 +746,43 @@ mod tests {
 
         assert_eq!(
             game_detail(state.clone(), "11737").await.unwrap(),
-            game_candidate()
+            timed_game()
         );
-        assert_eq!(game_detail(state, "11737").await.unwrap(), game_candidate());
+        assert_eq!(game_detail(state, "11737").await.unwrap(), timed_game());
         assert_eq!(*fake.details.lock().unwrap(), 1);
+        assert_eq!(*fake.times.lock().unwrap(), 1);
+    }
+
+    fn timed_game() -> Candidate {
+        loregalia_core::providers::igdb::with_time(game_candidate(), Some(1_310))
+    }
+
+    #[tokio::test]
+    async fn game_details_cached_before_details_existed_are_fetched_again() {
+        let fake = Arc::new(FakeIgdb::ok());
+        let state = state_with_igdb(Some(fake.clone()));
+        let old = serde_json::to_string(&game_candidate()).unwrap();
+        let now = crate::cache::now();
+        state
+            .cache
+            .put("igdb:game:11737", &old, now + 1_000, now, 100)
+            .unwrap();
+
+        assert_eq!(game_detail(state, "11737").await.unwrap(), timed_game());
+        assert_eq!(*fake.details.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_game_without_its_play_time_is_not_cached() {
+        let fake = Arc::new(FakeIgdb {
+            times_fail: true,
+            ..FakeIgdb::ok()
+        });
+        let state = state_with_igdb(Some(fake.clone()));
+
+        assert!(game_detail(state.clone(), "11737").await.is_err());
+        assert!(game_detail(state, "11737").await.is_err());
+        assert_eq!(*fake.details.lock().unwrap(), 2);
     }
 
     #[tokio::test]

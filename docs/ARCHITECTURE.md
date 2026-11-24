@@ -105,6 +105,10 @@ them.
   bound every cache.
 - Never build a URL from unchecked input. Choose the source by enum and pass values as parameters.
 - Save each API's real response as a fixture the first time you call it. Tests never use the network.
+- Missing details and stale TMDB data refresh in one background loop in `metadata_view.rs`, paced by
+  `REFRESH_PACE` (D-36). An item its source no longer has is marked, so it is not asked for again.
+- Cover addresses are checked in `core::images` before any request (D-37).
+- Text from a source is turned into plain text in `core::text` before it is stored.
 - Remote covers through `img()` need an HTTP client installed with `cx.set_http_client(...)`. Native
   builds fail every request until one is set.
 - Covers are cached in the data folder's `covers` folder, capped at 200 MB with the oldest removed

@@ -1,4 +1,5 @@
 pub mod dates;
+pub mod details;
 mod error;
 mod http;
 pub mod images;
@@ -15,6 +16,7 @@ pub mod settings;
 pub mod statuses;
 pub mod storage;
 pub mod tags;
+pub mod text;
 
 pub use error::{Error, Result};
 pub use storage::Database;

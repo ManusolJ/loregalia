@@ -4,11 +4,13 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Context, Pixels, Point, Result, Role, Size,
     TestAppContext, Window, WindowBounds, WindowOptions, px, size,
 };
-use loregalia_app::shell::{MetadataDetails, MetadataSearch, Shell};
+use loregalia_app::shell::{MetadataDetails, MetadataSearch, MetadataSeasons, REFRESH_PACE, Shell};
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
-    Database, Error, Result as CoreResult, items, keys, list_items, lists,
+    Database, Error, Result as CoreResult,
+    details::Details,
+    items, keys, list_items, lists,
     media::MediaKind,
     providers::{Candidate, Source},
     seasons, settings, tags,
@@ -52,14 +54,20 @@ fn open_shell(
     log_path: Option<PathBuf>,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, settings::Theme::Dark, None, |cx| {
-        Shell::new(
+        offline(Shell::new(
             storage,
             log_path,
             settings::Theme::Dark,
             memory_secrets(),
             cx,
-        )
+        ))
     })
+}
+
+fn offline(mut shell: Shell) -> Shell {
+    shell.use_details(Arc::new(|_, _| Err(Error::ConnectionFailed)));
+    shell.use_seasons(Arc::new(|_| Err(Error::ConnectionFailed)));
+    shell
 }
 
 fn memory_secrets() -> Arc<dyn keys::SecretStore> {
@@ -76,7 +84,15 @@ fn open_shell_with_secrets(
         size(px(1280.0), px(800.0)),
         settings::Theme::Dark,
         None,
-        |cx| Shell::new(storage, None, settings::Theme::Dark, secrets, cx),
+        |cx| {
+            offline(Shell::new(
+                storage,
+                None,
+                settings::Theme::Dark,
+                secrets,
+                cx,
+            ))
+        },
     )
 }
 
@@ -88,7 +104,13 @@ fn open_shell_with_search(
     search: MetadataSearch,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, settings::Theme::Dark, None, |cx| {
-        Shell::new_with_search(storage, log_path, settings::Theme::Dark, search, cx)
+        offline(Shell::new_with_search(
+            storage,
+            log_path,
+            settings::Theme::Dark,
+            search,
+            cx,
+        ))
     })
 }
 
@@ -99,7 +121,7 @@ fn open_shell_with_theme(
     choice: settings::Theme,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, choice, None, |cx| {
-        Shell::new(storage, None, choice, memory_secrets(), cx)
+        offline(Shell::new(storage, None, choice, memory_secrets(), cx))
     })
 }
 
@@ -122,7 +144,13 @@ fn open_shell_with_http(
     client: Arc<dyn HttpClient>,
 ) -> Result<AnyWindowHandle> {
     open_window(cx, window_size, settings::Theme::Dark, Some(client), |cx| {
-        Shell::new(storage, None, settings::Theme::Dark, memory_secrets(), cx)
+        offline(Shell::new(
+            storage,
+            None,
+            settings::Theme::Dark,
+            memory_secrets(),
+            cx,
+        ))
     })
 }
 
@@ -139,6 +167,7 @@ fn found_show() -> Candidate {
         title: "Dark".to_owned(),
         release_year: Some(2017),
         cover_url: Some("https://example.test/dark.jpg".to_owned()),
+        details: None,
     }
 }
 
@@ -151,6 +180,7 @@ fn found_book() -> Candidate {
         cover_url: Some(
             "https://covers.openlibrary.org/b/id/10226290-M.jpg?default=false".to_owned(),
         ),
+        details: None,
     }
 }
 
@@ -163,6 +193,7 @@ fn found_movie() -> Candidate {
         cover_url: Some(
             "https://image.tmdb.org/t/p/w342/v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg".to_owned(),
         ),
+        details: None,
     }
 }
 
@@ -175,6 +206,7 @@ fn found_game() -> Candidate {
         cover_url: Some(
             "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg".to_owned(),
         ),
+        details: None,
     }
 }
 
@@ -185,6 +217,7 @@ fn refreshed_movie() -> Candidate {
         title: "Dune: Part One".to_owned(),
         release_year: Some(2021),
         cover_url: Some("https://image.tmdb.org/t/p/w342/refreshed.jpg".to_owned()),
+        details: None,
     }
 }
 
@@ -1105,6 +1138,7 @@ fn searching_tmdb_adds_the_chosen_movie(cx: &mut TestAppContext) {
             cover_url: Some(
                 "https://image.tmdb.org/t/p/w342/v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg".to_owned()
             ),
+            details: None,
         })
     );
     assert!(
@@ -1215,7 +1249,7 @@ fn a_stale_tmdb_item_refreshes_in_the_background(cx: &mut TestAppContext) {
         if source == Source::Tmdb && external_id == "438631" {
             Ok(refreshed_movie())
         } else {
-            Err(Error::UnsupportedLookup)
+            Err(Error::HttpStatus { code: 500 })
         }
     });
     let handle = open_shell_with_services(
@@ -1829,7 +1863,10 @@ fn the_image_http_client_fetches_a_cover(cx: &mut TestAppContext) {
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!");
     });
 
-    let client = ImageHttpClient::new(cx.background_executor.clone());
+    let client = ImageHttpClient::with_download(
+        cx.background_executor.clone(),
+        loregalia_core::images::download,
+    );
     let request = Request::builder()
         .method(Method::GET)
         .uri(format!("http://{address}/cover.png"))
@@ -5315,4 +5352,468 @@ fn many_tags_leave_room_for_the_library_in_the_smallest_window(cx: &mut TestAppC
         assert!(window.find("main-scroll").bounds().size.height >= px(200.0));
     })
     .unwrap();
+}
+
+fn seed_lookup(
+    path: &Path,
+    kind: MediaKind,
+    title: &str,
+    source: Source,
+    external_id: &str,
+) -> CoreResult<items::Item> {
+    items::create_from_lookup(
+        &Database::open(path)?,
+        kind,
+        title,
+        Some(2020),
+        &items::Lookup {
+            source,
+            external_id: external_id.to_owned(),
+            cover_url: None,
+        },
+    )
+}
+
+fn detailed(source: Source, external_id: &str, title: &str) -> Candidate {
+    Candidate {
+        source,
+        external_id: external_id.to_owned(),
+        title: title.to_owned(),
+        release_year: Some(2020),
+        cover_url: None,
+        details: Some(Details {
+            synopsis: Some("A short synopsis.".to_owned()),
+            minutes: Some(155),
+            pages: None,
+            genres: vec!["Drama".to_owned(), "Mystery".to_owned()],
+            creators: vec!["Someone".to_owned()],
+            release_date: Some("2020-05-01".to_owned()),
+        }),
+    }
+}
+
+type Calls = Arc<std::sync::Mutex<Vec<String>>>;
+
+fn counted(
+    calls: &Calls,
+    answer: impl Fn(Source, &str) -> CoreResult<Candidate> + Send + Sync + 'static,
+) -> MetadataDetails {
+    let calls = calls.clone();
+    Arc::new(move |source, id: String| {
+        if let Ok(mut calls) = calls.lock() {
+            calls.push(id.clone());
+        }
+        answer(source, &id)
+    })
+}
+
+fn open_with_details(
+    cx: &mut TestAppContext,
+    path: &Path,
+    details: MetadataDetails,
+) -> Result<AnyWindowHandle> {
+    let handle = open_shell_with_services(
+        cx,
+        size(px(1280.0), px(800.0)),
+        StorageState::Ready(path.to_path_buf()),
+        Arc::new(|_, _| Ok(vec![found_show()])),
+        details,
+    )?;
+    cx.run_until_parked();
+    Ok(handle)
+}
+
+fn pass_time(cx: &mut TestAppContext, rounds: usize) {
+    for _ in 0..rounds {
+        cx.background_executor.advance_clock(REFRESH_PACE);
+        cx.run_until_parked();
+    }
+}
+
+#[gpui_kit::test]
+fn details_fill_in_and_show_in_the_panel(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_lookup(&path, MediaKind::Show, "Dark", Source::TvMaze, "42").unwrap();
+    let calls = Calls::default();
+    let details = counted(&calls, |source, id| Ok(detailed(source, id, "Dark")));
+    let handle = open_with_details(cx, &path, details).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
+        window.render_frame(cx);
+        let label = |id: &str| window.find(id.to_owned()).label().map(str::to_owned);
+
+        assert_eq!(
+            label("detail-synopsis").as_deref(),
+            Some("A short synopsis.")
+        );
+        assert_eq!(
+            label("detail-length").as_deref(),
+            Some("2 h 35 min an episode")
+        );
+        assert_eq!(label("detail-creator").as_deref(), Some("Someone"));
+        assert_eq!(label("detail-genres").as_deref(), Some("Drama, Mystery"));
+        assert_eq!(label("detail-released").as_deref(), Some("1 May 2020"));
+        assert_eq!(
+            window.find(format!("detail-source-{}", show.id)).label(),
+            Some("https://www.tvmaze.com/shows/42")
+        );
+        assert!(window.find(format!("detail-license-{}", show.id)).visible());
+    })
+    .unwrap();
+
+    let stored = items::get(&Database::open(&path).unwrap(), &show.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.details().unwrap().minutes, Some(155));
+    assert_eq!(stored.release_date.as_deref(), Some("2020-05-01"));
+}
+
+#[gpui_kit::test]
+fn a_hand_typed_item_asks_no_source_and_shows_no_facts(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let item = seed_item(&path, MediaKind::Movie, "Home video", None).unwrap();
+    let calls = Calls::default();
+    let details = counted(&calls, |source, id| Ok(detailed(source, id, "x")));
+    let handle = open_with_details(cx, &path, details).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", item.id), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-facts").is_none());
+        assert!(window.try_find("detail-synopsis").is_none());
+        assert!(
+            window
+                .try_find(format!("detail-source-{}", item.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+fn existing_items_fill_in_one_at_a_time_newest_first(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for id in ["1", "2", "3"] {
+        seed_lookup(&path, MediaKind::Game, id, Source::Igdb, id).unwrap();
+    }
+    let calls = Calls::default();
+    let details = counted(&calls, |source, id| Ok(detailed(source, id, id)));
+    open_with_details(cx, &path, details).unwrap();
+
+    assert_eq!(*calls.lock().unwrap(), ["3"]);
+    pass_time(cx, 1);
+    assert_eq!(*calls.lock().unwrap(), ["3", "2"]);
+    pass_time(cx, 5);
+    assert_eq!(*calls.lock().unwrap(), ["3", "2", "1"]);
+}
+
+#[gpui_kit::test]
+fn scattered_failures_do_not_stop_the_others(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for id in ["1", "2", "3", "4", "5", "6", "7", "8"] {
+        seed_lookup(&path, MediaKind::Game, id, Source::Igdb, id).unwrap();
+    }
+    let calls = Calls::default();
+    let details = counted(&calls, |source, id| {
+        if ["2", "4", "6", "8"].contains(&id) {
+            Err(Error::ConnectionFailed)
+        } else {
+            Ok(detailed(source, id, id))
+        }
+    });
+    open_with_details(cx, &path, details).unwrap();
+    pass_time(cx, 12);
+
+    assert_eq!(
+        *calls.lock().unwrap(),
+        ["8", "7", "6", "5", "4", "3", "2", "1"]
+    );
+}
+
+#[gpui_kit::test]
+fn filling_in_stops_after_three_failures_in_a_row(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for id in ["1", "2", "3", "4", "5"] {
+        seed_lookup(&path, MediaKind::Game, id, Source::Igdb, id).unwrap();
+    }
+    let calls = Calls::default();
+    let details = counted(&calls, |_, _| Err(Error::ConnectionFailed));
+    open_with_details(cx, &path, details).unwrap();
+    pass_time(cx, 8);
+
+    assert_eq!(calls.lock().unwrap().len(), 3);
+}
+
+#[gpui_kit::test]
+fn a_rate_limit_stops_filling_in_at_once(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for id in ["1", "2", "3"] {
+        seed_lookup(&path, MediaKind::Movie, id, Source::Tmdb, id).unwrap();
+    }
+    let calls = Calls::default();
+    let details = counted(&calls, |_, _| Err(Error::RateLimited));
+    open_with_details(cx, &path, details).unwrap();
+    pass_time(cx, 8);
+
+    assert_eq!(calls.lock().unwrap().len(), 1);
+}
+
+#[gpui_kit::test]
+fn an_item_the_source_lost_is_asked_for_only_once(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_lookup(&path, MediaKind::Show, "Gone", Source::TvMaze, "42").unwrap();
+    let calls = Calls::default();
+    let missing = || counted(&calls, |_, _| Err(Error::HttpStatus { code: 404 }));
+    open_with_details(cx, &path, missing()).unwrap();
+    open_with_details(cx, &path, missing()).unwrap();
+
+    assert_eq!(calls.lock().unwrap().len(), 1);
+    let stored = items::get(&Database::open(&path).unwrap(), &show.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.title, "Gone");
+}
+
+#[gpui_kit::test]
+fn adding_an_item_resumes_after_the_connection_returns(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for id in ["1", "2", "3"] {
+        seed_lookup(&path, MediaKind::Game, id, Source::Igdb, id).unwrap();
+    }
+    let online = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let answer = online.clone();
+    let calls = Calls::default();
+    let details = counted(&calls, move |source, id| {
+        if answer.load(std::sync::atomic::Ordering::SeqCst) {
+            Ok(detailed(source, id, id))
+        } else {
+            Err(Error::ConnectionFailed)
+        }
+    });
+    let handle = open_with_details(cx, &path, details).unwrap();
+    pass_time(cx, 6);
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    online.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("add-item", cx);
+        window.render_frame(cx);
+        window.click("item-kind-show", cx);
+        window.render_frame(cx);
+        window.click("metadata-search-input", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "dark");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-result-tvmaze-42", cx);
+        window.render_frame(cx);
+        window.click("save-item", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    pass_time(cx, 6);
+
+    let asked = calls.lock().unwrap()[3..].to_vec();
+    assert_eq!(asked, ["42", "3", "2", "1"]);
+}
+
+#[gpui_kit::test]
+fn a_long_synopsis_opens_and_closes(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let movie = seed_lookup(&path, MediaKind::Movie, "Dune", Source::Tmdb, "1").unwrap();
+    let details = Arc::new(|source, id: String| {
+        let mut candidate = detailed(source, &id, "Dune");
+        if let Some(details) = &mut candidate.details {
+            details.synopsis = Some("é ".repeat(200));
+        }
+        Ok(candidate)
+    });
+    let handle = open_with_details(cx, &path, details).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", movie.id), cx);
+        window.render_frame(cx);
+        let length = |window: &mut Window| {
+            window
+                .find("detail-synopsis")
+                .label()
+                .map_or(0, |text| text.chars().count())
+        };
+        assert!(length(window) <= 281);
+        window.click("toggle-synopsis", cx);
+        window.render_frame(cx);
+        assert!(length(window) > 281);
+        window.click("toggle-synopsis", cx);
+        window.render_frame(cx);
+        assert!(length(window) <= 281);
+        assert!(
+            window
+                .try_find(format!("detail-license-{}", movie.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+}
+
+fn open_with_seasons(
+    cx: &mut TestAppContext,
+    path: &Path,
+    seasons: MetadataSeasons,
+) -> Result<AnyWindowHandle> {
+    let handle = open_window(
+        cx,
+        size(px(1280.0), px(800.0)),
+        settings::Theme::Dark,
+        None,
+        |cx| {
+            let mut shell = offline(Shell::new(
+                StorageState::Ready(path.to_path_buf()),
+                None,
+                settings::Theme::Dark,
+                memory_secrets(),
+                cx,
+            ));
+            shell.use_seasons(seasons);
+            shell
+        },
+    )?;
+    cx.run_until_parked();
+    Ok(handle)
+}
+
+#[gpui_kit::test]
+fn seasons_come_from_tvmaze_without_touching_existing_ones(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_lookup(&path, MediaKind::Show, "Dark", Source::TvMaze, "42").unwrap();
+    let first = seed_season(&path, &show.id, 1).unwrap();
+    seasons::set_status(&Database::open(&path).unwrap(), &first.id, "show-done").unwrap();
+    let handle = open_with_seasons(
+        cx,
+        &path,
+        Arc::new(|id| {
+            if id == "42" {
+                Ok(vec![1, 2, 3])
+            } else {
+                Err(Error::HttpStatus { code: 404 })
+            }
+        }),
+    )
+    .unwrap();
+    let fetch = format!("fetch-seasons-{}", show.id);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
+        window.render_frame(cx);
+        window.click(fetch.clone(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let stored = seasons::all(&Database::open(&path).unwrap(), &show.id).unwrap();
+    assert_eq!(stored.len(), 3);
+    assert_eq!(stored[0].status_id, "show-done");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(fetch, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("seasons-fetch-message").label(),
+            Some("TVmaze has no other seasons")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_season_lookup_is_an_alert_and_adds_nothing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let show = seed_lookup(&path, MediaKind::Show, "Dark", Source::TvMaze, "42").unwrap();
+    let by_hand = seed_item(&path, MediaKind::Show, "By hand", None).unwrap();
+    let handle = open_with_seasons(cx, &path, Arc::new(|_| Err(Error::ConnectionFailed))).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", show.id), cx);
+        window.render_frame(cx);
+        window.click(format!("fetch-seasons-{}", show.id), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let message = window.find("seasons-fetch-message");
+        assert_eq!(message.role(), Some(Role::Alert));
+        assert_eq!(
+            message.label(),
+            Some("Could not connect to TVmaze. Check your internet connection and try again.")
+        );
+        window.click(format!("item-row-{}", by_hand.id), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("seasons-fetch-message").is_none());
+        assert!(
+            window
+                .try_find(format!("fetch-seasons-{}", by_hand.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+    assert!(
+        seasons::all(&Database::open(&path).unwrap(), &show.id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[gpui_kit::test]
+fn the_image_client_refuses_addresses_off_the_list(cx: &mut TestAppContext) {
+    use gpui_kit::http_client::{Method, Request};
+    use loregalia_app::http::ImageHttpClient;
+    use std::sync::Mutex;
+
+    let client = ImageHttpClient::new(cx.background_executor.clone());
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("http://127.0.0.1:9/cover.png")
+        .body(AsyncBody::default())
+        .unwrap();
+    let result = Arc::new(Mutex::new(None));
+    let slot = result.clone();
+    cx.background_executor
+        .spawn(async move {
+            *slot.lock().unwrap() = Some(client.send(request).await.map(|_| ()));
+        })
+        .detach();
+    cx.run_until_parked();
+
+    let error = result.lock().unwrap().take().unwrap().unwrap_err();
+    assert!(error.to_string().contains("not on a metadata source"));
 }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -11,7 +13,7 @@ use gpui_kit::{
     AnyElement, AppContext, Context, FontWeight, Role, TestSupportExt, Window, div, px, rgb,
 };
 use loregalia_core::{
-    Database, Result as CoreResult, items, keys, log,
+    Database, Error, Result as CoreResult, items, keys, log,
     media::MediaKind,
     providers::{self, Candidate, Source},
 };
@@ -27,6 +29,11 @@ pub type MetadataSearch = Arc<dyn Fn(MediaKind, &str) -> CoreResult<Vec<Candidat
 pub type MetadataDetails = Arc<dyn Fn(Source, String) -> CoreResult<Candidate> + Send + Sync>;
 
 const RESULT_HEIGHT: f32 = 72.0;
+const MAX_REFRESH_FAILURES: usize = 3;
+
+pub const REFRESH_PACE: Duration = Duration::from_secs(4);
+
+pub type MetadataSeasons = Arc<dyn Fn(&str) -> CoreResult<Vec<i32>> + Send + Sync>;
 
 pub(super) const TMDB_REFRESH_AFTER_DAYS: u64 = 150;
 
@@ -76,6 +83,34 @@ pub(super) fn refresh_cutoff() -> String {
 }
 
 #[derive(Default)]
+pub(super) struct RefreshState {
+    running: bool,
+    stopped: bool,
+    failures: usize,
+    attempted: HashSet<String>,
+}
+
+fn refresh_item(
+    path: &Path,
+    due: &items::Due,
+    details: &MetadataDetails,
+) -> CoreResult<Option<items::Item>> {
+    let found = details(due.source, due.external_id.clone());
+    let database = Database::open(path)?;
+    match found {
+        Ok(candidate) => {
+            let refreshed_at = log::timestamp(SystemTime::now());
+            items::apply_refresh(&database, &due.id, candidate.into(), &refreshed_at)?;
+        }
+        Err(Error::HttpStatus { code: 404 }) => {
+            items::mark_without_details(&database, &due.id)?;
+        }
+        Err(error) => return Err(error),
+    }
+    items::get(&database, &due.id)
+}
+
+#[derive(Default)]
 pub(super) enum SearchStatus {
     #[default]
     Idle,
@@ -87,75 +122,77 @@ pub(super) enum SearchStatus {
 
 impl Shell {
     pub(super) fn start_metadata_refresh(&mut self, cx: &mut Context<Self>) {
-        if self.refresh_started {
+        if self.refresh.running || self.refresh.stopped || self.next_refresh().is_none() {
             return;
         }
-        self.refresh_started = true;
-
-        let cutoff = refresh_cutoff();
-        let due: Vec<(String, String)> = items::due_for_refresh(&self.items, &cutoff)
-            .into_iter()
-            .filter_map(|item| {
-                item.external_id
-                    .clone()
-                    .map(|external_id| (item.id.clone(), external_id))
-            })
-            .collect();
-        if due.is_empty() {
-            return;
-        }
-
-        let StorageState::Ready(path) = self.storage.clone() else {
-            return;
-        };
-        let details = self.metadata_details.clone();
-
-        let task = cx.background_spawn(async move {
-            let database = Database::open(path)?;
-            let mut updated = Vec::new();
-            let mut failures = Vec::new();
-
-            for (id, external_id) in due {
-                match details(Source::Tmdb, external_id) {
-                    Ok(candidate) => {
-                        let refreshed_at = log::timestamp(SystemTime::now());
-                        if items::apply_refresh(&database, &id, candidate.into(), &refreshed_at)?
-                            && let Some(item) = items::get(&database, &id)?
-                        {
-                            updated.push(item);
-                        }
-                    }
-                    Err(error) => failures.push(error.to_string()),
-                }
-            }
-
-            Ok::<_, loregalia_core::Error>((updated, failures))
-        });
+        self.refresh.running = true;
 
         cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |this, cx| {
-                match result {
-                    Ok((updated, failures)) => {
-                        for item in updated {
-                            if let Some(slot) =
-                                this.items.iter_mut().find(|slot| slot.id == item.id)
-                            {
-                                *slot = item;
-                            }
-                        }
-                        for failure in failures {
-                            this.record(&format!("Metadata refresh failed: {failure}"), cx);
-                        }
-                    }
-                    Err(error) => {
-                        this.record(&format!("Metadata refresh failed: {error}"), cx);
-                    }
+            while let Ok(Some((path, due))) = this.update(cx, |this, _| this.take_refresh()) {
+                let Ok(details) = this.update(cx, |this, _| this.metadata_details.clone()) else {
+                    return;
+                };
+                let outcome = cx
+                    .background_spawn(async move { refresh_item(&path, &due, &details) })
+                    .await;
+                let resume = this.update(cx, |this, cx| this.finish_refresh(outcome, cx));
+                if !matches!(resume, Ok(true)) {
+                    break;
                 }
-                cx.notify();
-            });
+                cx.background_executor().timer(REFRESH_PACE).await;
+            }
+            let _ = this.update(cx, |this, _| this.refresh.running = false);
         })
         .detach();
+    }
+
+    pub(super) fn resume_metadata_refresh(&mut self) {
+        self.refresh.stopped = false;
+        self.refresh.failures = 0;
+        self.refresh.attempted.clear();
+    }
+
+    fn next_refresh(&self) -> Option<(PathBuf, items::Due)> {
+        let StorageState::Ready(path) = &self.storage else {
+            return None;
+        };
+        let due = items::next_due(&self.items, &refresh_cutoff(), &self.refresh.attempted)?;
+
+        Some((path.clone(), due))
+    }
+
+    fn take_refresh(&mut self) -> Option<(PathBuf, items::Due)> {
+        let next = self.next_refresh()?;
+        self.refresh.attempted.insert(next.1.id.clone());
+        Some(next)
+    }
+
+    fn finish_refresh(
+        &mut self,
+        outcome: CoreResult<Option<items::Item>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match outcome {
+            Ok(updated) => {
+                self.refresh.failures = 0;
+                if let Some(item) = updated
+                    && let Some(slot) = self.items.iter_mut().find(|slot| slot.id == item.id)
+                {
+                    *slot = item;
+                }
+                cx.notify();
+            }
+            Err(error) => {
+                self.record(&format!("Metadata refresh failed: {error}"), cx);
+                self.refresh.failures += 1;
+                if matches!(error, Error::RateLimited)
+                    || self.refresh.failures >= MAX_REFRESH_FAILURES
+                {
+                    self.refresh.stopped = true;
+                }
+            }
+        }
+        !self.refresh.stopped
     }
 
     pub(super) fn search_metadata(&mut self, cx: &mut Context<Self>) {

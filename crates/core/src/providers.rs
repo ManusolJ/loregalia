@@ -4,6 +4,7 @@ pub mod relay;
 pub mod tmdb;
 pub mod tvmaze;
 
+use crate::details::Details;
 use crate::media::MediaKind;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,15 @@ impl Source {
     pub fn from_key(value: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|source| source.key() == value)
     }
+
+    pub fn page(self, external_id: &str) -> String {
+        match self {
+            Self::TvMaze => format!("https://www.tvmaze.com/shows/{external_id}"),
+            Self::OpenLibrary => format!("https://openlibrary.org/works/{external_id}"),
+            Self::Tmdb => format!("https://www.themoviedb.org/movie/{external_id}"),
+            Self::Igdb => "https://www.igdb.com".to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,6 +60,27 @@ pub struct Candidate {
     pub title: String,
     pub release_year: Option<i32>,
     pub cover_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Details>,
+}
+
+pub(crate) fn numeric(id: &str) -> Result<&str> {
+    if id.is_empty() || !id.chars().all(|character| character.is_ascii_digit()) {
+        return Err(Error::HttpStatus { code: 404 });
+    }
+    Ok(id)
+}
+
+pub(crate) fn positive(value: Option<i64>) -> Option<u32> {
+    value
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
+pub(crate) fn full_date(date: Option<&str>) -> Option<String> {
+    let date = date?;
+    crate::dates::short(date)?;
+    date.get(..10).map(str::to_owned)
 }
 
 pub(crate) fn year_of(date: Option<&str>) -> Option<i32> {
@@ -179,7 +210,8 @@ pub fn details_with_key(
             }
             None => relay::game_details(relay_url, external_id),
         },
-        Source::TvMaze | Source::OpenLibrary => Err(Error::UnsupportedLookup),
+        Source::TvMaze => tvmaze::details(external_id),
+        Source::OpenLibrary => open_library::details(external_id),
     }
 }
 
@@ -282,8 +314,8 @@ mod tests {
     #[test]
     fn other_errors_keep_their_description_with_a_capital_letter() {
         assert_eq!(
-            failure_message(&Error::UnsupportedLookup, Source::TvMaze, Route::Direct),
-            "No metadata source is available for this media kind yet"
+            failure_message(&Error::UnknownShow, Source::TvMaze, Route::Direct),
+            "The show does not exist"
         );
     }
 
@@ -320,11 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn details_exist_only_for_sources_that_refresh() {
-        assert!(matches!(
-            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, None, None),
-            Err(Error::UnsupportedLookup)
-        ));
+    fn movie_details_go_through_the_relay_without_a_key() {
         assert!(matches!(
             details_with_key(Source::Tmdb, "438631", UNREACHABLE_RELAY, None, None),
             Err(Error::ConnectionFailed)
@@ -347,6 +375,7 @@ mod tests {
             title: "Dune".to_owned(),
             release_year: Some(2021),
             cover_url: None,
+            details: None,
         }
     }
 
@@ -383,6 +412,7 @@ mod tests {
             title: "Outer Wilds".to_owned(),
             release_year: Some(2019),
             cover_url: None,
+            details: None,
         };
         let body = serde_json::to_string(&crate::providers::relay::SearchResponse {
             results: vec![game.clone()],
@@ -397,20 +427,40 @@ mod tests {
     }
 
     #[test]
-    fn details_with_a_key_are_limited_to_tmdb() {
-        assert!(matches!(
-            details_with_key(Source::TvMaze, "42", UNREACHABLE_RELAY, Some("token"), None),
-            Err(Error::UnsupportedLookup)
-        ));
-        assert!(matches!(
-            details_with_key(
-                Source::OpenLibrary,
-                "42",
-                UNREACHABLE_RELAY,
-                Some("token"),
-                None
-            ),
-            Err(Error::UnsupportedLookup)
-        ));
+    fn a_malformed_id_never_leaves_the_computer() {
+        for source in [Source::TvMaze, Source::OpenLibrary, Source::Tmdb] {
+            for id in ["", "4/../2", "42?x=1", "OL1M", "OLW"] {
+                assert!(
+                    matches!(
+                        details_with_key(source, id, UNREACHABLE_RELAY, Some("token"), None),
+                        Err(Error::HttpStatus { code: 404 })
+                    ),
+                    "{source:?} {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_source_has_a_page_to_credit() {
+        for source in Source::ALL {
+            assert!(source.page("42").starts_with("https://"));
+        }
+        assert_eq!(Source::TvMaze.page("42"), "https://www.tvmaze.com/shows/42");
+    }
+
+    #[test]
+    fn a_candidate_from_an_older_relay_has_no_details() {
+        let candidate: Candidate = serde_json::from_str(
+            r#"{"source":"tmdb","external_id":"1","title":"Dune","release_year":2021,"cover_url":null}"#,
+        )
+        .unwrap();
+
+        assert_eq!(candidate.details, None);
+        assert!(
+            !serde_json::to_string(&candidate)
+                .unwrap()
+                .contains("details")
+        );
     }
 }

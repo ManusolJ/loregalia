@@ -12,6 +12,7 @@ pub type UpstreamResult<T> = Pin<Box<dyn Future<Output = Result<T, Error>> + Sen
 pub trait IgdbUpstream: Send + Sync {
     fn search(&self, query: String) -> UpstreamResult<Vec<Candidate>>;
     fn details(&self, id: String) -> UpstreamResult<Candidate>;
+    fn time_to_beat(&self, id: String) -> UpstreamResult<Option<u32>>;
 }
 
 pub struct IgdbClient {
@@ -61,6 +62,10 @@ impl IgdbUpstream for IgdbClient {
     }
 
     fn details(&self, id: String) -> UpstreamResult<Candidate> {
-        self.call(move |client_id, access| igdb::details(client_id, access, &id))
+        self.call(move |client_id, access| igdb::game(client_id, access, &id))
+    }
+
+    fn time_to_beat(&self, id: String) -> UpstreamResult<Option<u32>> {
+        self.call(move |client_id, access| igdb::time_to_beat(client_id, access, &id))
     }
 }

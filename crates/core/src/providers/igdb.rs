@@ -1,7 +1,9 @@
+use crate::details::Details;
 use crate::http;
-use crate::providers::{Candidate, Source};
-use crate::{Error, Result};
+use crate::providers::{Candidate, Source, full_date, numeric, positive};
+use crate::{Error, Result, log, text};
 use serde::Deserialize;
+use serde_json::Value;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -9,6 +11,8 @@ const BASE_URL: &str = "https://api.igdb.com/v4";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
 const IMAGE_BASE_URL: &str = "https://images.igdb.com/igdb/image/upload/t_cover_big";
 const FIELDS: &str = "name,cover.image_id,first_release_date";
+const DETAIL_FIELDS: &str = "name,cover.image_id,first_release_date,summary,genres.name,involved_companies.developer,involved_companies.company.name";
+const TIME_FIELDS: &str = "normally,hastily,completely";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IgdbToken {
@@ -28,6 +32,26 @@ struct ApiGame {
     name: Option<String>,
     cover: Option<ApiCover>,
     first_release_date: Option<i64>,
+    summary: Option<String>,
+    #[serde(default)]
+    genres: Value,
+    #[serde(default)]
+    involved_companies: Value,
+}
+
+#[derive(Deserialize)]
+struct ApiTime {
+    normally: Option<i64>,
+    hastily: Option<i64>,
+    completely: Option<i64>,
+}
+
+fn entries(value: &Value) -> impl Iterator<Item = &Value> {
+    value.as_array().into_iter().flatten()
+}
+
+fn name_in(value: &Value) -> Option<String> {
+    value.get("name")?.as_str().map(str::to_owned)
 }
 
 #[derive(Deserialize)]
@@ -36,6 +60,25 @@ struct ApiCover {
 }
 
 impl ApiGame {
+    fn details(&self) -> Details {
+        Details {
+            synopsis: self.summary.as_deref().and_then(text::tidy),
+            minutes: None,
+            pages: None,
+            genres: entries(&self.genres).filter_map(name_in).collect(),
+            creators: entries(&self.involved_companies)
+                .filter(|company| company.get("developer").and_then(Value::as_bool) == Some(true))
+                .filter_map(|company| name_in(company.get("company")?))
+                .collect(),
+            release_date: self
+                .first_release_date
+                .filter(|seconds| *seconds > 0)
+                .and_then(|seconds| u64::try_from(seconds).ok())
+                .map(|seconds| log::timestamp(UNIX_EPOCH + Duration::from_secs(seconds)))
+                .and_then(|date| full_date(Some(&date))),
+        }
+    }
+
     fn into_candidate(self) -> Option<Candidate> {
         let title = self.name?.trim().to_owned();
         if title.is_empty() {
@@ -51,10 +94,13 @@ impl ApiGame {
                 .cover
                 .and_then(|cover| cover.image_id)
                 .map(|image_id| format!("{IMAGE_BASE_URL}/{image_id}.jpg")),
+            details: None,
         })
     }
 }
 
+const GAMES: &str = "games";
+const TIMES: &str = "game_time_to_beats";
 const REFRESH_MARGIN_SECONDS: u64 = 60;
 
 static USER_TOKENS: TokenCache = TokenCache::new();
@@ -195,10 +241,17 @@ fn search_clause(query: &str) -> String {
 }
 
 fn details_clause(id: &str) -> Result<String> {
-    if id.is_empty() || !id.chars().all(|character| character.is_ascii_digit()) {
-        return Err(Error::HttpStatus { code: 404 });
-    }
-    Ok(format!("where id = {id}; fields {FIELDS};"))
+    Ok(format!(
+        "where id = {}; fields {DETAIL_FIELDS};",
+        numeric(id)?
+    ))
+}
+
+fn time_clause(id: &str) -> Result<String> {
+    Ok(format!(
+        "where game_id = {}; fields {TIME_FIELDS};",
+        numeric(id)?
+    ))
 }
 
 fn token_at(
@@ -232,12 +285,59 @@ fn search_at(
     query: &str,
     timeout: Duration,
 ) -> Result<Vec<Candidate>> {
-    let text = post(base_url, client_id, token, &search_clause(query), timeout)?;
+    let clause = search_clause(query);
+    let text = post(base_url, GAMES, client_id, token, &clause, timeout)?;
     parse_search(&text)
 }
 
 pub fn details(client_id: &str, token: &str, id: &str) -> Result<Candidate> {
+    let game = game(client_id, token, id)?;
+    let minutes = time_to_beat(client_id, token, id)?;
+
+    Ok(with_time(game, minutes))
+}
+
+pub fn game(client_id: &str, token: &str, id: &str) -> Result<Candidate> {
     details_at(BASE_URL, client_id, token, id, http::TIMEOUT)
+}
+
+pub fn time_to_beat(client_id: &str, token: &str, id: &str) -> Result<Option<u32>> {
+    time_to_beat_at(BASE_URL, client_id, token, id, http::TIMEOUT)
+}
+
+pub fn with_time(game: Candidate, minutes: Option<u32>) -> Candidate {
+    let details = Details {
+        minutes,
+        ..game.details.clone().unwrap_or_default()
+    };
+
+    Candidate {
+        details: Some(details),
+        ..game
+    }
+}
+
+fn time_to_beat_at(
+    base_url: &str,
+    client_id: &str,
+    token: &str,
+    id: &str,
+    timeout: Duration,
+) -> Result<Option<u32>> {
+    let clause = time_clause(id)?;
+    let text = post(base_url, TIMES, client_id, token, &clause, timeout)?;
+    parse_time_to_beat(&text)
+}
+
+pub fn parse_time_to_beat(body: &str) -> Result<Option<u32>> {
+    let times: Vec<ApiTime> = serde_json::from_str(body)?;
+
+    Ok(times.into_iter().next().and_then(|time| {
+        [time.normally, time.hastily, time.completely]
+            .into_iter()
+            .find_map(positive)
+            .map(|seconds| seconds.div_ceil(60))
+    }))
 }
 
 fn details_at(
@@ -247,12 +347,14 @@ fn details_at(
     id: &str,
     timeout: Duration,
 ) -> Result<Candidate> {
-    let text = post(base_url, client_id, token, &details_clause(id)?, timeout)?;
+    let clause = details_clause(id)?;
+    let text = post(base_url, GAMES, client_id, token, &clause, timeout)?;
     parse_details(&text)
 }
 
 fn post(
     base_url: &str,
+    path: &str,
     client_id: &str,
     token: &str,
     body: &str,
@@ -260,7 +362,7 @@ fn post(
 ) -> Result<String> {
     let authorization = format!("Bearer {token}");
     http::post_text(
-        &format!("{base_url}/games"),
+        &format!("{base_url}/{path}"),
         &[],
         &[("Client-ID", client_id), ("Authorization", &authorization)],
         body,
@@ -292,7 +394,13 @@ pub fn parse_details(body: &str) -> Result<Candidate> {
     games
         .drain(..)
         .next()
-        .and_then(ApiGame::into_candidate)
+        .and_then(|game| {
+            let details = game.details();
+            game.into_candidate().map(|candidate| Candidate {
+                details: Some(details),
+                ..candidate
+            })
+        })
         .ok_or(Error::HttpStatus { code: 404 })
 }
 
@@ -454,13 +562,23 @@ mod tests {
     fn details_accept_only_numeric_ids() {
         assert_eq!(
             details_clause("1942").unwrap(),
-            format!("where id = 1942; fields {FIELDS};")
+            format!("where id = 1942; fields {};", super::DETAIL_FIELDS)
         );
         assert!(details_clause("1942; fields *").is_err());
         assert!(details_clause("").is_err());
     }
     use crate::http::test_server::{TEST_TIMEOUT, serve};
     use crate::providers::{Candidate, Source};
+
+    fn detailed_game() -> Candidate {
+        Candidate {
+            details: Some(super::Details {
+                release_date: Some("2019-05-28".to_owned()),
+                ..Default::default()
+            }),
+            ..game()
+        }
+    }
 
     fn game() -> Candidate {
         Candidate {
@@ -469,6 +587,7 @@ mod tests {
             title: "Outer Wilds".to_owned(),
             release_year: Some(2019),
             cover_url: Some(format!("{IMAGE_BASE_URL}/co65ac.jpg")),
+            details: None,
         }
     }
 
@@ -487,7 +606,7 @@ mod tests {
     fn maps_a_saved_details_response() {
         let body = include_str!("../../tests/fixtures/igdb/details-outer-wilds.json");
 
-        assert_eq!(parse_details(body).unwrap(), game());
+        assert_eq!(parse_details(body).unwrap(), detailed_game());
     }
 
     #[test]
@@ -580,6 +699,58 @@ mod tests {
 
         let result = details_at(&base, "id", "token", "11737", TEST_TIMEOUT).unwrap();
 
-        assert_eq!(result, game());
+        assert_eq!(result, detailed_game());
+    }
+
+    #[test]
+    fn maps_game_details_with_the_developer_only() {
+        let body = include_str!("../../tests/fixtures/igdb/details-outer-wilds-full.json");
+        let details = parse_details(body).unwrap().details.unwrap();
+
+        assert_eq!(details.genres, ["Role-playing (RPG)", "Adventure"]);
+        assert_eq!(details.creators, ["Mobius Digital"]);
+        assert_eq!(details.release_date.as_deref(), Some("2019-05-28"));
+        assert!(details.synopsis.unwrap().starts_with("Explore"));
+    }
+
+    #[test]
+    fn unexpanded_ids_leave_details_empty_instead_of_failing() {
+        let body = r#"[{"id":1,"name":"Game","genres":[12,31],"involved_companies":[7]}]"#;
+        let details = parse_details(body).unwrap().details.unwrap();
+
+        assert_eq!(details, super::Details::default());
+    }
+
+    #[test]
+    fn time_to_beat_is_in_minutes_and_prefers_the_normal_pace() {
+        let parse = |body| super::parse_time_to_beat(body).unwrap();
+
+        assert_eq!(
+            parse(r#"[{"id":1,"normally":78600,"hastily":36000,"completely":90000}]"#),
+            Some(1_310)
+        );
+        assert_eq!(parse(r#"[{"hastily":3600}]"#), Some(60));
+        assert_eq!(parse(r#"[{"normally":0}]"#), None);
+        assert_eq!(parse("[]"), None);
+    }
+
+    #[test]
+    fn time_to_beat_joins_the_details() {
+        let body = include_str!("../../tests/fixtures/igdb/details-outer-wilds-full.json");
+        let game = super::with_time(parse_details(body).unwrap(), Some(1_310));
+        let details = game.details.unwrap();
+
+        assert_eq!(details.minutes, Some(1_310));
+        assert_eq!(details.creators, ["Mobius Digital"]);
+    }
+
+    #[test]
+    fn time_to_beat_asks_only_for_numeric_ids() {
+        assert!(
+            super::time_clause("11737")
+                .unwrap()
+                .contains("game_id = 11737;")
+        );
+        assert!(super::time_clause("1; fields *").is_err());
     }
 }

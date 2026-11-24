@@ -1,6 +1,7 @@
-use crate::Result;
+use crate::details::Details;
 use crate::http;
-use crate::providers::{Candidate, Source, year_of};
+use crate::providers::{Candidate, Source, full_date, numeric, positive, year_of};
+use crate::{Result, text};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -18,6 +19,25 @@ struct ApiShow {
     name: String,
     premiered: Option<String>,
     image: Option<ApiImage>,
+    summary: Option<String>,
+    #[serde(default)]
+    genres: Vec<String>,
+    runtime: Option<i64>,
+    #[serde(rename = "averageRuntime")]
+    average_runtime: Option<i64>,
+    network: Option<ApiChannel>,
+    #[serde(rename = "webChannel")]
+    web_channel: Option<ApiChannel>,
+}
+
+#[derive(Deserialize)]
+struct ApiChannel {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ApiSeason {
+    number: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +47,22 @@ struct ApiImage {
 }
 
 impl ApiShow {
+    fn details(&self) -> Details {
+        Details {
+            synopsis: self.summary.as_deref().and_then(text::from_html),
+            minutes: positive(self.average_runtime).or(positive(self.runtime)),
+            pages: None,
+            genres: self.genres.clone(),
+            creators: [&self.network, &self.web_channel]
+                .into_iter()
+                .flatten()
+                .filter_map(|channel| channel.name.clone())
+                .take(1)
+                .collect(),
+            release_date: full_date(self.premiered.as_deref()),
+        }
+    }
+
     fn into_candidate(self) -> Candidate {
         Candidate {
             source: Source::TvMaze,
@@ -34,12 +70,54 @@ impl ApiShow {
             title: self.name,
             release_year: year_of(self.premiered.as_deref()),
             cover_url: self.image.and_then(|image| image.medium.or(image.original)),
+            details: None,
         }
     }
 }
 
 pub fn search(query: &str) -> Result<Vec<Candidate>> {
     search_at(BASE_URL, query, http::TIMEOUT)
+}
+
+pub fn details(id: &str) -> Result<Candidate> {
+    details_at(BASE_URL, id, http::TIMEOUT)
+}
+
+pub fn seasons(id: &str) -> Result<Vec<i32>> {
+    seasons_at(BASE_URL, id, http::TIMEOUT)
+}
+
+fn details_at(base_url: &str, id: &str, timeout: Duration) -> Result<Candidate> {
+    let url = format!("{base_url}/shows/{}", numeric(id)?);
+    parse_details(&http::get_text(&url, &[], None, timeout)?)
+}
+
+fn seasons_at(base_url: &str, id: &str, timeout: Duration) -> Result<Vec<i32>> {
+    let url = format!("{base_url}/shows/{}/seasons", numeric(id)?);
+    parse_seasons(&http::get_text(&url, &[], None, timeout)?)
+}
+
+pub fn parse_details(body: &str) -> Result<Candidate> {
+    let show: ApiShow = serde_json::from_str(body)?;
+    let details = show.details();
+
+    Ok(Candidate {
+        details: Some(details),
+        ..show.into_candidate()
+    })
+}
+
+pub fn parse_seasons(body: &str) -> Result<Vec<i32>> {
+    let seasons: Vec<ApiSeason> = serde_json::from_str(body)?;
+    let mut numbers: Vec<i32> = seasons
+        .into_iter()
+        .filter_map(|season| season.number)
+        .filter(|number| *number > 0)
+        .collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+
+    Ok(numbers)
 }
 
 pub fn search_json(query: &str) -> Result<String> {
@@ -96,6 +174,7 @@ mod tests {
                     "https://static.tvmaze.com/uploads/images/medium_portrait/210/525047.jpg"
                         .to_owned()
                 ),
+                details: None,
             }
         );
     }
@@ -129,6 +208,7 @@ mod tests {
                 title: "Bare".to_owned(),
                 release_year: None,
                 cover_url: None,
+                details: None,
             }]
         );
     }
@@ -204,5 +284,43 @@ mod tests {
             search_at(&base, "a", TEST_TIMEOUT).unwrap(),
             Vec::<Candidate>::new()
         );
+    }
+
+    #[test]
+    fn maps_saved_show_details() {
+        let body = include_str!("../../tests/fixtures/tvmaze/details-severance.json");
+        let show = super::parse_details(body).unwrap();
+        let details = show.details.unwrap();
+
+        assert_eq!(show.title, "Severance");
+        assert_eq!(show.external_id, "44933");
+        assert_eq!(details.minutes, Some(49));
+        assert_eq!(details.genres, ["Drama", "Science-Fiction", "Mystery"]);
+        assert_eq!(details.creators, ["Apple TV"]);
+        assert_eq!(details.release_date.as_deref(), Some("2022-02-18"));
+        let synopsis = details.synopsis.unwrap();
+        assert!(synopsis.starts_with("Mark Scout leads a team at Lumon Industries"));
+        assert!(!synopsis.contains('<') && !synopsis.contains('&'));
+    }
+
+    #[test]
+    fn maps_saved_seasons_in_order() {
+        let body = include_str!("../../tests/fixtures/tvmaze/seasons-severance.json");
+
+        assert_eq!(super::parse_seasons(body).unwrap(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn seasons_skip_specials_gaps_and_repeats() {
+        let body = r#"[{"number":2},{"number":0},{"number":null},{"number":1},{"number":2}]"#;
+
+        assert_eq!(super::parse_seasons(body).unwrap(), [1, 2]);
+    }
+
+    #[test]
+    fn a_show_with_nothing_but_a_name_has_empty_details() {
+        let show = super::parse_details(r#"{"id":1,"name":"Plain"}"#).unwrap();
+
+        assert_eq!(show.details, Some(super::Details::default()));
     }
 }

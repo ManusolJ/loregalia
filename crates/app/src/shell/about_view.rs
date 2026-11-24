@@ -37,8 +37,8 @@ pub(super) const PRIVACY_NOTES: [(IconName, &str); 3] = [
     ),
     (
         IconName::Globe,
-        "TVmaze and Open Library are searched directly, and covers load from each source. \
-         They see your IP address like any website.",
+        "Searches and details ask TVmaze and Open Library directly, and covers load from each \
+         source. They see your IP address.",
     ),
     (
         IconName::Server,
@@ -120,7 +120,7 @@ impl Shell {
         let extra = match source.kind {
             MediaKind::Show => Some(
                 Link::new("cc-by-sa-link")
-                    .href("https://creativecommons.org/licenses/by-sa/4.0/")
+                    .href(super::detail_view::TVMAZE_LICENSE)
                     .child("CC BY-SA 4.0")
                     .into_any_element(),
             ),
