@@ -44,6 +44,12 @@ commercial license, and IGDB needs a partnership.
     assumes it may (see Assumptions).
 - **TMDB data must be refreshed or removed within six months.** Store its ID, refresh details and
   images before they expire, and never let the user's own fields depend on them.
+- **Details come from** TVmaze `/shows/{id}`; TMDB `/movie/{id}` with `append_to_response=credits`; Open
+  Library's search by work key (authors, pages, subjects) plus `/works/{id}.json` (description); and
+  IGDB `/games` plus `/game_time_to_beats`, whose times are in seconds. Open Library subjects are
+  free text, so only a fixed list of genre names is kept.
+- **Open Library can be slow:** on 2026-11-24 it timed out twice before answering, which is why one
+  failure does not stop the background refresh.
 - **Cover shapes:** TVmaze has poster images, and IGDB's `cover_big` is 264 x 374, both close to the
   2:3 tile in `DESIGN.md`. Open Library and TMDB do not state a shape on the pages read.
 - **Open Library covers:** request by cover ID (`cover_i`), because ISBN lookups are limited to 100

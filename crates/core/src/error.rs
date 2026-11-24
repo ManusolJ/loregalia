@@ -10,7 +10,6 @@ pub enum Error {
     DuplicateTagName,
     UnknownShow,
     DuplicateLookup,
-    UnsupportedLookup,
     Unauthorized,
     RelayUnavailable,
     SeasonsOnlyForShows,
@@ -21,6 +20,7 @@ pub enum Error {
     HttpStatus { code: u16 },
     Json(serde_json::Error),
     SecretStore(String),
+    BlockedAddress,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -47,9 +47,6 @@ impl std::fmt::Display for Error {
             Self::DuplicateLookup => {
                 formatter.write_str("an item from that source is already in the library")
             }
-            Self::UnsupportedLookup => {
-                formatter.write_str("no metadata source is available for this media kind yet")
-            }
             Self::Unauthorized => {
                 formatter.write_str("the metadata source rejected the credentials")
             }
@@ -69,6 +66,9 @@ impl std::fmt::Display for Error {
             }
             Self::Json(error) => write!(formatter, "invalid response: {error}"),
             Self::SecretStore(reason) => write!(formatter, "key storage error: {reason}"),
+            Self::BlockedAddress => {
+                formatter.write_str("the cover is not on a metadata source's image server")
+            }
         }
     }
 }
@@ -87,7 +87,6 @@ impl std::error::Error for Error {
             | Self::DuplicateTagName
             | Self::UnknownShow
             | Self::DuplicateLookup
-            | Self::UnsupportedLookup
             | Self::Unauthorized
             | Self::RelayUnavailable
             | Self::SeasonsOnlyForShows
@@ -96,7 +95,8 @@ impl std::error::Error for Error {
             | Self::ConnectionFailed
             | Self::RateLimited
             | Self::HttpStatus { .. }
-            | Self::SecretStore(_) => None,
+            | Self::SecretStore(_)
+            | Self::BlockedAddress => None,
         }
     }
 }

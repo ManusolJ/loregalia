@@ -1,13 +1,14 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::link::Link;
 use gpui_kit::component::{Icon, Selectable, Sizable, button::Button, button::ButtonVariants};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Animation, AnimationExt, AnyElement, Context, FontWeight, Role, TestSupportExt, div,
     ease_out_quint, px, rgb,
 };
-use loregalia_core::{items, media::MediaKind, providers::Source};
+use loregalia_core::{details, items, log, media::MediaKind, providers::Source, text};
 
 use super::Shell;
 use super::tags_view::TagTarget;
@@ -17,12 +18,17 @@ use crate::theme::{DISPLAY_FONT, Palette};
 pub(super) const DETAIL_WIDTH: f32 = 360.0;
 pub(super) const DOCKED_FROM: f32 = 1280.0;
 const DRAWER_SLIDE: f32 = 24.0;
+const FACT_LABEL_WIDTH: f32 = 72.0;
+const SYNOPSIS_PREVIEW: usize = 280;
+pub(super) const TVMAZE_LICENSE: &str = "https://creativecommons.org/licenses/by-sa/4.0/";
 const DRAWER_MILLISECONDS: u64 = 180;
 
 impl Shell {
     pub(super) fn open_detail(&mut self, id: String, cx: &mut Context<Self>) {
         if self.detail.as_deref() != Some(id.as_str()) {
             self.close_inline_panels();
+            self.synopsis_open = false;
+            self.season_fetch = None;
         }
         self.detail = Some(id);
         cx.notify();
@@ -46,58 +52,52 @@ impl Shell {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let panel =
-            div()
-                .id("detail-panel")
-                .role(Role::Region)
-                .test_support()
-                .aria_label(format!("Details for {}", item.title))
-                .w(px(DETAIL_WIDTH))
-                .h_full()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .bg(rgb(palette.surface))
-                .border_l_1()
-                .border_color(rgb(palette.line))
-                .child(
-                    div().flex().justify_end().px_4().pt_3().child(
-                        Button::new("detail-close")
-                            .ghost()
-                            .icon(IconName::Close)
-                            .tooltip("Close details")
-                            .accessibility_label("Close details")
-                            .on_click(cx.listener(|this, _, _, cx| this.close_detail(cx))),
-                    ),
-                )
-                .child(
-                    div()
-                        .id("detail-scroll")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .px_6()
-                        .pb_6()
-                        .flex()
-                        .flex_col()
-                        .gap_5()
-                        .child(Self::detail_hero(item, palette))
-                        .child(self.detail_status(item, palette, cx))
-                        .when(item.media_kind == MediaKind::Show, |body| {
-                            body.child(self.seasons_section(item, palette, cx))
-                        })
-                        .child(self.detail_tags(item, palette, cx))
-                        .child(self.detail_lists(item, palette, cx))
-                        .child(self.detail_actions(item, palette, cx))
-                        .children(item.source.as_deref().and_then(Source::from_key).map(
-                            |source| {
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(palette.muted))
-                                    .child(format!("Details from {}", source.label()))
-                            },
-                        )),
-                );
+        let panel = div()
+            .id("detail-panel")
+            .role(Role::Region)
+            .test_support()
+            .aria_label(format!("Details for {}", item.title))
+            .w(px(DETAIL_WIDTH))
+            .h_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .bg(rgb(palette.surface))
+            .border_l_1()
+            .border_color(rgb(palette.line))
+            .child(
+                div().flex().justify_end().px_4().pt_3().child(
+                    Button::new("detail-close")
+                        .ghost()
+                        .icon(IconName::Close)
+                        .tooltip("Close details")
+                        .accessibility_label("Close details")
+                        .on_click(cx.listener(|this, _, _, cx| this.close_detail(cx))),
+                ),
+            )
+            .child(
+                div()
+                    .id("detail-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_6()
+                    .pb_6()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .child(Self::detail_hero(item, palette))
+                    .child(self.detail_status(item, palette, cx))
+                    .children(self.detail_synopsis(item, cx))
+                    .children(Self::detail_facts(item, palette))
+                    .when(item.media_kind == MediaKind::Show, |body| {
+                        body.child(self.seasons_section(item, palette, cx))
+                    })
+                    .child(self.detail_tags(item, palette, cx))
+                    .child(self.detail_lists(item, palette, cx))
+                    .child(self.detail_actions(item, palette, cx))
+                    .children(Self::detail_credit(item, palette)),
+            );
 
         if docked {
             return panel.into_any_element();
@@ -167,6 +167,152 @@ impl Shell {
                     })),
             )
             .into_any_element()
+    }
+
+    fn detail_synopsis(&self, item: &items::Item, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let synopsis = item.details()?.synopsis.as_deref()?;
+        let preview = text::preview(synopsis, SYNOPSIS_PREVIEW);
+        let long = preview.is_some();
+        let shown = preview
+            .filter(|_| !self.synopsis_open)
+            .unwrap_or_else(|| synopsis.to_owned());
+        let label = if self.synopsis_open {
+            "Show less"
+        } else {
+            "Show more"
+        };
+
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap_1()
+                .child(
+                    div()
+                        .id("detail-synopsis")
+                        .test_support()
+                        .aria_label(shown.clone())
+                        .w_full()
+                        .text_sm()
+                        .line_height(px(22.0))
+                        .child(shown),
+                )
+                .when(long, |section| {
+                    section.child(
+                        Button::new("toggle-synopsis")
+                            .ghost()
+                            .small()
+                            .ml(px(-8.0))
+                            .label(label)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.synopsis_open = !this.synopsis_open;
+                                cx.notify();
+                            })),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn detail_facts(item: &items::Item, palette: &Palette) -> Option<AnyElement> {
+        let details = item.details()?;
+        let today = log::timestamp(SystemTime::now());
+        let released = item
+            .release_date
+            .as_deref()
+            .and_then(|date| details::release(date, &today[..10]));
+        let joined = |values: &[String]| (!values.is_empty()).then(|| values.join(", "));
+        let facts: Vec<(&'static str, &'static str, String)> = [
+            ("length", "Length", details.length(item.media_kind)),
+            (
+                "creator",
+                details::creator_label(item.media_kind),
+                joined(&details.creators),
+            ),
+            ("genres", "Genres", joined(&details.genres)),
+            ("released", "Released", released),
+        ]
+        .into_iter()
+        .filter_map(|(key, label, value)| Some((key, label, value?)))
+        .collect();
+        if facts.is_empty() {
+            return None;
+        }
+
+        Some(
+            div()
+                .id("detail-facts")
+                .role(Role::List)
+                .test_support()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(facts.into_iter().map(|(key, label, value)| {
+                    div()
+                        .flex()
+                        .gap_3()
+                        .child(
+                            div()
+                                .w(px(FACT_LABEL_WIDTH))
+                                .flex_none()
+                                .text_xs()
+                                .line_height(px(20.0))
+                                .text_color(rgb(palette.muted))
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .id(format!("detail-{key}"))
+                                .role(Role::ListItem)
+                                .test_support()
+                                .aria_label(value.clone())
+                                .flex_1()
+                                .min_w_0()
+                                .child(value),
+                        )
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn detail_credit(item: &items::Item, palette: &Palette) -> Option<AnyElement> {
+        let source = item.source.as_deref().and_then(Source::from_key)?;
+        let external_id = item.external_id.as_deref()?;
+
+        Some(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .text_xs()
+                .text_color(rgb(palette.muted))
+                .child("Details from")
+                .child(
+                    div()
+                        .id(format!("detail-source-{}", item.id))
+                        .test_support()
+                        .aria_label(source.page(external_id))
+                        .child(
+                            Link::new(format!("detail-source-link-{}", item.id))
+                                .href(source.page(external_id))
+                                .child(source.label()),
+                        ),
+                )
+                .when(source == Source::TvMaze, |credit| {
+                    credit.child("·").child(
+                        div()
+                            .id(format!("detail-license-{}", item.id))
+                            .test_support()
+                            .child(
+                                Link::new(format!("detail-license-link-{}", item.id))
+                                    .href(TVMAZE_LICENSE)
+                                    .child("CC BY-SA 4.0"),
+                            ),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 
     fn detail_status(

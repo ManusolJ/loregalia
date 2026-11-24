@@ -11,13 +11,21 @@ use std::time::SystemTime;
 pub struct ImageHttpClient {
     executor: BackgroundExecutor,
     covers: Option<CoverCache>,
+    download: Download,
 }
+
+pub type Download = fn(&str) -> loregalia_core::Result<Vec<u8>>;
 
 impl ImageHttpClient {
     pub fn new(executor: BackgroundExecutor) -> Self {
+        Self::with_download(executor, images::fetch)
+    }
+
+    pub fn with_download(executor: BackgroundExecutor, download: Download) -> Self {
         Self {
             executor,
             covers: None,
+            download,
         }
     }
 
@@ -25,6 +33,7 @@ impl ImageHttpClient {
         Self {
             executor,
             covers: Some(covers),
+            download: images::fetch,
         }
     }
 }
@@ -52,13 +61,14 @@ impl HttpClient for ImageHttpClient {
         let url = request.uri().to_string();
         let executor = self.executor.clone();
         let covers = self.covers.clone();
+        let download = self.download;
 
         Box::pin(async move {
             let bytes = executor
                 .spawn(async move {
                     match covers {
-                        Some(covers) => covers.fetch(&url, SystemTime::now(), &images::fetch),
-                        None => images::fetch(&url),
+                        Some(covers) => covers.fetch(&url, SystemTime::now(), &download),
+                        None => download(&url),
                     }
                 })
                 .await?;

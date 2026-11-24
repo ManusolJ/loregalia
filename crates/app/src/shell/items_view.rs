@@ -168,6 +168,9 @@ impl Shell {
         let lookup = editor.lookup;
         let list_id = self.selected.clone();
         self.close_season_panels();
+        if lookup.is_some() {
+            self.resume_metadata_refresh();
+        }
 
         self.reload_after(cx, async move {
             let database = Database::open(path)?;

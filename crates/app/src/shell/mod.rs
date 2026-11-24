@@ -26,8 +26,8 @@ use gpui_kit::{
 };
 use loregalia_core::library::{self, Shelf};
 use loregalia_core::{
-    Database, Result as CoreResult, items, keys, list_items, lists, log, media::MediaKind, seasons,
-    settings, statuses, tags,
+    Database, Result as CoreResult, items, keys, list_items, lists, log, media::MediaKind,
+    providers::tvmaze, seasons, settings, statuses, tags,
 };
 
 use crate::startup::StorageState;
@@ -37,9 +37,9 @@ use detail_view::DOCKED_FROM;
 use find_view::FindState;
 use items_view::ItemEditor;
 use lists_view::{AddPicker, Editor};
-pub use metadata_view::{MetadataDetails, MetadataSearch};
-use metadata_view::{default_details, default_search};
-use seasons_view::SeasonEditor;
+pub use metadata_view::{MetadataDetails, MetadataSearch, MetadataSeasons, REFRESH_PACE};
+use metadata_view::{RefreshState, default_details, default_search};
+use seasons_view::{SeasonEditor, SeasonFetch};
 use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
 use widgets::EmptyPanel;
@@ -101,7 +101,10 @@ pub struct Shell {
     log_path: Option<PathBuf>,
     metadata_search: MetadataSearch,
     metadata_details: MetadataDetails,
-    refresh_started: bool,
+    refresh: RefreshState,
+    metadata_seasons: MetadataSeasons,
+    season_fetch: Option<SeasonFetch>,
+    synopsis_open: bool,
     theme: settings::Theme,
     layout: settings::Layout,
     settings_error: Option<String>,
@@ -226,7 +229,10 @@ impl Shell {
             log_path,
             metadata_search,
             metadata_details,
-            refresh_started: false,
+            refresh: RefreshState::default(),
+            metadata_seasons: Arc::new(tvmaze::seasons),
+            season_fetch: None,
+            synopsis_open: false,
             theme,
             layout: settings::Layout::default(),
             settings_error: None,
@@ -266,6 +272,14 @@ impl Shell {
         shell.load_layout(cx);
         shell.reload(cx);
         shell
+    }
+
+    pub fn use_details(&mut self, details: MetadataDetails) {
+        self.metadata_details = details;
+    }
+
+    pub fn use_seasons(&mut self, seasons: MetadataSeasons) {
+        self.metadata_seasons = seasons;
     }
 
     fn load_layout(&mut self, cx: &mut Context<Self>) {

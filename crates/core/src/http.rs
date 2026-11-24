@@ -24,8 +24,26 @@ pub(crate) fn get_text(
         .map_err(classify)
 }
 
+pub(crate) fn get_secure_bytes(url: &str, timeout: Duration, max_bytes: u64) -> Result<Vec<u8>> {
+    let response = AGENT
+        .get(url)
+        .config()
+        .https_only(true)
+        .timeout_global(Some(timeout))
+        .build()
+        .header("User-Agent", USER_AGENT)
+        .call()
+        .map_err(classify)?;
+
+    read_bytes(response, max_bytes)
+}
+
 pub(crate) fn get_bytes(url: &str, timeout: Duration, max_bytes: u64) -> Result<Vec<u8>> {
-    send(url, &[], None, timeout)?
+    read_bytes(send(url, &[], None, timeout)?, max_bytes)
+}
+
+fn read_bytes(mut response: ureq::http::Response<ureq::Body>, max_bytes: u64) -> Result<Vec<u8>> {
+    response
         .body_mut()
         .with_config()
         .limit(max_bytes)

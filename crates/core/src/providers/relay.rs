@@ -93,6 +93,7 @@ mod tests {
             title: "Dune".to_owned(),
             release_year: Some(2021),
             cover_url: Some("https://image.example/dune.jpg".to_owned()),
+            details: None,
         }
     }
 
@@ -198,6 +199,7 @@ mod tests {
             title: "Outer Wilds".to_owned(),
             release_year: Some(2019),
             cover_url: None,
+            details: None,
         };
         let body = serde_json::to_string(&SearchResponse {
             results: vec![game.clone()],
@@ -219,6 +221,7 @@ mod tests {
             title: "Outer Wilds".to_owned(),
             release_year: Some(2019),
             cover_url: None,
+            details: None,
         };
         let body = serde_json::to_string(&game).unwrap();
         let base = serve("200 OK", body.as_bytes());

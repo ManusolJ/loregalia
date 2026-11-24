@@ -50,7 +50,7 @@ of covers, search it with Ctrl+F, sort it, and filter it by kind or tag.
 
 ### Add things in seconds
 
-Type a title and pick the match. Covers and years come from **TVmaze** for shows,
+Type a title and pick the match. Covers, synopses, length, genres and release dates come from **TVmaze** for shows,
 **TMDB** for movies, **Open Library** for books and **IGDB** for games. No account and no API keys
 needed. You can also type anything in by hand.
 
@@ -62,10 +62,10 @@ needed. You can also type anything in by hand.
 
 Every item has a status that reads naturally for its kind: *To watch*, *To read*, *To play*,
 *In progress*, *On hold*, *Watched*, *Dropped*. Shows can be split into seasons, each with its own
-status, so you can finish season one and leave season two for later.
+status, so you can finish season one and leave season two for later. TVmaze fills them in with one click.
 
 <p align="center">
-  <img src="docs/images/detail-dark.png" alt="The detail panel for Severance with its status, two seasons, a tag and its list" width="820">
+  <img src="docs/images/detail-dark.png" alt="The detail panel for Severance with its status, synopsis, length, network, genres, release date and seasons" width="820">
 </p>
 
 ### Your own lists and tags
@@ -90,7 +90,8 @@ you like. Tag lists and items with your own labels, then filter by them.
 - **Your library stays on your computer**, in a single file you can back up. There is no account,
   and nothing is uploaded.
 - **Shows and books** are searched directly at TVmaze and Open Library, and covers load from each
-  source's image server. They see your IP address like any website.
+  source's image server. They see your IP address like any website. Details for your library are
+  fetched in the background, a few at a time, by each item's ID at its source.
 - **Movies and games** go through a small Loregalia server that holds the API keys. It keeps no logs
   and nothing that identifies you. You can add your own TMDB or IGDB keys in Settings to skip it;
   they are stored in Windows Credential Manager, not in a file.

@@ -98,8 +98,10 @@ detail.
   results show their cover; typing the title by hand is always offered below.
 - **Destructive actions** are quiet until confirmed: no fill on Delete, and the filled danger button
   appears only in the confirmation, next to what will be lost.
-- **Detail:** clicking a row or a shelf tile opens it. It holds the cover, status picker, seasons,
-  tags, lists, Edit and Delete. The drawer slides in over 180 ms.
+- **Detail:** clicking a row or a shelf tile opens it. It holds the cover, status picker, synopsis (280
+  characters, cut on a word, with Show more), facts as label and value rows, seasons, tags, lists,
+  Edit and Delete, and a link to the source. TVmaze's also links its license. A fact the source does
+  not have has no row. The drawer slides in over 180 ms.
 
 ## Covers
 

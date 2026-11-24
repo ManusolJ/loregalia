@@ -115,10 +115,17 @@ at most 20,000 entries and removes the soonest to expire first.
 | TMDB and IGDB searches | 7 days | Well within TMDB's six months; IGDB allows storing (D-33) |
 | TMDB movie and IGDB game details | 30 days | IGDB removes a replaced cover image after 30 days |
 
+Details keys carry a version (`v2`), so a relay that learns new fields does not serve old entries
+without them. Bump `DETAILS_VERSION` when the fields change. The fields are additive under `/v1`: an
+older app ignores them, and a newer app accepts a relay without them.
+
 Search keys ignore case and extra spaces, so "Outer Wilds" and " outer  wilds" share one entry.
 Searches with no results are cached too, and failures are not.
 
 ## Upstream limits
+
+Game details make two IGDB requests, the game and its time to beat. Both go through the queue, so they
+count towards IGDB's limit.
 
 Each source has a queue: IGDB gets at most 8 open requests started 250 ms apart, which is its limit
 of 4 a second, and TMDB at most 20 started 50 ms apart. A request that would wait more than 8 seconds

@@ -7,11 +7,18 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, Focusable, Role, TestSupportExt, Window, div, rgb,
 };
-use loregalia_core::{Database, items, media::MediaKind, seasons};
+use loregalia_core::{
+    Database, items,
+    media::MediaKind,
+    providers::{self, Route, Source},
+    seasons,
+};
 
 use super::{Shell, load};
 use crate::startup::StorageState;
 use crate::theme::Palette;
+
+const FETCH_SEASONS: &str = "Get seasons from TVmaze";
 
 pub(super) fn season_number(value: &str) -> Option<i32> {
     value
@@ -26,7 +33,124 @@ pub(super) struct SeasonEditor {
     pub(super) number: Entity<InputState>,
 }
 
+pub(super) struct SeasonFetch {
+    show_id: String,
+    status: FetchStatus,
+}
+
+enum FetchStatus {
+    Fetching,
+    UpToDate,
+    Failed(String),
+}
+
 impl Shell {
+    fn fetch_status(&self, show_id: &str) -> Option<&FetchStatus> {
+        self.season_fetch
+            .as_ref()
+            .filter(|fetch| fetch.show_id == show_id)
+            .map(|fetch| &fetch.status)
+    }
+
+    fn fetch_seasons(&mut self, show_id: String, external_id: String, cx: &mut Context<Self>) {
+        let StorageState::Ready(path) = self.storage.clone() else {
+            return;
+        };
+        if matches!(self.fetch_status(&show_id), Some(FetchStatus::Fetching)) {
+            return;
+        }
+        self.season_fetch = Some(SeasonFetch {
+            show_id: show_id.clone(),
+            status: FetchStatus::Fetching,
+        });
+        cx.notify();
+
+        let seasons = self.metadata_seasons.clone();
+        let id = show_id.clone();
+        let task = cx.background_spawn(async move {
+            let numbers = seasons(&external_id)?;
+            let database = Database::open(path)?;
+            seasons::create_missing(&database, &id, &numbers)
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let status = match result {
+                    Ok(0) => Some(FetchStatus::UpToDate),
+                    Ok(_) => {
+                        this.reload(cx);
+                        None
+                    }
+                    Err(error) => {
+                        this.record(&format!("Season lookup failed: {error}"), cx);
+                        Some(FetchStatus::Failed(providers::failure_message(
+                            &error,
+                            Source::TvMaze,
+                            Route::Direct,
+                        )))
+                    }
+                };
+                if this.fetch_status(&show_id).is_some() {
+                    this.season_fetch = status.map(|status| SeasonFetch { show_id, status });
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn fetch_button(
+        &self,
+        show: &items::Item,
+        labelled: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if show.source.as_deref() != Some(Source::TvMaze.key()) {
+            return None;
+        }
+        let external_id = show.external_id.clone()?;
+        let show_id = show.id.clone();
+        let busy = matches!(self.fetch_status(&show.id), Some(FetchStatus::Fetching));
+        let button = Button::new(format!("fetch-seasons-{}", show.id))
+            .small()
+            .icon(IconName::Download)
+            .accessibility_label(FETCH_SEASONS)
+            .disabled(busy)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.fetch_seasons(show_id.clone(), external_id.clone(), cx)
+            }));
+
+        Some(if labelled {
+            button.label(FETCH_SEASONS).into_any_element()
+        } else {
+            button.ghost().tooltip(FETCH_SEASONS).into_any_element()
+        })
+    }
+
+    fn fetch_message(&self, show_id: &str, palette: &Palette) -> Option<AnyElement> {
+        let (message, color, role) = match self.fetch_status(show_id)? {
+            FetchStatus::Fetching => ("Asking TVmaze".to_owned(), palette.muted, Role::Status),
+            FetchStatus::UpToDate => (
+                "TVmaze has no other seasons".to_owned(),
+                palette.muted,
+                Role::Status,
+            ),
+            FetchStatus::Failed(message) => (message.clone(), palette.danger, Role::Alert),
+        };
+
+        Some(
+            div()
+                .id("seasons-fetch-message")
+                .role(role)
+                .test_support()
+                .aria_label(message.clone())
+                .text_xs()
+                .text_color(rgb(color))
+                .child(message)
+                .into_any_element(),
+        )
+    }
     pub(super) fn close_season_panels(&mut self) {
         self.season_editor = None;
         self.season_status_picker = None;
@@ -298,6 +422,10 @@ impl Shell {
                     .items_center()
                     .justify_between()
                     .child(Self::section_label("Seasons", palette))
+                    .child(div().flex_1())
+                    .when(!seasons.is_empty(), |header| {
+                        header.children(self.fetch_button(show, false, cx))
+                    })
                     .child(
                         Button::new(format!("item-seasons-{}", show.id))
                             .ghost()
@@ -310,6 +438,13 @@ impl Shell {
                             })),
                     ),
             )
+            .when(seasons.is_empty(), |panel| {
+                panel.children(
+                    self.fetch_button(show, true, cx)
+                        .map(|button| div().flex().child(button)),
+                )
+            })
+            .children(self.fetch_message(&show.id, palette))
             .child(if seasons.is_empty() {
                 div()
                     .id("seasons-empty")

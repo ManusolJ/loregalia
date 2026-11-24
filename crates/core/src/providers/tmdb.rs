@@ -1,6 +1,7 @@
+use crate::details::Details;
 use crate::http;
-use crate::providers::{Candidate, Source, year_of};
-use crate::{Error, Result};
+use crate::providers::{Candidate, Source, full_date, numeric, positive, year_of};
+use crate::{Error, Result, text};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -19,9 +20,52 @@ struct ApiMovie {
     title: Option<String>,
     release_date: Option<String>,
     poster_path: Option<String>,
+    overview: Option<String>,
+    runtime: Option<i64>,
+    #[serde(default)]
+    genres: Vec<ApiGenre>,
+    credits: Option<ApiCredits>,
+}
+
+#[derive(Deserialize)]
+struct ApiGenre {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ApiCredits {
+    #[serde(default)]
+    crew: Vec<ApiCrew>,
+}
+
+#[derive(Deserialize)]
+struct ApiCrew {
+    name: Option<String>,
+    job: Option<String>,
 }
 
 impl ApiMovie {
+    fn details(&self) -> Details {
+        Details {
+            synopsis: self.overview.as_deref().and_then(text::tidy),
+            minutes: positive(self.runtime),
+            pages: None,
+            genres: self
+                .genres
+                .iter()
+                .filter_map(|genre| genre.name.clone())
+                .collect(),
+            creators: self
+                .credits
+                .iter()
+                .flat_map(|credits| &credits.crew)
+                .filter(|person| person.job.as_deref() == Some("Director"))
+                .filter_map(|person| person.name.clone())
+                .collect(),
+            release_date: full_date(self.release_date.as_deref()),
+        }
+    }
+
     fn into_candidate(self) -> Option<Candidate> {
         let title = self.title?.trim().to_owned();
         if title.is_empty() {
@@ -36,6 +80,7 @@ impl ApiMovie {
             cover_url: self
                 .poster_path
                 .map(|path| format!("{IMAGE_BASE_URL}{path}")),
+            details: None,
         })
     }
 }
@@ -65,8 +110,8 @@ fn search_at(
 
 fn details_at(base_url: &str, token: &str, id: &str, timeout: Duration) -> Result<Candidate> {
     let body = http::get_text(
-        &format!("{base_url}/movie/{id}"),
-        &[LANGUAGE],
+        &format!("{base_url}/movie/{}", numeric(id)?),
+        &[LANGUAGE, ("append_to_response", "credits")],
         Some(token),
         timeout,
     )?;
@@ -85,9 +130,14 @@ pub fn parse_search(body: &str) -> Result<Vec<Candidate>> {
 
 pub fn parse_details(body: &str) -> Result<Candidate> {
     let movie: ApiMovie = serde_json::from_str(body)?;
+    let details = movie.details();
 
     movie
         .into_candidate()
+        .map(|candidate| Candidate {
+            details: Some(details),
+            ..candidate
+        })
         .ok_or(Error::HttpStatus { code: 404 })
 }
 
@@ -193,5 +243,39 @@ mod tests {
         let error = search_at(&refuse(), "token", "dune", TEST_TIMEOUT).unwrap_err();
 
         assert!(matches!(error, Error::ConnectionFailed));
+    }
+
+    #[test]
+    fn maps_saved_movie_details_with_the_director() {
+        let body = include_str!("../../tests/fixtures/tmdb/details-dune-credits.json");
+        let details = super::parse_details(body).unwrap().details.unwrap();
+
+        assert_eq!(details.minutes, Some(155));
+        assert_eq!(details.genres, ["Science Fiction", "Adventure"]);
+        assert_eq!(details.creators, ["Denis Villeneuve"]);
+        assert_eq!(details.release_date.as_deref(), Some("2021-09-15"));
+        assert!(details.synopsis.unwrap().starts_with("Paul Atreides"));
+    }
+
+    #[test]
+    fn unknown_runtime_and_dates_stay_empty() {
+        let body = r#"{"id":1,"title":"Untitled","runtime":0,"release_date":"","overview":""}"#;
+
+        assert_eq!(
+            super::parse_details(body).unwrap().details,
+            Some(super::Details::default())
+        );
+    }
+
+    #[test]
+    fn a_search_result_carries_no_details() {
+        let body = include_str!("../../tests/fixtures/tmdb/search-dune.json");
+
+        assert!(
+            super::parse_search(body)
+                .unwrap()
+                .iter()
+                .all(|movie| movie.details.is_none())
+        );
     }
 }

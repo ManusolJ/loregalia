@@ -46,6 +46,9 @@ one, move it to Decided, with the date.
 | D-32 | User API keys live in Windows Credential Manager, through `keyring-core` and `windows-native-keyring-store`; an old `api-keys.json` is moved in at startup | Keys are secrets, and a plain-text file beside the library is easy to copy or sync by accident | 2026-11-13 |
 | D-33 | IGDB data may be stored and served beyond 24 hours. The relay keeps searches for 7 days and game details for 30 | IGDB's FAQ (questions 3 and 5) prefers that apps store and serve its data, which is the written permission the Twitch agreement's storage clause allows. Details stay within 30 days because IGDB removes a replaced image after 30 days | 2026-11-14 |
 | D-34 | Covers are cached on disk, capped at 200 MB, oldest first; TMDB covers are refreshed after 150 days | About 25 KB a cover; covers show offline and are not downloaded on every launch, within each source's terms | 2026-11-14 |
+| D-35 | Items keep details from their source: synopsis, length, genres, creator and full release date, in English, with no ratings. They live in the source data, so no migration is needed, and never replace what the user typed | PRODUCT.md promises an item's details, and choosing what is next needs its length and what it is about | 2026-11-24 |
+| D-36 | Missing details fill in by themselves, one item every 4 seconds, newest first. Three failures in a row or one rate limit stop it until the next launch or the next item added from a search | 15 requests a minute leaves half of the relay's limit for searching, and one slow source does not stop the rest | 2026-11-24 |
+| D-37 | Covers load only over HTTPS, and only from the four sources' image servers | A compromised source or relay cannot make the app call other addresses. Redirects must stay on HTTPS; Open Library redirects to archive.org | 2026-11-24 |
 
 The details these decisions imply are in `ARCHITECTURE.md`, under Data model.
 

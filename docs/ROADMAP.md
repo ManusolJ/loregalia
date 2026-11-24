@@ -77,3 +77,7 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Add an item to lists from its details, and search when adding existing items to a list
 - [x] Show when an item was finished
 - [x] Indexes on the columns that deletes cascade through
+- [x] Details on every item, filled in gently in the background (D-35, D-36)
+- [x] Seasons from TVmaze
+- [x] Covers only from the sources' image servers (D-37)
+- [ ] Deploy the relay that serves details, then check a movie and a game against live data

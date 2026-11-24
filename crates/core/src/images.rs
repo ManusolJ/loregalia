@@ -1,5 +1,5 @@
-use crate::Result;
 use crate::http;
+use crate::{Error, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -14,8 +14,32 @@ const FILE_EXTENSION: &str = "cover";
 pub const COVER_FOLDER: &str = "covers";
 pub const MAX_CACHE_BYTES: u64 = 200 * 1024 * 1024;
 
+const COVER_HOSTS: [&str; 4] = [
+    "static.tvmaze.com",
+    TMDB_IMAGE_HOST,
+    "covers.openlibrary.org",
+    "images.igdb.com",
+];
+
 pub fn fetch(url: &str) -> Result<Vec<u8>> {
+    if !is_cover_host(url) {
+        return Err(Error::BlockedAddress);
+    }
+    http::get_secure_bytes(url, http::TIMEOUT, MAX_BYTES)
+}
+
+pub fn download(url: &str) -> Result<Vec<u8>> {
     http::get_bytes(url, http::TIMEOUT, MAX_BYTES)
+}
+
+pub fn is_cover_host(url: &str) -> bool {
+    url.strip_prefix("https://")
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .is_some_and(|host| {
+            COVER_HOSTS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(host))
+        })
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +192,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CoverCache, DAY_SECONDS, fetch, fnv1a};
+    use super::{CoverCache, DAY_SECONDS, download, fnv1a};
     use crate::Error;
     use crate::http::test_server::{refuse, serve};
     use std::cell::Cell;
@@ -188,19 +212,22 @@ mod tests {
     fn fetch_returns_the_body_bytes() {
         let base = serve("200 OK", b"image-bytes");
 
-        assert_eq!(fetch(&base).unwrap(), b"image-bytes");
+        assert_eq!(download(&base).unwrap(), b"image-bytes");
     }
 
     #[test]
     fn http_404_reports_its_status_code() {
         let base = serve("404 Not Found", b"");
 
-        assert!(matches!(fetch(&base), Err(Error::HttpStatus { code: 404 })));
+        assert!(matches!(
+            download(&base),
+            Err(Error::HttpStatus { code: 404 })
+        ));
     }
 
     #[test]
     fn a_refused_connection_is_a_connection_failure() {
-        assert!(matches!(fetch(&refuse()), Err(Error::ConnectionFailed)));
+        assert!(matches!(download(&refuse()), Err(Error::ConnectionFailed)));
     }
 
     #[test]
@@ -328,5 +355,34 @@ mod tests {
     fn file_names_are_stable_across_versions() {
         assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+    }
+
+    #[test]
+    fn covers_come_only_from_the_four_image_hosts_over_https() {
+        for allowed in [
+            TVMAZE,
+            TMDB,
+            "https://covers.openlibrary.org/b/id/1-M.jpg?default=false",
+            "https://images.igdb.com/igdb/image/upload/t_cover_big/co65ac.jpg",
+            "https://IMAGE.tmdb.org/t/p/w342/dune.jpg",
+        ] {
+            assert!(super::is_cover_host(allowed), "{allowed}");
+        }
+        for blocked in [
+            "http://image.tmdb.org/t/p/w342/dune.jpg",
+            "https://example.test/cover.jpg",
+            "https://192.168.1.1/admin",
+            "https://image.tmdb.org.evil.test/x.jpg",
+            "https://image.tmdb.org@evil.test/x.jpg",
+            "https://image.tmdb.org:8443/x.jpg",
+            "file:///c:/secret.txt",
+            "",
+        ] {
+            assert!(!super::is_cover_host(blocked), "{blocked}");
+        }
+        assert!(matches!(
+            super::fetch("http://127.0.0.1:1/cover.jpg"),
+            Err(crate::Error::BlockedAddress)
+        ));
     }
 }
