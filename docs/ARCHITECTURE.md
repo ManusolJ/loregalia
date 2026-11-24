@@ -101,6 +101,8 @@ them.
   key, which calls TMDB directly.
 - One trait, with one implementation per source, chosen by `MediaKind`. No API's field names travel
   beyond its provider module.
+- Overlapping changes: a reload that arrives while another is running is not shown, and one more runs
+  after the last (`Reloads` in `viewport.rs`), so an older result never replaces a newer one.
 - Every request has a timeout, 3 seconds to connect, and one retry if it never got through (D-38). Debounce search-as-you-type, respect each source's rate limit, and
   bound every cache.
 - Never build a URL from unchecked input. Choose the source by enum and pass values as parameters.

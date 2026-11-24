@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{
@@ -53,6 +55,7 @@ impl Shell {
 
     pub(super) fn set_sort(&mut self, sort: list_items::Sort, cx: &mut Context<Self>) {
         self.sort = sort;
+        self.viewport.to_top();
         cx.notify();
     }
 
@@ -388,13 +391,13 @@ impl Shell {
         self.memberships
             .iter()
             .filter(|membership| membership.list_id == list_id)
-            .filter_map(|membership| self.items.iter().find(|item| item.id == membership.item_id))
+            .filter_map(|membership| self.item(&membership.item_id))
             .collect()
     }
 
     pub(super) fn visible_members(&self, list_id: &str) -> Vec<&items::Item> {
         let mut members = self.items_in_list(list_id);
-        members.retain(|item| self.find.filter.keeps(item, &self.item_tags));
+        self.find.filter.keep(&mut members, &self.item_tags);
         list_items::sort_items(&mut members, self.sort);
         members
     }
@@ -418,10 +421,16 @@ impl Shell {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let held: HashSet<&str> = self
+            .memberships
+            .iter()
+            .filter(|membership| membership.list_id == picker.list_id)
+            .map(|membership| membership.item_id.as_str())
+            .collect();
         let available: Vec<&items::Item> = self
             .items
             .iter()
-            .filter(|item| !self.holds(&picker.list_id, &item.id))
+            .filter(|item| !held.contains(item.id.as_str()))
             .collect();
 
         if available.is_empty() {

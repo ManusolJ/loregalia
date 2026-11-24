@@ -42,7 +42,7 @@ impl Shell {
 
     pub(super) fn detail_item(&self) -> Option<&items::Item> {
         let id = self.detail.as_deref()?;
-        self.items.iter().find(|item| item.id == id)
+        self.item(id)
     }
 
     pub(super) fn detail_element(

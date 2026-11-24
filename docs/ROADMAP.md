@@ -83,3 +83,5 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Deploy the relay that serves details, then check a movie and a game against live data
 - [x] Rank original games above ports and editions, and label those
 - [x] Retry connections that stall, and covers that failed (D-38)
+- [x] Large libraries: draw only what is visible, and keep your place in the list (D-39)
+- [x] Overlapping changes never show an older result

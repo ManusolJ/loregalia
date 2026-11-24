@@ -47,11 +47,15 @@ impl Shell {
             return;
         }
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
-        Self::on_text_change(&input, cx, |this, text| this.find.filter.text = text);
+        Self::on_text_change(&input, cx, |this, text| {
+            this.find.filter.text = text;
+            this.viewport.to_top();
+        });
         self.find.search = Some(input);
     }
 
     pub(super) fn clear_find(&mut self) {
+        self.viewport.to_top();
         self.find.filter = Filter::default();
         self.find.search = None;
         self.find.panel_open = false;
@@ -77,6 +81,7 @@ impl Shell {
         }
 
         self.find.filter.text.clear();
+        self.viewport.to_top();
         search.update(cx, |search, cx| search.set_value("", window, cx));
         self.focus_handle.focus(window, cx);
         true
@@ -167,6 +172,7 @@ impl Shell {
                                 .toggled(self.find.sort == sort)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.find.sort = sort;
+                                    this.viewport.to_top();
                                     cx.notify();
                                 }))
                         }),
@@ -227,6 +233,7 @@ impl Shell {
                     .toggled(chosen)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.find.filter.toggle_tag(&id);
+                        this.viewport.to_top();
                         cx.notify();
                     }))
             }))

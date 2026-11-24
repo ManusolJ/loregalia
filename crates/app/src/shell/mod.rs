@@ -7,6 +7,7 @@ mod metadata_view;
 mod seasons_view;
 mod settings_view;
 mod tags_view;
+mod viewport;
 mod widgets;
 
 use std::collections::HashMap;
@@ -42,6 +43,7 @@ use metadata_view::{RefreshState, default_details, default_search};
 use seasons_view::{SeasonEditor, SeasonFetch};
 use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
+use viewport::{Arrival, Reloads, Viewport};
 use widgets::EmptyPanel;
 
 const RAIL_WIDTH: f32 = 64.0;
@@ -52,6 +54,7 @@ const LOADING_MESSAGE: &str = "Loading lists";
 const LOADING_BLOCK_WIDTH: f32 = 320.0;
 const CONTENT_WIDTH: f32 = 1280.0;
 const PAGE_WIDTH: f32 = 760.0;
+const PAGE_GUTTER: f32 = 32.0;
 const BRAND_SIZE: f32 = 26.0;
 
 static BRAND_ICON: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -113,6 +116,13 @@ pub struct Shell {
     key_inputs: Option<KeyInputs>,
     lists: Vec<lists::List>,
     items: Vec<items::Item>,
+    item_index: HashMap<String, usize>,
+    viewport: Viewport,
+    window_width: f32,
+    columns: usize,
+    followed: Option<String>,
+    reloads: Reloads,
+    batch_failed: bool,
     statuses: Vec<statuses::Status>,
     memberships: Vec<list_items::Membership>,
     tags: Vec<tags::Tag>,
@@ -241,6 +251,13 @@ impl Shell {
             key_inputs: None,
             lists: Vec::new(),
             items: Vec::new(),
+            item_index: HashMap::new(),
+            viewport: Viewport::default(),
+            window_width: 0.0,
+            columns: 0,
+            followed: None,
+            reloads: Reloads::default(),
+            batch_failed: false,
             statuses: Vec::new(),
             memberships: Vec::new(),
             tags: Vec::new(),
@@ -351,10 +368,15 @@ impl Shell {
         cx.notify();
     }
 
-    fn sync_row_focus(&mut self, cx: &mut Context<Self>) {
-        let items = &self.items;
-        self.row_focus
-            .retain(|id, _| items.iter().any(|item| &item.id == id));
+    fn index_items(&mut self, cx: &mut Context<Self>) {
+        self.item_index = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| (item.id.clone(), index))
+            .collect();
+        let known = &self.item_index;
+        self.row_focus.retain(|id, _| known.contains_key(id));
         for item in &self.items {
             if !self.row_focus.contains_key(&item.id) {
                 self.row_focus.insert(
@@ -365,6 +387,51 @@ impl Shell {
         }
     }
 
+    fn item(&self, id: &str) -> Option<&items::Item> {
+        self.items.get(*self.item_index.get(id)?)
+    }
+
+    fn shown_items(&self) -> Vec<&items::Item> {
+        match self.selected_list() {
+            Some(list) => self.visible_members(&list.id),
+            None => self.shelved(self.shelf),
+        }
+    }
+
+    fn keep_place(&mut self) {
+        let (columns, pitch) = self.list_shape();
+        let before = std::mem::replace(&mut self.columns, columns);
+        if before == columns || before == 0 || self.layout != settings::Layout::Grid {
+            return;
+        }
+
+        self.viewport.reflow(before, columns, pitch);
+        if let Some(id) = &self.detail
+            && let Some(index) = self.shown_items().iter().position(|item| &item.id == id)
+        {
+            self.viewport.reveal(index / columns, pitch);
+        }
+    }
+
+    fn follow_focus(&mut self, window: &Window) {
+        let focused = self
+            .row_focus
+            .iter()
+            .find(|(_, handle)| handle.is_focused(window))
+            .map(|(id, _)| id.clone());
+        if focused == self.followed {
+            return;
+        }
+        if window.last_input_was_keyboard()
+            && let Some(id) = &focused
+            && let Some(index) = self.shown_items().iter().position(|item| &item.id == id)
+        {
+            let (columns, pitch) = self.list_shape();
+            self.viewport.reveal(index / columns, pitch);
+        }
+        self.followed = focused;
+    }
+
     fn show_shelf(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
         self.show(Screen::Library);
         self.shelf = shelf;
@@ -373,6 +440,7 @@ impl Shell {
 
     fn set_kind_filter(&mut self, kind: Option<MediaKind>, cx: &mut Context<Self>) {
         self.kind_filter = kind;
+        self.viewport.to_top();
         cx.notify();
     }
 
@@ -442,15 +510,23 @@ impl Shell {
     where
         F: Future<Output = CoreResult<Snapshot>> + Send + 'static,
     {
-        self.loading = true;
+        self.reloads.begin();
         let task = cx.background_spawn(work);
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
-                match result {
-                    Ok(snapshot) => {
+                let arrival = this.reloads.finish();
+                if let Err(error) = &result {
+                    let message = format!("Could not update the database: {error}");
+                    this.record(&message, cx);
+                    this.error = Some(message);
+                    this.batch_failed = true;
+                }
+                match (arrival, result) {
+                    (Arrival::LoadAgain, _) => this.reload(cx),
+                    (Arrival::Apply, Ok(snapshot)) => {
                         if let Some(id) = this.selected.clone()
                             && !snapshot.lists.iter().any(|list| list.id == id)
                         {
@@ -471,14 +547,14 @@ impl Shell {
                         this.list_tags = snapshot.list_tags;
                         this.seasons = snapshot.seasons;
                         this.forget_missing_tags();
-                        this.error = None;
+                        this.index_items(cx);
+                        if !std::mem::take(&mut this.batch_failed) {
+                            this.error = None;
+                        }
                         this.start_metadata_refresh(cx);
                     }
-                    Err(error) => {
-                        let message = format!("Could not update the database: {error}");
-                        this.record(&message, cx);
-                        this.error = Some(message);
-                    }
+                    (Arrival::Apply, Err(_)) => this.batch_failed = false,
+                    (Arrival::Wait, _) => {}
                 }
                 cx.notify();
             });
@@ -493,7 +569,7 @@ impl Shell {
 
     fn shelved(&self, shelf: Shelf) -> Vec<&items::Item> {
         let mut shelved = library::shelve(&self.items, &self.statuses, shelf, self.kind_filter);
-        shelved.retain(|item| self.find.filter.keeps(item, &self.item_tags));
+        self.find.filter.keep(&mut shelved, &self.item_tags);
         library::sort_items(&mut shelved, self.find.sort);
         shelved
     }
@@ -1050,8 +1126,11 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_row_focus(cx);
         self.ensure_search(window, cx);
+        self.viewport.height = f32::from(window.viewport_size().height);
+        self.window_width = f32::from(window.viewport_size().width);
+        self.keep_place();
+        self.follow_focus(window);
         if window.focused(cx).is_none() {
             self.focus_handle.focus(window, cx);
         }
@@ -1100,8 +1179,15 @@ impl Render for Shell {
                     .children(header)
                     .child(
                         div()
-                            .id("main-scroll")
+                            .id(if show_header {
+                                "main-scroll"
+                            } else {
+                                "page-scroll"
+                            })
                             .test_support()
+                            .when(show_header, |scroll| {
+                                scroll.track_scroll(&self.viewport.scroll)
+                            })
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()

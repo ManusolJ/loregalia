@@ -5963,3 +5963,353 @@ fn a_cover_that_does_not_exist_is_not_tried_again(cx: &mut TestAppContext) {
     assert_eq!(*result.lock().unwrap(), Some(false));
     assert_eq!(tries.load(Ordering::SeqCst), 1);
 }
+
+fn seed_many(path: &Path, count: usize) -> CoreResult<Vec<items::Item>> {
+    let database = Database::open(path)?;
+    (0..count)
+        .map(|number| items::create(&database, MediaKind::Book, &format!("Book {number}"), None))
+        .collect()
+}
+
+fn scroll_main(window: &mut Window, cx: &mut gpui_kit::App, y: f32) {
+    window.scroll(
+        "main-scroll",
+        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.0), px(y))),
+        cx,
+    );
+    window.render_frame(cx);
+    window.render_frame(cx);
+}
+
+#[gpui_kit::test]
+fn a_large_list_draws_only_the_rows_near_the_window(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 400).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let drawn = |window: &Window| {
+            seeded
+                .iter()
+                .filter(|item| window.try_find(format!("item-row-{}", item.id)).is_some())
+                .count()
+        };
+        let first = format!("item-row-{}", seeded[0].id);
+        let last = format!("item-row-{}", seeded[399].id);
+
+        assert!(window.find(first.clone()).visible());
+        assert!(window.try_find(last.clone()).is_none());
+        assert!((9..40).contains(&drawn(window)), "{}", drawn(window));
+        assert!(window.find("items").bounds().size.height >= px(400.0 * 85.0));
+
+        scroll_main(window, cx, -1_000_000.0);
+        assert!(window.find(last).visible());
+        assert!(window.try_find(first).is_none());
+        assert!((9..40).contains(&drawn(window)), "{}", drawn(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_large_grid_draws_only_the_tiles_near_the_window(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 400).unwrap();
+    settings::set_layout(&Database::open(&path).unwrap(), settings::Layout::Grid).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tile = |index: usize| format!("item-tile-{}", seeded[index].id);
+        let drawn = seeded
+            .iter()
+            .filter(|item| window.try_find(format!("item-tile-{}", item.id)).is_some())
+            .count();
+        assert!(drawn < 60, "{drawn}");
+
+        scroll_main(window, cx, -1_000_000.0);
+        assert!(window.find(tile(399)).visible());
+        assert!(window.try_find(tile(0)).is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn grid_columns_never_overlap_or_leave_the_page(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 12).unwrap();
+    settings::set_layout(&Database::open(&path).unwrap(), settings::Layout::Grid).unwrap();
+
+    for width in [960.0, 1024.0, 1280.0, 1440.0, 2000.0] {
+        let handle = open_shell(
+            cx,
+            size(px(width), px(1400.0)),
+            StorageState::Ready(path.clone()),
+            None,
+        )
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for open in [false, true] {
+                if open {
+                    window.click(format!("item-tile-{}", seeded[0].id), cx);
+                    window.render_frame(cx);
+                }
+                let bounds: Vec<_> = seeded
+                    .iter()
+                    .map(|item| window.find(format!("item-tile-{}", item.id)).bounds())
+                    .collect();
+                let page = window.find("main-scroll").bounds();
+                for (index, tile) in bounds.iter().enumerate() {
+                    assert!(tile.origin.x >= page.origin.x, "{width}");
+                    assert!(
+                        tile.origin.x + tile.size.width <= page.origin.x + page.size.width,
+                        "{width}"
+                    );
+                    for other in &bounds[index + 1..] {
+                        assert!(!tile.intersects(other), "{width} {open}");
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn changing_an_item_keeps_the_scroll_position(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 100).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+    let row = format!("item-row-{}", seeded[50].id);
+
+    let before = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            scroll_main(window, cx, -50.0 * 85.0);
+            window.click(row.clone(), cx);
+            window.render_frame(cx);
+            let before = window.find(row.clone()).bounds().origin.y;
+            window.click(format!("item-status-{}-book-active", seeded[50].id), cx);
+            window.render_frame(cx);
+            assert!(window.try_find("loading-state").is_none());
+            before
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .find(format!("item-status-{}", seeded[50].id))
+                .label(),
+            Some("In progress")
+        );
+        let after = window.find(row).bounds().origin.y;
+        assert!((after - before).abs() < px(400.0), "{before:?} {after:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_form_returns_to_the_same_place_in_the_list(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 100).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+    let row = format!("item-row-{}", seeded[50].id);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        scroll_main(window, cx, -50.0 * 85.0);
+        window.click(row.clone(), cx);
+        window.render_frame(cx);
+        let before = window.find(row.clone()).bounds().origin.y;
+        window.click(format!("item-edit-{}", seeded[50].id), cx);
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+        window.click("cancel-item", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(row).bounds().origin.y, before);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn another_shelf_search_or_sort_starts_at_the_top(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 100).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+    let first = format!("item-row-{}", seeded[0].id);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("open-filters", cx);
+        window.render_frame(cx);
+        for action in ["filter-book", "library-sort-title", "all-items"] {
+            scroll_main(window, cx, -4_000.0);
+            assert!(window.try_find(first.clone()).is_none(), "{action}");
+            window.click(action, cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.find(first.clone()).visible(), "{action}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn tabbing_through_a_long_list_brings_rows_into_view(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 100).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let target = format!("item-row-{}", seeded[30].id);
+        for _ in 0..80 {
+            if window
+                .try_find(target.clone())
+                .is_some_and(|row| row.focused() == Some(true))
+            {
+                break;
+            }
+            window.press("tab", cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+        }
+        let row = window.find(target);
+        assert_eq!(row.focused(), Some(true));
+        let page = window.find("main-scroll").bounds();
+        let bounds = row.bounds();
+        assert!(bounds.origin.y >= page.origin.y);
+        assert!(bounds.origin.y + bounds.size.height <= page.origin.y + page.size.height);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Book 30"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn shortcuts_work_after_the_focused_row_scrolls_away(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 200).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", seeded[0].id), cx);
+        window.render_frame(cx);
+        assert!(window.find("detail-panel").visible());
+        scroll_main(window, cx, -9_000.0);
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-panel").is_none());
+        window.press("ctrl-f", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("library-search").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn many_tags_on_one_item_do_not_break_the_row_height(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 3).unwrap();
+    for number in 0..40 {
+        let tag = seed_tag(&path, &format!("a rather long tag {number}")).unwrap();
+        tag_item(&path, &seeded[0].id, &tag.id).unwrap();
+    }
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let row = |index: usize| {
+            window
+                .find(format!("item-row-{}", seeded[index].id))
+                .bounds()
+        };
+        assert_eq!(row(0).size.height, row(1).size.height);
+        assert!(!row(0).intersects(&row(1)));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn quick_changes_in_a_row_all_show(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 6).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for item in &seeded {
+            window.click(format!("item-row-{}", item.id), cx);
+            window.render_frame(cx);
+            window.click(format!("item-status-{}-book-done", item.id), cx);
+            window.render_frame(cx);
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for item in &seeded {
+            assert_eq!(
+                window.find(format!("item-status-{}", item.id)).label(),
+                Some("Read")
+            );
+        }
+        assert!(window.try_find("lists-error").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn opening_details_keeps_the_clicked_tile_in_view(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded = seed_many(&path, 200).unwrap();
+    settings::set_layout(&Database::open(&path).unwrap(), settings::Layout::Grid).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        scroll_main(window, cx, -3_000.0);
+        let page = window.find("main-scroll").bounds();
+        let inside = |window: &Window, tile: &str| {
+            window.try_find(tile.to_owned()).is_some_and(|tile| {
+                let bounds = tile.bounds();
+                bounds.origin.y >= page.origin.y
+                    && bounds.origin.y + bounds.size.height <= page.origin.y + page.size.height
+            })
+        };
+        let tile = seeded
+            .iter()
+            .map(|item| format!("item-tile-{}", item.id))
+            .rfind(|tile| inside(window, tile))
+            .unwrap();
+
+        window.click(tile.clone(), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.find("detail-panel").visible());
+        assert!(inside(window, &tile));
+    })
+    .unwrap();
+}
