@@ -9,7 +9,7 @@ use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
     Database, Error, Result as CoreResult,
-    details::Details,
+    details::{Details, NextSeason},
     items, keys, list_items, lists,
     media::MediaKind,
     providers::{Candidate, Source},
@@ -5393,6 +5393,7 @@ fn detailed(source: Source, external_id: &str, title: &str) -> Candidate {
             genres: vec!["Drama".to_owned(), "Mystery".to_owned()],
             creators: vec!["Someone".to_owned()],
             release_date: Some("2020-05-01".to_owned()),
+            ..Details::default()
         }),
         edition: None,
     }
@@ -6813,6 +6814,245 @@ fn a_chosen_genre_survives_another_spelling_but_not_its_absence(cx: &mut TestApp
         window.click("pick-kind-book", cx);
         window.render_frame(cx);
         assert!(window.find(card(&book)).visible());
+    })
+    .unwrap();
+}
+
+fn seed_release(
+    path: &Path,
+    kind: MediaKind,
+    title: &str,
+    source: Source,
+    details: Details,
+) -> CoreResult<items::Item> {
+    let item = seed_lookup(path, kind, title, source, title)?;
+    let data = items::SourceData {
+        title: title.to_owned(),
+        release_year: Some(2020),
+        cover_url: None,
+        details: Some(details),
+    };
+    let now = loregalia_core::log::timestamp(std::time::SystemTime::now());
+    items::apply_refresh(&Database::open(path)?, &item.id, data, &now)?;
+    Ok(item)
+}
+
+fn released_on(date: &str) -> Details {
+    Details {
+        release_date: Some(date.to_owned()),
+        ..Details::default()
+    }
+}
+
+#[gpui_kit::test]
+fn coming_soon_lists_what_is_awaited_soonest_first(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let later = seed_release(
+        &path,
+        MediaKind::Game,
+        "Later",
+        Source::Igdb,
+        released_on("2099-06-01"),
+    )
+    .unwrap();
+    let sooner = seed_release(
+        &path,
+        MediaKind::Movie,
+        "Sooner",
+        Source::Tmdb,
+        released_on("2098-06-01"),
+    )
+    .unwrap();
+    let season = seed_release(
+        &path,
+        MediaKind::Show,
+        "Silo",
+        Source::TvMaze,
+        Details {
+            release_date: Some("2023-05-05".to_owned()),
+            next_season: Some(NextSeason {
+                number: 4,
+                date: "2097-07-09".to_owned(),
+            }),
+            ended: Some(false),
+            ..Details::default()
+        },
+    )
+    .unwrap();
+    seed_status(&path, &season.id, "show-done").unwrap();
+    let old = seed_release(
+        &path,
+        MediaKind::Movie,
+        "Old",
+        Source::Tmdb,
+        released_on("2001-01-01"),
+    )
+    .unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("shelf-coming-soon", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("page-title").label(), Some("Coming soon"));
+        assert_eq!(window.find("page-count").label(), Some("3"));
+        let top = |item: &items::Item| {
+            window
+                .find(format!("item-row-{}", item.id))
+                .bounds()
+                .origin
+                .y
+        };
+        assert!(top(&season) < top(&sooner) && top(&sooner) < top(&later));
+        assert!(window.try_find(format!("item-row-{}", old.id)).is_none());
+        let label = |item: &items::Item| {
+            window
+                .find(format!("item-upcoming-{}", item.id))
+                .label()
+                .map(str::to_owned)
+        };
+        assert_eq!(label(&season).as_deref(), Some("Season 4: out 9 Jul 2097"));
+        assert_eq!(label(&sooner).as_deref(), Some("Out 1 Jun 2098"));
+
+        window.click(format!("item-row-{}", season.id), cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("detail-next-season").label(),
+            Some("Season 4 on 9 Jul 2097")
+        );
+        window.click("all-items", cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(format!("item-upcoming-{}", sooner.id))
+                .is_none()
+        );
+        window.click("shelf-finished", cx);
+        window.render_frame(cx);
+        assert!(window.find(format!("item-row-{}", season.id)).visible());
+        assert!(
+            window
+                .try_find(format!("item-upcoming-{}", season.id))
+                .is_none()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_empty_coming_soon_explains_itself(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Book, "Piranesi", Some(2020)).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("shelf-coming-soon", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("empty-state").label(),
+            Some("Nothing is coming soon")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn coming_soon_tiles_show_the_date_in_the_grid(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let game = seed_release(
+        &path,
+        MediaKind::Game,
+        "Game",
+        Source::Igdb,
+        released_on("2099-06-01"),
+    )
+    .unwrap();
+    settings::set_layout(&Database::open(&path).unwrap(), settings::Layout::Grid).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("shelf-coming-soon", cx);
+        window.render_frame(cx);
+        assert!(window.find(format!("item-tile-{}", game.id)).visible());
+        assert_eq!(
+            window.find(format!("item-upcoming-{}", game.id)).label(),
+            Some("Out 1 Jun 2099")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_delayed_release_moves_when_the_source_says_so(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let game = seed_release(
+        &path,
+        MediaKind::Game,
+        "Game",
+        Source::Igdb,
+        released_on("2098-06-01"),
+    )
+    .unwrap();
+    let database = Database::open(&path).unwrap();
+    let data = game.source_data.clone().unwrap();
+    let data = items::SourceData {
+        details: Some(released_on("2098-06-01")),
+        ..data
+    };
+    items::apply_refresh(&database, &game.id, data, "2026-01-01T00:00:00.000Z").unwrap();
+    drop(database);
+    let details: MetadataDetails = Arc::new(|source, id: String| {
+        Ok(Candidate {
+            details: Some(released_on("2099-12-24")),
+            ..detailed(source, &id, "Game")
+        })
+    });
+    let handle = open_with_details(cx, &path, details).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("shelf-coming-soon", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(format!("item-upcoming-{}", game.id)).label(),
+            Some("Out 24 Dec 2099")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_game_with_only_a_year_never_shows_a_made_up_day(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let game = seed_release(
+        &path,
+        MediaKind::Game,
+        "Game",
+        Source::Igdb,
+        released_on("2099-12-31"),
+    )
+    .unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("shelf-coming-soon", cx);
+        window.render_frame(cx);
+        window.click(format!("item-row-{}", game.id), cx);
+        window.render_frame(cx);
+        for id in [
+            format!("item-upcoming-{}", game.id),
+            "detail-released".to_owned(),
+        ] {
+            assert_eq!(window.find(id).label(), Some("Expected in 2099"));
+        }
     })
     .unwrap();
 }

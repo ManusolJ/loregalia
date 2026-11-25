@@ -11,6 +11,16 @@ pub struct Details {
     pub genres: Vec<String>,
     pub creators: Vec<String>,
     pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_season: Option<NextSeason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct NextSeason {
+    pub number: i32,
+    pub date: String,
 }
 
 impl Details {

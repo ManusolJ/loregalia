@@ -113,6 +113,8 @@ impl ApiDoc {
             genres: genres(&self.subject),
             creators: self.author_name.iter().take(MAX_AUTHORS).cloned().collect(),
             release_date: None,
+            next_season: None,
+            ended: None,
         }
     }
 

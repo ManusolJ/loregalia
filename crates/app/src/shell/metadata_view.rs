@@ -29,6 +29,7 @@ pub type MetadataSearch = Arc<dyn Fn(MediaKind, &str) -> CoreResult<Vec<Candidat
 pub type MetadataDetails = Arc<dyn Fn(Source, String) -> CoreResult<Candidate> + Send + Sync>;
 
 const RESULT_HEIGHT: f32 = 72.0;
+const UPCOMING_REFRESH_AFTER_DAYS: u64 = 7;
 const MAX_REFRESH_FAILURES: usize = 3;
 
 pub const REFRESH_PACE: Duration = Duration::from_secs(4);
@@ -77,9 +78,9 @@ pub(super) fn candidate_label(candidate: &Candidate, already_added: bool) -> Str
     }
 }
 
-pub(super) fn refresh_cutoff() -> String {
+fn days_ago(days: u64) -> String {
     let cutoff = SystemTime::now()
-        .checked_sub(Duration::from_secs(TMDB_REFRESH_AFTER_DAYS * 86_400))
+        .checked_sub(Duration::from_secs(days * 86_400))
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
     log::timestamp(cutoff)
@@ -106,7 +107,8 @@ fn refresh_item(
             items::apply_refresh(&database, &due.id, candidate.into(), &refreshed_at)?;
         }
         Err(Error::HttpStatus { code: 404 }) => {
-            items::mark_without_details(&database, &due.id)?;
+            let refreshed_at = log::timestamp(SystemTime::now());
+            items::mark_not_found(&database, &due.id, &refreshed_at)?;
         }
         Err(error) => return Err(error),
     }
@@ -159,7 +161,17 @@ impl Shell {
         let StorageState::Ready(path) = &self.storage else {
             return None;
         };
-        let due = items::next_due(&self.items, &refresh_cutoff(), &self.refresh.attempted)?;
+        let rhythm = items::Rhythm {
+            stale: days_ago(TMDB_REFRESH_AFTER_DAYS),
+            upcoming: days_ago(UPCOMING_REFRESH_AFTER_DAYS),
+            today: self.today.clone(),
+        };
+        let due = items::next_due(
+            &self.items,
+            &self.statuses,
+            &rhythm,
+            &self.refresh.attempted,
+        )?;
 
         Some((path.clone(), due))
     }

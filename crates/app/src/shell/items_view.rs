@@ -6,7 +6,10 @@ use gpui_kit::{
     AnyElement, AppContext, Context, Entity, Focusable, FontWeight, Role, TestSupportExt, Window,
     div, px, rgb,
 };
-use loregalia_core::{Database, items, list_items, media::MediaKind, providers, settings};
+use loregalia_core::{
+    Database, items, library::Shelf, list_items, media::MediaKind, providers, settings,
+    upcoming::upcoming,
+};
 
 use super::detail_view::DETAIL_WIDTH;
 use super::metadata_view::SearchStatus;
@@ -510,6 +513,15 @@ impl Shell {
                             .text_xs()
                             .text_color(rgb(palette.muted))
                             .child(div().flex_none().child(Self::item_metadata(item)))
+                            .children(self.upcoming_label(item).map(|label| {
+                                div()
+                                    .id(format!("item-upcoming-{}", item.id))
+                                    .test_support()
+                                    .aria_label(label.clone())
+                                    .flex_none()
+                                    .text_color(rgb(palette.accent))
+                                    .child(format!("· {label}"))
+                            }))
                             .children(Self::finished_label(item).map(|finished| {
                                 div()
                                     .id(format!("item-finished-{}", item.id))
@@ -615,6 +627,14 @@ impl Shell {
             .into_any_element()
     }
 
+    fn upcoming_label(&self, item: &items::Item) -> Option<String> {
+        if self.shelf != Shelf::ComingSoon || self.selected.is_some() {
+            return None;
+        }
+
+        upcoming(item, &self.statuses, &self.today).map(|found| found.label(&self.today))
+    }
+
     fn item_tile(
         &self,
         item: &items::Item,
@@ -678,7 +698,16 @@ impl Shell {
                             .text_xs()
                             .line_height(px(20.0))
                             .text_color(rgb(palette.muted))
-                            .child(Self::item_metadata(item)),
+                            .child(match self.upcoming_label(item) {
+                                Some(label) => div()
+                                    .id(format!("item-upcoming-{}", item.id))
+                                    .test_support()
+                                    .aria_label(label.clone())
+                                    .truncate()
+                                    .child(label)
+                                    .into_any_element(),
+                                None => Self::item_metadata(item).into_any_element(),
+                            }),
                     ),
             )
             .children(self.status_of(&item.status_id).map(|status| {

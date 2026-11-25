@@ -1,4 +1,4 @@
-use crate::details::Details;
+use crate::details::{Details, NextSeason};
 use crate::http;
 use crate::providers::{Candidate, Source, full_date, numeric, positive, year_of};
 use crate::{Result, text};
@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 const BASE_URL: &str = "https://api.tvmaze.com";
+const ENDED: &str = "Ended";
 const SEARCH_PATH: &str = "/search/shows";
 
 #[derive(Deserialize)]
@@ -28,6 +29,35 @@ struct ApiShow {
     network: Option<ApiChannel>,
     #[serde(rename = "webChannel")]
     web_channel: Option<ApiChannel>,
+    status: Option<String>,
+    #[serde(rename = "_embedded")]
+    embedded: Option<ApiEmbedded>,
+}
+
+#[derive(Deserialize)]
+struct ApiEmbedded {
+    nextepisode: Option<ApiEpisode>,
+}
+
+#[derive(Deserialize)]
+struct ApiEpisode {
+    season: Option<i32>,
+    number: Option<i32>,
+    airdate: Option<String>,
+}
+
+impl ApiEpisode {
+    fn next_season(&self) -> Option<NextSeason> {
+        let number = self.season.filter(|season| *season > 1)?;
+        if self.number != Some(1) {
+            return None;
+        }
+
+        Some(NextSeason {
+            number,
+            date: full_date(self.airdate.as_deref())?,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -60,6 +90,12 @@ impl ApiShow {
                 .take(1)
                 .collect(),
             release_date: full_date(self.premiered.as_deref()),
+            next_season: self
+                .embedded
+                .as_ref()
+                .and_then(|embedded| embedded.nextepisode.as_ref())
+                .and_then(ApiEpisode::next_season),
+            ended: Some(self.status.as_deref() == Some(ENDED)),
         }
     }
 
@@ -90,7 +126,12 @@ pub fn seasons(id: &str) -> Result<Vec<i32>> {
 
 fn details_at(base_url: &str, id: &str, timeout: Duration) -> Result<Candidate> {
     let url = format!("{base_url}/shows/{}", numeric(id)?);
-    parse_details(&http::get_text(&url, &[], None, timeout)?)
+    parse_details(&http::get_text(
+        &url,
+        &[("embed", "nextepisode")],
+        None,
+        timeout,
+    )?)
 }
 
 fn seasons_at(base_url: &str, id: &str, timeout: Duration) -> Result<Vec<i32>> {
@@ -324,6 +365,48 @@ mod tests {
     fn a_show_with_nothing_but_a_name_has_empty_details() {
         let show = super::parse_details(r#"{"id":1,"name":"Plain"}"#).unwrap();
 
-        assert_eq!(show.details, Some(super::Details::default()));
+        assert_eq!(
+            show.details,
+            Some(super::Details {
+                ended: Some(false),
+                ..super::Details::default()
+            })
+        );
+    }
+
+    #[test]
+    fn an_announced_season_is_kept_with_its_date() {
+        let show = |episode: &str| {
+            let body = format!(
+                r#"{{"id":1,"name":"Silo","status":"Running","_embedded":{{"nextepisode":{episode}}}}}"#
+            );
+            super::parse_details(&body).unwrap().details.unwrap()
+        };
+
+        let season = show(r#"{"season":4,"number":1,"airdate":"2027-07-09"}"#);
+        assert_eq!(
+            season.next_season,
+            Some(super::NextSeason {
+                number: 4,
+                date: "2027-07-09".to_owned()
+            })
+        );
+        assert_eq!(season.ended, Some(false));
+        for other in [
+            r#"{"season":4,"number":2,"airdate":"2027-07-16"}"#,
+            r#"{"season":1,"number":1,"airdate":"2027-07-09"}"#,
+            r#"{"season":4,"number":1,"airdate":""}"#,
+            r#"{"season":4,"number":null,"airdate":"2027-07-09"}"#,
+            "null",
+        ] {
+            assert_eq!(show(other).next_season, None, "{other}");
+        }
+    }
+
+    #[test]
+    fn an_ended_show_says_so() {
+        let show = super::parse_details(r#"{"id":1,"name":"Andor","status":"Ended"}"#).unwrap();
+
+        assert_eq!(show.details.unwrap().ended, Some(true));
     }
 }

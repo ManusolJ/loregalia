@@ -5,21 +5,24 @@ use crate::items::Item;
 use crate::media::MediaKind;
 use crate::statuses::{Category, Status};
 use crate::tags::Tagging;
+use crate::upcoming::upcoming;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shelf {
     All,
     UpNext,
+    ComingSoon,
     Finished,
 }
 
 impl Shelf {
-    pub const ALL: [Self; 3] = [Self::All, Self::UpNext, Self::Finished];
+    pub const ALL: [Self; 4] = [Self::All, Self::UpNext, Self::ComingSoon, Self::Finished];
 
     pub const fn key(self) -> &'static str {
         match self {
             Self::All => "all",
             Self::UpNext => "up-next",
+            Self::ComingSoon => "coming-soon",
             Self::Finished => "finished",
         }
     }
@@ -28,6 +31,7 @@ impl Shelf {
         match self {
             Self::All => "All items",
             Self::UpNext => "Up next",
+            Self::ComingSoon => "Coming soon",
             Self::Finished => "Finished",
         }
     }
@@ -36,13 +40,14 @@ impl Shelf {
         match self {
             Self::All => "Nothing planned yet",
             Self::UpNext => "Nothing in progress or on hold",
+            Self::ComingSoon => "Nothing is coming soon",
             Self::Finished => "Nothing finished yet",
         }
     }
 
     fn holds(self, category: Option<Category>) -> bool {
         match self {
-            Self::All => true,
+            Self::All | Self::ComingSoon => true,
             Self::UpNext => matches!(category, Some(Category::Active | Category::Paused)),
             Self::Finished => category == Some(Category::Done),
         }
@@ -74,6 +79,7 @@ impl Sort {
         match (self, shelf) {
             (Self::Shelf, Shelf::All) => "Order added",
             (Self::Shelf, Shelf::UpNext) => "In progress first",
+            (Self::Shelf, Shelf::ComingSoon) => "Soonest first",
             (Self::Shelf, Shelf::Finished) => "Last finished",
             (Self::Title, _) => "Title",
             (Self::Newest, _) => "Newest",
@@ -198,6 +204,7 @@ pub fn shelve<'a>(
     statuses: &[Status],
     shelf: Shelf,
     kind: Option<MediaKind>,
+    today: &str,
 ) -> Vec<&'a Item> {
     let mut shelved: Vec<&Item> = items
         .iter()
@@ -209,6 +216,14 @@ pub fn shelve<'a>(
         Shelf::All => {}
         Shelf::UpNext => shelved
             .sort_by_key(|item| category_of(statuses, &item.status_id) != Some(Category::Active)),
+        Shelf::ComingSoon => {
+            let mut dated: Vec<(String, &Item)> = shelved
+                .iter()
+                .filter_map(|item| Some((upcoming(item, statuses, today)?.order(), *item)))
+                .collect();
+            dated.sort_by(|left, right| left.0.cmp(&right.0));
+            shelved = dated.into_iter().map(|(_, item)| item).collect();
+        }
         Shelf::Finished => shelved.sort_by(|left, right| right.finished_at.cmp(&left.finished_at)),
     }
 
@@ -352,7 +367,7 @@ mod tests {
     fn every_shelf_has_a_stable_key_label_and_empty_message() {
         let keys: Vec<&str> = Shelf::ALL.iter().map(|shelf| shelf.key()).collect();
 
-        assert_eq!(keys, ["all", "up-next", "finished"]);
+        assert_eq!(keys, ["all", "up-next", "coming-soon", "finished"]);
         assert!(Shelf::ALL.iter().all(|shelf| !shelf.label().is_empty()));
         assert!(
             Shelf::ALL
@@ -365,7 +380,13 @@ mod tests {
     fn all_keeps_every_item_in_its_order() {
         let library = library();
 
-        let shelved = shelve(&library.items, &library.statuses, Shelf::All, None);
+        let shelved = shelve(
+            &library.items,
+            &library.statuses,
+            Shelf::All,
+            None,
+            "2026-11-25",
+        );
 
         assert_eq!(
             titles(&shelved),
@@ -383,7 +404,13 @@ mod tests {
     fn up_next_holds_active_items_before_paused_ones() {
         let library = library();
 
-        let shelved = shelve(&library.items, &library.statuses, Shelf::UpNext, None);
+        let shelved = shelve(
+            &library.items,
+            &library.statuses,
+            Shelf::UpNext,
+            None,
+            "2026-11-25",
+        );
 
         assert_eq!(titles(&shelved), ["Active show", "Paused book"]);
     }
@@ -392,7 +419,13 @@ mod tests {
     fn finished_holds_done_items_newest_first() {
         let library = library();
 
-        let shelved = shelve(&library.items, &library.statuses, Shelf::Finished, None);
+        let shelved = shelve(
+            &library.items,
+            &library.statuses,
+            Shelf::Finished,
+            None,
+            "2026-11-25",
+        );
 
         assert_eq!(titles(&shelved), ["Second done", "First done"]);
     }
@@ -406,12 +439,14 @@ mod tests {
             &library.statuses,
             Shelf::All,
             Some(MediaKind::Movie),
+            "2026-11-25",
         );
         let finished_games = shelve(
             &library.items,
             &library.statuses,
             Shelf::Finished,
             Some(MediaKind::Game),
+            "2026-11-25",
         );
 
         assert_eq!(titles(&movies), ["Planned movie", "Second done"]);
@@ -427,5 +462,18 @@ mod tests {
             Some(Category::Done)
         );
         assert_eq!(category_of(&library.statuses, "missing"), None);
+    }
+
+    #[test]
+    fn coming_soon_is_sorted_by_date_and_keeps_only_what_is_awaited() {
+        let database = Database::open_in_memory().unwrap();
+        for (title, year) in [("Later", 2028), ("Out already", 2020), ("Sooner", 2027)] {
+            items::create(&database, MediaKind::Movie, title, Some(year)).unwrap();
+        }
+        let items = items::all(&database).unwrap();
+        let statuses = statuses::all(&database).unwrap();
+        let shelved = shelve(&items, &statuses, Shelf::ComingSoon, None, "2026-11-25");
+
+        assert_eq!(titles_of(&shelved), ["Sooner", "Later"]);
     }
 }

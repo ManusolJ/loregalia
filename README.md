@@ -58,6 +58,11 @@ account and no algorithm somewhere else.
   <img src="docs/images/pick-dark.png" alt="Pick for me suggesting three items for an evening, each with its reasons" width="820">
 </p>
 
+### Know what is coming
+
+**Coming soon** gathers the games, movies and shows in your library that aren't out yet, and new seasons
+of what you watch, with their dates. No notifications.
+
 ### Add things in seconds
 
 Type a title and pick the match. Covers, synopses, length, genres and release dates come from **TVmaze** for shows,

@@ -114,6 +114,7 @@ at most 20,000 entries and removes the soonest to expire first.
 | ---- | -------- | --- |
 | TMDB and IGDB searches | 7 days | Well within TMDB's six months; IGDB allows storing (D-33) |
 | TMDB movie and IGDB game details | 30 days | IGDB removes a replaced cover image after 30 days |
+| The same, not released yet | 3 days | Release dates move |
 
 Details keys carry a version (`v2`), so a relay that learns new fields does not serve old entries
 without them. IGDB search keys carry one too. Bump
