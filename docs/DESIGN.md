@@ -94,6 +94,9 @@ detail.
   only those near the window are drawn. Text that does not fit is cut, never wrapped. Changing an item,
   opening a form or opening the details keeps your place; a new shelf, search, sort or layout starts
   at the top.
+- **Pick for me:** three questions (what, how long, genre), then Show others with how many fit, then
+  three cards with an 80 x 120 px cover, up to three reasons and one Start or Resume button. All three
+  fit the default window. A started card stays, so the page never moves under the pointer.
 - **Finding:** the search box matches every word of a title, ignoring accents and case. Sort and
   filter opens a panel under the toolbar with the sort order and the tags; an item needs every chosen
   tag. Leaving the page clears the search and the tags, not the sort. While a list is filtered, its

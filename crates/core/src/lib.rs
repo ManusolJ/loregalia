@@ -11,6 +11,7 @@ pub mod list_items;
 pub mod lists;
 pub mod log;
 pub mod media;
+pub mod pick;
 pub mod providers;
 pub mod seasons;
 pub mod settings;

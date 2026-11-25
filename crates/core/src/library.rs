@@ -152,6 +152,14 @@ pub fn matches_text(title: &str, text: &str) -> bool {
     has_words(&fold(title), &words)
 }
 
+pub(crate) fn comparable(title: &str) -> String {
+    fold(title)
+        .split(|letter: char| !letter.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub(crate) fn fold(text: &str) -> String {
     text.to_lowercase()
         .chars()

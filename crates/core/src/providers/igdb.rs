@@ -1,7 +1,8 @@
 use crate::details::Details;
 use crate::http;
+use crate::library::comparable;
 use crate::providers::{Candidate, Source, full_date, numeric, positive};
-use crate::{Error, Result, library, log, text};
+use crate::{Error, Result, log, text};
 use serde::Deserialize;
 use serde_json::Value;
 use std::cmp::Reverse;
@@ -74,14 +75,6 @@ struct ApiTime {
     normally: Option<i64>,
     hastily: Option<i64>,
     completely: Option<i64>,
-}
-
-fn comparable(title: &str) -> String {
-    library::fold(title)
-        .split(|letter: char| !letter.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn entries(value: &Value) -> impl Iterator<Item = &Value> {

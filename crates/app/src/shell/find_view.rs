@@ -251,7 +251,8 @@ impl Shell {
             Some(
                 Button::new("clear-filters")
                     .label("Clear search and filters")
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.focus_handle.focus(window, cx);
                         this.clear_find();
                         cx.notify();
                     })),

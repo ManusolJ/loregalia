@@ -45,7 +45,7 @@ pub fn release(date: &str, today: &str) -> Option<String> {
     })
 }
 
-fn clock(minutes: u32) -> String {
+pub(crate) fn clock(minutes: u32) -> String {
     match (minutes / 60, minutes % 60) {
         (0, minutes) => format!("{minutes} min"),
         (hours, 0) => format!("{hours} h"),

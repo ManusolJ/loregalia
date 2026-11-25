@@ -48,6 +48,16 @@ of covers, search it with Ctrl+F, sort it, and filter it by kind or tag.
   <img src="docs/images/library-light.png" alt="The library in the light theme with the sort and tag filters open" width="820">
 </p>
 
+### Let it pick for you
+
+Say what you feel like and how long you have, and **Pick for me** suggests three things from your own
+library, with the reasons: it fits your two hours, it is next in a list, or you put it on hold. No
+account and no algorithm somewhere else.
+
+<p align="center">
+  <img src="docs/images/pick-dark.png" alt="Pick for me suggesting three items for an evening, each with its reasons" width="820">
+</p>
+
 ### Add things in seconds
 
 Type a title and pick the match. Covers, synopses, length, genres and release dates come from **TVmaze** for shows,

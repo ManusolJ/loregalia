@@ -6418,3 +6418,401 @@ fn choosing_the_library_itself_is_refused(cx: &mut TestAppContext) {
         1
     );
 }
+
+fn seed_timed(
+    path: &Path,
+    kind: MediaKind,
+    title: &str,
+    minutes: u32,
+    genre: &str,
+) -> CoreResult<items::Item> {
+    let item = seed_lookup(path, kind, title, Source::TvMaze, title)?;
+    let database = Database::open(path)?;
+    let data = items::SourceData {
+        title: title.to_owned(),
+        release_year: Some(2020),
+        cover_url: None,
+        details: Some(Details {
+            minutes: Some(minutes),
+            genres: vec![genre.to_owned()],
+            ..Details::default()
+        }),
+    };
+    items::apply_refresh(&database, &item.id, data, "2026-11-25T00:00:00.000Z")?;
+    Ok(item)
+}
+
+fn open_pick(cx: &mut TestAppContext, path: &Path) -> Result<AnyWindowHandle> {
+    let handle = open_library(cx, path)?;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("pick-button", cx);
+        window.render_frame(cx);
+    })?;
+    Ok(handle)
+}
+
+fn picked<'a>(window: &Window, seeded: &'a [items::Item]) -> Vec<&'a str> {
+    seeded
+        .iter()
+        .filter(|item| window.try_find(format!("pick-card-{}", item.id)).is_some())
+        .map(|item| item.id.as_str())
+        .collect()
+}
+
+#[gpui_kit::test]
+fn pick_for_me_offers_three_waiting_items_with_reasons(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded: Vec<items::Item> = (0..7)
+        .map(|n| seed_timed(&path, MediaKind::Movie, &format!("Film {n}"), 100, "Drama").unwrap())
+        .collect();
+    let done = seed_timed(&path, MediaKind::Movie, "Seen", 100, "Drama").unwrap();
+    seed_status(&path, &done.id, "movie-done").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(picked(window, &seeded).len(), 3);
+        assert!(window.try_find(format!("pick-card-{}", done.id)).is_none());
+        assert_eq!(
+            window.find("pick-count").label(),
+            Some("1 to 3 of 7 that fit")
+        );
+
+        window.click("pick-time-120", cx);
+        window.render_frame(cx);
+        for id in picked(window, &seeded) {
+            let reasons = window.find(format!("pick-reasons-{id}"));
+            assert!(
+                reasons
+                    .label()
+                    .is_some_and(|text| text.starts_with("1 h 40 min, fits your 2 h"))
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn show_others_never_repeats_until_all_were_seen(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded: Vec<items::Item> = (0..7)
+        .map(|n| seed_timed(&path, MediaKind::Movie, &format!("Film {n}"), 100, "Drama").unwrap())
+        .collect();
+    let handle = open_pick(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        let mut seen: Vec<String> = Vec::new();
+        for expected in [3, 3, 1] {
+            let now: Vec<String> = picked(window, &seeded)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            assert_eq!(now.len(), expected);
+            assert!(now.iter().all(|id| !seen.contains(id)));
+            seen.extend(now);
+            window.click("pick-others", cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(seen.len(), 7);
+        assert_eq!(picked(window, &seeded).len(), 3);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn starting_a_pick_changes_its_status_and_keeps_the_card(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let game = seed_timed(&path, MediaKind::Game, "Game", 600, "Puzzle").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+    let start = format!("pick-start-{}", game.id);
+
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(
+            window.find("pick-count").label(),
+            Some("The only one that fits")
+        );
+        assert_eq!(window.find("pick-others").disabled(), Some(true));
+        window.click(start.clone(), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-panel").is_none());
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(start).disabled(), Some(true));
+        window.click("pick-button", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("pick-empty").label(),
+            Some("Nothing is waiting")
+        );
+    })
+    .unwrap();
+    let stored = items::get(&Database::open(&path).unwrap(), &game.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status_id, "game-active");
+}
+
+#[gpui_kit::test]
+fn kind_time_and_genre_narrow_the_pick_and_can_be_reset(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let movie = seed_timed(&path, MediaKind::Movie, "Film", 100, "Drama").unwrap();
+    let show = seed_timed(&path, MediaKind::Show, "Show", 50, "Comedy").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+    let card = |item: &items::Item| format!("pick-card-{}", item.id);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.click("pick-kind-show", cx);
+        window.render_frame(cx);
+        assert!(window.find(card(&show)).visible());
+        assert!(window.try_find(card(&movie)).is_none());
+        assert!(window.try_find("pick-genre-Drama").is_none());
+
+        window.click("pick-kind-any", cx);
+        window.render_frame(cx);
+        window.click("pick-genre-Drama", cx);
+        window.render_frame(cx);
+        assert!(window.find(card(&movie)).visible());
+        assert!(window.try_find(card(&show)).is_none());
+
+        window.click("pick-time-30", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("pick-empty").label(), Some("Nothing fits"));
+        window.click("pick-reset", cx);
+        window.render_frame(cx);
+        assert!(window.find(card(&movie)).visible());
+        assert!(window.find(card(&show)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_pick_opens_its_details_and_can_be_edited_from_there(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let movie = seed_timed(&path, MediaKind::Movie, "Film", 100, "Drama").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.click(format!("pick-card-{}", movie.id), cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Film"));
+        window.click(format!("item-edit-{}", movie.id), cx);
+        window.render_frame(cx);
+        assert!(window.find("item-editor").visible());
+        window.click("cancel-item", cx);
+        window.render_frame(cx);
+        assert!(window.find("pick-screen").visible());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("detail-panel").is_none());
+
+        window.click("all-items", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("pick-screen").is_none());
+        assert!(window.find(format!("item-row-{}", movie.id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_deleted_pick_disappears_without_breaking_the_page(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let gone = seed_timed(&path, MediaKind::Movie, "Gone", 100, "Drama").unwrap();
+    let kept = seed_timed(&path, MediaKind::Movie, "Kept", 100, "Drama").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.click(format!("pick-card-{}", gone.id), cx);
+        window.render_frame(cx);
+        window.click(format!("item-delete-{}", gone.id), cx);
+        window.render_frame(cx);
+        window.click("confirm-item-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("pick-screen").visible());
+        assert!(window.try_find(format!("pick-card-{}", gone.id)).is_none());
+        assert!(window.find(format!("pick-card-{}", kept.id)).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn pick_for_me_works_in_the_rail_and_from_the_keyboard(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let movie = seed_timed(&path, MediaKind::Movie, "Film", 100, "Drama").unwrap();
+    let handle = open_shell(
+        cx,
+        size(px(960.0), px(700.0)),
+        StorageState::Ready(path),
+        None,
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("pick-button", cx);
+        window.render_frame(cx);
+        let card = format!("pick-card-{}", movie.id);
+        for _ in 0..60 {
+            if window.find(card.clone()).focused() == Some(true) {
+                break;
+            }
+            window.press("tab", cx);
+            window.render_frame(cx);
+        }
+        assert_eq!(window.find(card).focused(), Some(true));
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-title").label(), Some("Film"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn shortcuts_work_after_every_way_out_of_a_form(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let list = seed_lists(&path, &["Queue"]).unwrap().remove(0);
+    let item = seed_item(&path, MediaKind::Book, "Piranesi", None).unwrap();
+    add_membership(&path, &list.id, &item.id).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+    let ways = [
+        ("add-item", "cancel-item"),
+        ("create-list", "cancel-list"),
+        ("rename-list", "save-list"),
+        ("delete-list", "cancel-delete"),
+    ];
+
+    for (open, leave) in ways {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(format!("list-row-{}", list.id), cx);
+            window.render_frame(cx);
+            window.click(open, cx);
+            window.render_frame(cx);
+            window.click(leave, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.press("ctrl-f", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("library-search").focused(),
+                Some(true),
+                "{open} then {leave}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn shortcuts_work_after_clearing_a_search(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Book, "Piranesi", None).unwrap();
+    let handle = open_library(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("library-search", cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "zzz");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("clear-filters", cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.press("ctrl-f", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("library-search").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn something_on_hold_is_resumed_and_the_rest_started(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let paused = seed_timed(&path, MediaKind::Book, "Paused", 100, "Drama").unwrap();
+    let planned = seed_timed(&path, MediaKind::Book, "Planned", 100, "Drama").unwrap();
+    seed_status(&path, &paused.id, "book-paused").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, _| {
+        let label = |item: &items::Item| {
+            window
+                .find(format!("pick-start-{}", item.id))
+                .label()
+                .map(str::to_owned)
+        };
+        assert_eq!(label(&paused).as_deref(), Some("Resume"));
+        assert_eq!(label(&planned).as_deref(), Some("Start"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn three_picks_fit_the_default_window(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let seeded: Vec<items::Item> = (0..5)
+        .map(|n| seed_timed(&path, MediaKind::Movie, &format!("Film {n}"), 100, "Drama").unwrap())
+        .collect();
+    let handle = open_pick(cx, &path).unwrap();
+
+    cx.update_window(handle, |_, window, _| {
+        for id in picked(window, &seeded) {
+            let start = window.find(format!("pick-start-{id}")).bounds();
+            assert!(start.origin.y + start.size.height <= px(800.0));
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_chosen_genre_survives_another_spelling_but_not_its_absence(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    for number in 0..2 {
+        let title = format!("Show {number}");
+        seed_timed(&path, MediaKind::Show, &title, 50, "Science-Fiction").unwrap();
+    }
+    let film = seed_timed(&path, MediaKind::Movie, "Film", 100, "Science Fiction").unwrap();
+    let drama = seed_timed(&path, MediaKind::Movie, "Drama", 100, "Drama").unwrap();
+    let book = seed_timed(&path, MediaKind::Book, "Book", 100, "Poetry").unwrap();
+    let handle = open_pick(cx, &path).unwrap();
+    let card = |item: &items::Item| format!("pick-card-{}", item.id);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.click("pick-genre-Science-Fiction", cx);
+        window.render_frame(cx);
+        window.click("pick-kind-movie", cx);
+        window.render_frame(cx);
+        assert!(window.find(card(&film)).visible());
+        assert!(window.try_find(card(&drama)).is_none());
+
+        window.click("pick-kind-book", cx);
+        window.render_frame(cx);
+        assert!(window.find(card(&book)).visible());
+    })
+    .unwrap();
+}
