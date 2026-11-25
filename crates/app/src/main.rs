@@ -20,6 +20,7 @@ fn main() {
         storage,
         log_path,
         theme,
+        damaged_library,
     } = prepare();
     if let StorageState::Failed(message) = &storage {
         eprintln!("{message}");
@@ -57,6 +58,7 @@ fn main() {
             match gpui_kit::open_window(options, cx, |_, cx| {
                 cx.new(|cx| {
                     let mut shell = Shell::new(storage, log_path, theme, secrets, cx);
+                    shell.offer_restore(damaged_library);
                     shell.check_for_updates(Arc::new(updates::latest), cx);
                     shell
                 })

@@ -31,8 +31,8 @@ impl Shell {
         self.show(Screen::Settings);
         self.settings_error = None;
         self.forget_update_status();
-        if !matches!(self.export, Some(super::ExportStatus::Working)) {
-            self.export = None;
+        if !matches!(self.transfer, Some(super::TransferStatus::Working(_))) {
+            self.transfer = None;
         }
         self.key_inputs = Some(KeyInputs {
             tmdb: cx.new(|cx| {

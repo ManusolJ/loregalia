@@ -106,6 +106,9 @@ them.
   after the last (`Reloads` in `viewport.rs`), so an older result never replaces a newer one.
 - Exports are written to a `.partial` file beside the target and renamed, so a failed save keeps the
   older file. The library in use is never a valid target (`core::export`).
+- Restoring (D-44, `core::restore`) copies the backup to a staged file, migrates and reads it there,
+  and only then replaces the rows of every table except `settings`. The chosen file is opened read-only.
+  **A new table must be added to `REPLACE_CONTENTS`**; a test fails until it is.
 - Every request has a timeout, 3 seconds to connect, and one retry if it never got through (D-38). Debounce search-as-you-type, respect each source's rate limit, and
   bound every cache.
 - Never build a URL from unchecked input. Choose the source by enum and pass values as parameters.

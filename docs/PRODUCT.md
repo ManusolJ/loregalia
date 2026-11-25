@@ -14,7 +14,8 @@ which episode or page you stopped at.
   level, with no episode tracking.
 - **Statuses:** move an item between states such as To watch, Watched, In progress, Dropped and On
   hold. The set is data, so it can grow.
-- **Export and backup:** save a complete copy of the library, or the user's own data as JSON or CSV.
+- **Export and backup:** save a complete copy of the library and restore it, or save the user's own
+  data as JSON or CSV.
 - **Coming soon:** unreleased items and new seasons of the user's own shows, with their dates. No
   notifications and no calendar of things outside the library.
 - **Update check:** say when a newer version exists and link to it, with a switch to turn it off.

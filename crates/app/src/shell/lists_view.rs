@@ -21,6 +21,7 @@ const DELETE_LIST: Confirmation = Confirmation {
     id: "delete-confirmation",
     cancel_id: "cancel-delete",
     confirm_id: "confirm-delete",
+    confirm_label: "Delete",
     consequence: "The items in it stay in your library. This cannot be undone.",
 };
 

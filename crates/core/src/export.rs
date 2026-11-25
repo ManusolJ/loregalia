@@ -118,7 +118,7 @@ struct ListEntry<'a> {
     items: Vec<&'a str>,
 }
 
-struct Library {
+pub(crate) struct Library {
     items: Vec<items::Item>,
     added: HashMap<String, (String, Option<String>)>,
     statuses: Vec<statuses::Status>,
@@ -131,7 +131,7 @@ struct Library {
 }
 
 impl Library {
-    fn read(database: &Database) -> Result<Self> {
+    pub(crate) fn read(database: &Database) -> Result<Self> {
         let snapshot = database.connection().unchecked_transaction()?;
         let added = database
             .select(
@@ -155,6 +155,14 @@ impl Library {
         snapshot.finish()?;
 
         Ok(library)
+    }
+
+    pub(crate) fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    pub(crate) fn list_count(&self) -> usize {
+        self.lists.len()
     }
 
     fn status(&self, id: &str) -> (&str, &'static str) {
@@ -328,7 +336,7 @@ pub fn save(library_path: &Path, format: Format, chosen: &Path) -> Result<Saved>
     let database = Database::open(library_path)?;
     let partial = partial_path(&target);
     let written = match format {
-        Format::Backup => copy_library(&database, &partial),
+        Format::Backup => verified_copy(database.connection(), &partial),
         Format::Json => json(&database).and_then(|text| write(&partial, &text)),
         Format::Csv => csv(&database).and_then(|text| write(&partial, &text)),
     }
@@ -351,7 +359,7 @@ fn write(path: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
-fn copy_library(database: &Database, partial: &Path) -> Result<()> {
+pub(crate) fn verified_copy(library: &Connection, partial: &Path) -> Result<()> {
     match std::fs::remove_file(partial) {
         Err(error) if error.kind() != ErrorKind::NotFound => return Err(error.into()),
         _ => {}
@@ -359,7 +367,7 @@ fn copy_library(database: &Database, partial: &Path) -> Result<()> {
     let name = partial
         .to_str()
         .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidFilename))?;
-    database.connection().execute("VACUUM INTO ?1", [name])?;
+    library.execute("VACUUM INTO ?1", [name])?;
 
     let copy = Connection::open_with_flags(partial, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let check: String = copy.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
@@ -370,7 +378,7 @@ fn copy_library(database: &Database, partial: &Path) -> Result<()> {
     }
 }
 
-fn with_extension(chosen: &Path, format: Format) -> PathBuf {
+pub(crate) fn with_extension(chosen: &Path, format: Format) -> PathBuf {
     if chosen.extension().is_some() {
         return chosen.to_owned();
     }
@@ -393,7 +401,7 @@ fn partial_path(target: &Path) -> PathBuf {
     target.with_file_name(name)
 }
 
-fn is_same_file(library_path: &Path, target: &Path) -> bool {
+pub(crate) fn is_same_file(library_path: &Path, target: &Path) -> bool {
     match (library_path.canonicalize(), target.canonicalize()) {
         (Ok(library), Ok(target)) => library == target,
         _ => library_path == target,
