@@ -52,6 +52,10 @@ commercial license, and IGDB needs a partnership.
   `game_type`, `version_parent` and `total_rating_count`, puts exact titles of main games first with the
   most rated on top, and puts ports, mods, packs, bundles and editions last, with a label. Two
   Hollow Knights and two Disco Elysiums showed this on 2026-11-24.
+- **IGDB uses 31 December** for a game whose year is known and day is not, so an unreleased game with
+  that date shows as "Expected in 2028".
+- **New seasons come from** TVmaze's `?embed=nextepisode`, kept only when it is the first episode of
+  season 2 or later. `status` of "Ended" stops the weekly check.
 - **Open Library can be slow:** on 2026-11-24 it timed out twice before answering, which is why one
   failure does not stop the background refresh.
 - **Cover shapes:** TVmaze has poster images, and IGDB's `cover_big` is 264 x 374, both close to the

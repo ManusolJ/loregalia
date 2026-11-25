@@ -80,7 +80,8 @@ detail.
 | 1024-1279    | 240 px, with labels | Drawer over the main area |
 | 960-1023     | 64 px icon rail     | Drawer over the main area |
 
-- **Sidebar:** the app name, then Library (All items, Up next, Finished) and Lists, each row with
+- **Sidebar:** the app name, then Library (All items, Up next, Coming soon, Finished,
+  Pick for me) and Lists, each row with
   its count, and Settings and About at the bottom.
 - **Main:** a page header with the title in the Display face, its count, a search box (Ctrl+F), list
   actions as icon buttons and one primary Add item button, then a toolbar (kind filter on library
@@ -94,6 +95,9 @@ detail.
   only those near the window are drawn. Text that does not fit is cut, never wrapped. Changing an item,
   opening a form or opening the details keeps your place; a new shelf, search, sort or layout starts
   at the top.
+- **Coming soon:** a library shelf. Rows add the date in `accent` after the year, and tiles show it in
+  place of kind and year: "Out tomorrow", "Out in 3 days" up to 14 days ahead, "Out 15 Dec 2026",
+  "Season 4: out 9 Jul 2027", "Expected in 2027" or "Out since 20 Nov 2026".
 - **Pick for me:** three questions (what, how long, genre), then Show others with how many fit, then
   three cards with an 80 x 120 px cover, up to three reasons and one Start or Resume button. All three
   fit the default window. A started card stays, so the page never moves under the pointer.

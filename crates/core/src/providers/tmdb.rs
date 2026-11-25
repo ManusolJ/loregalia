@@ -63,6 +63,8 @@ impl ApiMovie {
                 .filter_map(|person| person.name.clone())
                 .collect(),
             release_date: full_date(self.release_date.as_deref()),
+            next_season: None,
+            ended: None,
         }
     }
 

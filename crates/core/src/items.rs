@@ -1,6 +1,8 @@
 use crate::details::Details;
 use crate::providers::{Candidate, Source};
+use crate::statuses::Status;
 use crate::storage::keyed_column;
+use crate::upcoming;
 use crate::{Database, Error, Result, media::MediaKind};
 use rusqlite::{OptionalExtension, Row, params, types::Type};
 use serde::{Deserialize, Serialize};
@@ -208,10 +210,17 @@ pub struct Refresh {
     pub source_data: SourceData,
 }
 
-pub fn refreshed(item: &Item, mut latest: SourceData) -> Refresh {
+pub fn refreshed(item: &Item, mut latest: SourceData, today: &str) -> Refresh {
     let previous = item.source_data.as_ref();
-    if latest.details.is_none() {
-        latest.details = item.details().cloned();
+    match &mut latest.details {
+        Some(details) if details.next_season.is_none() => {
+            details.next_season = item
+                .details()
+                .and_then(|known| known.next_season.clone())
+                .filter(|season| season.date.as_str() <= today);
+        }
+        Some(_) => {}
+        None => latest.details = item.details().cloned(),
     }
 
     Refresh {
@@ -247,7 +256,8 @@ pub fn apply_refresh(
         return Ok(false);
     }
 
-    let refresh = refreshed(&item, latest);
+    let today = refreshed_at.get(..10).unwrap_or(refreshed_at);
+    let refresh = refreshed(&item, latest, today);
     let source_data = serde_json::to_string(&refresh.source_data)?;
     let release_date = refresh
         .source_data
@@ -261,7 +271,7 @@ pub fn apply_refresh(
              cover_url = ?3,
              source_data = ?4,
              source_refreshed_at = ?5,
-             release_date = COALESCE(?7, release_date)
+             release_date = CASE WHEN ?8 THEN ?7 ELSE release_date END
          WHERE id = ?6",
         params![
             refresh.title,
@@ -270,19 +280,24 @@ pub fn apply_refresh(
             source_data,
             refreshed_at,
             id,
-            release_date
+            release_date,
+            refresh.source_data.details.is_some()
         ],
     )?;
 
     Ok(changed > 0)
 }
 
-pub fn mark_without_details(database: &Database, id: &str) -> Result<bool> {
+pub fn mark_not_found(database: &Database, id: &str, refreshed_at: &str) -> Result<bool> {
     let Some(item) = get(database, id)? else {
         return Ok(false);
     };
+    let details = item.details().cloned().unwrap_or_default();
     let data = SourceData {
-        details: Some(Details::default()),
+        details: Some(Details {
+            ended: Some(true),
+            ..details
+        }),
         ..item.source_data.unwrap_or(SourceData {
             title: item.title,
             release_year: item.release_year,
@@ -291,8 +306,8 @@ pub fn mark_without_details(database: &Database, id: &str) -> Result<bool> {
         })
     };
     let changed = database.connection().execute(
-        "UPDATE items SET source_data = ?1 WHERE id = ?2",
-        params![serde_json::to_string(&data)?, id],
+        "UPDATE items SET source_data = ?1, source_refreshed_at = ?2 WHERE id = ?3",
+        params![serde_json::to_string(&data)?, refreshed_at, id],
     )?;
 
     Ok(changed > 0)
@@ -305,11 +320,31 @@ pub struct Due {
     pub external_id: String,
 }
 
-pub fn next_due(items: &[Item], cutoff: &str, skip: &HashSet<String>) -> Option<Due> {
+#[derive(Clone, Debug)]
+pub struct Rhythm {
+    pub stale: String,
+    pub upcoming: String,
+    pub today: String,
+}
+
+pub fn next_due(
+    items: &[Item],
+    statuses: &[Status],
+    rhythm: &Rhythm,
+    skip: &HashSet<String>,
+) -> Option<Due> {
     let missing = items.iter().rev().filter(|item| item.details().is_none());
 
     missing
-        .chain(due_for_refresh(items, cutoff))
+        .chain(items.iter().filter(|item| {
+            upcoming::may_change(item, statuses, &rhythm.today)
+                && (never_asked_for_seasons(item)
+                    || item
+                        .source_refreshed_at
+                        .as_deref()
+                        .is_none_or(|at| at < rhythm.upcoming.as_str()))
+        }))
+        .chain(due_for_refresh(items, &rhythm.stale))
         .filter(|item| !skip.contains(&item.id))
         .find_map(|item| {
             Some(Due {
@@ -318,6 +353,13 @@ pub fn next_due(items: &[Item], cutoff: &str, skip: &HashSet<String>) -> Option<
                 external_id: item.external_id.clone()?,
             })
         })
+}
+
+fn never_asked_for_seasons(item: &Item) -> bool {
+    item.source.as_deref() == Some(Source::TvMaze.key())
+        && item
+            .details()
+            .is_some_and(|details| details.ended.is_none())
 }
 
 pub fn due_for_refresh<'a>(items: &'a [Item], cutoff: &str) -> Vec<&'a Item> {
@@ -793,7 +835,7 @@ mod tests {
             details: None,
         };
 
-        let result = refreshed(&item, latest.clone());
+        let result = refreshed(&item, latest.clone(), "2026-11-25");
 
         assert_eq!(result.title, "Dune");
         assert_eq!(result.release_year, Some(2021));
@@ -1060,15 +1102,29 @@ mod tests {
         let new = looked_up(&database, MediaKind::Book, Source::OpenLibrary, "OL1W");
         let items = all(&database).unwrap();
         let mut skip = std::collections::HashSet::new();
-        let cutoff = "2000-01-01T00:00:00.000Z";
+        let statuses = crate::statuses::all(&database).unwrap();
+        let rhythm = rhythm();
 
-        let first = super::next_due(&items, cutoff, &skip).unwrap();
+        let first = super::next_due(&items, &statuses, &rhythm, &skip).unwrap();
         assert_eq!(first.id, new.id);
         assert_eq!(first.source, Source::OpenLibrary);
         skip.insert(first.id);
-        assert_eq!(super::next_due(&items, cutoff, &skip).unwrap().id, old.id);
+        assert_eq!(
+            super::next_due(&items, &statuses, &rhythm, &skip)
+                .unwrap()
+                .id,
+            old.id
+        );
         skip.insert(old.id);
-        assert_eq!(super::next_due(&items, cutoff, &skip), None);
+        assert_eq!(super::next_due(&items, &statuses, &rhythm, &skip), None);
+    }
+
+    fn rhythm() -> super::Rhythm {
+        super::Rhythm {
+            stale: "2000-01-01T00:00:00.000Z".to_owned(),
+            upcoming: "2026-11-18T00:00:00.000Z".to_owned(),
+            today: "2026-11-25".to_owned(),
+        }
     }
 
     #[test]
@@ -1076,15 +1132,134 @@ mod tests {
         let database = Database::open_in_memory().unwrap();
         let item = looked_up(&database, MediaKind::Show, Source::TvMaze, "1");
 
-        assert!(super::mark_without_details(&database, &item.id).unwrap());
+        assert!(super::mark_not_found(&database, &item.id, "2026-11-25T00:00:00.000Z").unwrap());
 
         let items = all(&database).unwrap();
-        assert_eq!(items[0].details(), Some(&Default::default()));
+        let statuses = crate::statuses::all(&database).unwrap();
         assert_eq!(items[0].title, "Title");
         assert_eq!(
-            super::next_due(&items, "2000-01-01T00:00:00.000Z", &Default::default()),
+            super::next_due(&items, &statuses, &rhythm(), &Default::default()),
             None
         );
-        assert!(!super::mark_without_details(&database, "missing").unwrap());
+        assert!(!super::mark_not_found(&database, "missing", "x").unwrap());
+    }
+
+    #[test]
+    fn not_found_never_erases_details_already_stored() {
+        let database = Database::open_in_memory().unwrap();
+        let item = looked_up(&database, MediaKind::Movie, Source::Tmdb, "1");
+        apply_refresh(
+            &database,
+            &item.id,
+            with_details(90),
+            "2026-01-01T00:00:00.000Z",
+        )
+        .unwrap();
+
+        super::mark_not_found(&database, &item.id, "2026-11-25T00:00:00.000Z").unwrap();
+
+        let stored = get(&database, &item.id).unwrap().unwrap();
+        assert_eq!(stored.details().unwrap().minutes, Some(90));
+        assert_eq!(stored.release_date.as_deref(), Some("2020-05-01"));
+        assert_eq!(
+            stored.source_refreshed_at.as_deref(),
+            Some("2026-11-25T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn a_withdrawn_release_date_is_forgotten() {
+        let database = Database::open_in_memory().unwrap();
+        let item = looked_up(&database, MediaKind::Game, Source::Igdb, "1");
+        let at = "2026-11-25T00:00:00.000Z";
+        apply_refresh(&database, &item.id, with_details(90), at).unwrap();
+        let mut delayed = with_details(90);
+        if let Some(details) = &mut delayed.details {
+            details.release_date = None;
+        }
+
+        apply_refresh(&database, &item.id, delayed, at).unwrap();
+
+        let stored = get(&database, &item.id).unwrap().unwrap();
+        assert_eq!(stored.release_date, None);
+    }
+
+    fn refreshed_show(database: &Database, id: &str, ended: Option<bool>, at: &str) -> Item {
+        let show = looked_up(database, MediaKind::Show, Source::TvMaze, id);
+        let mut data = with_details(40);
+        if let Some(details) = &mut data.details {
+            details.ended = ended;
+        }
+        apply_refresh(database, &show.id, data, at).unwrap();
+        show
+    }
+
+    #[test]
+    fn running_shows_are_checked_weekly_and_ended_ones_never() {
+        let database = Database::open_in_memory().unwrap();
+        let old = "2026-11-10T00:00:00.000Z";
+        let recent = "2026-11-24T00:00:00.000Z";
+        refreshed_show(&database, "ended", Some(true), old);
+        refreshed_show(&database, "recent", Some(false), recent);
+        let running = refreshed_show(&database, "running", Some(false), old);
+        let unasked = refreshed_show(&database, "unasked", None, recent);
+        let dropped = refreshed_show(&database, "dropped", Some(false), old);
+        set_status(&database, &dropped.id, "show-dropped").unwrap();
+        let items = all(&database).unwrap();
+        let statuses = crate::statuses::all(&database).unwrap();
+        let mut skip = std::collections::HashSet::new();
+        let mut due = Vec::new();
+        while let Some(next) = super::next_due(&items, &statuses, &rhythm(), &skip) {
+            skip.insert(next.id.clone());
+            due.push(next.id);
+        }
+
+        assert_eq!(due, [running.id, unasked.id]);
+    }
+
+    fn with_season(date: Option<&str>) -> SourceData {
+        let mut data = with_details(40);
+        if let Some(details) = &mut data.details {
+            details.next_season = date.map(|date| crate::details::NextSeason {
+                number: 4,
+                date: date.to_owned(),
+            });
+        }
+        data
+    }
+
+    fn season_after(first: &str, second: Option<&str>) -> Option<String> {
+        let database = Database::open_in_memory().unwrap();
+        let show = looked_up(&database, MediaKind::Show, Source::TvMaze, "1");
+        let before = "2026-11-18T00:00:00.000Z";
+        let now = "2026-11-25T00:00:00.000Z";
+        apply_refresh(&database, &show.id, with_season(Some(first)), before).unwrap();
+        apply_refresh(&database, &show.id, with_season(second), now).unwrap();
+        let stored = get(&database, &show.id).unwrap().unwrap();
+        stored
+            .details()
+            .and_then(|details| details.next_season.clone())
+            .map(|season| season.date)
+    }
+
+    #[test]
+    fn a_season_that_started_is_remembered_until_the_next_one() {
+        assert_eq!(
+            season_after("2026-11-20", None).as_deref(),
+            Some("2026-11-20")
+        );
+        assert_eq!(
+            season_after("2026-11-25", None).as_deref(),
+            Some("2026-11-25")
+        );
+        assert_eq!(
+            season_after("2026-11-20", Some("2027-11-20")).as_deref(),
+            Some("2027-11-20")
+        );
+    }
+
+    #[test]
+    fn a_season_that_lost_its_date_before_starting_is_forgotten() {
+        assert_eq!(season_after("2027-07-09", None), None);
     }
 }

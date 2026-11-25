@@ -13,6 +13,22 @@ pub fn today() -> String {
         .unwrap_or_else(|_| log::timestamp(SystemTime::now())[..10].to_owned())
 }
 
+pub fn days_between(from: &str, to: &str) -> Option<i64> {
+    Some(day_number(to)? - day_number(from)?)
+}
+
+fn day_number(date: &str) -> Option<i64> {
+    short(date)?;
+    let year: i64 = date.get(..4)?.parse().ok()?;
+    let month: i64 = date.get(5..7)?.parse().ok()?;
+    let day: i64 = date.get(8..10)?.parse().ok()?;
+    let shifted_year = if month > 2 { year } else { year - 1 };
+    let shifted_month = (month + 9) % 12;
+    let leaps = shifted_year / 4 - shifted_year / 100 + shifted_year / 400;
+
+    Some(365 * shifted_year + leaps + (153 * shifted_month + 2) / 5 + day)
+}
+
 pub fn short(date: &str) -> Option<String> {
     let mut parts = date.get(..10)?.split('-');
     let year: i32 = parts.next()?.parse().ok()?;
@@ -28,7 +44,19 @@ pub fn short(date: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{short, today};
+    use super::{days_between, short, today};
+
+    #[test]
+    fn days_are_counted_across_months_years_and_leap_days() {
+        assert_eq!(days_between("2026-11-25", "2026-11-25"), Some(0));
+        assert_eq!(days_between("2026-11-25", "2026-11-28"), Some(3));
+        assert_eq!(days_between("2026-11-28", "2026-11-25"), Some(-3));
+        assert_eq!(days_between("2026-12-31", "2027-01-01"), Some(1));
+        assert_eq!(days_between("2027-02-28", "2027-03-01"), Some(1));
+        assert_eq!(days_between("2028-02-28", "2028-03-01"), Some(2));
+        assert_eq!(days_between("2026-11-25", "2027-11-25"), Some(365));
+        assert_eq!(days_between("soon", "2027-11-25"), None);
+    }
 
     #[test]
     fn today_is_a_date() {

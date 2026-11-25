@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::link::Link;
@@ -8,7 +8,7 @@ use gpui_kit::{
     Animation, AnimationExt, AnyElement, Context, FontWeight, Role, TestSupportExt, div,
     ease_out_quint, px, rgb,
 };
-use loregalia_core::{details, items, log, media::MediaKind, providers::Source, text};
+use loregalia_core::{dates, details, items, media::MediaKind, providers::Source, text, upcoming};
 
 use super::Shell;
 use super::tags_view::TagTarget;
@@ -89,7 +89,7 @@ impl Shell {
                     .child(Self::detail_hero(item, palette))
                     .child(self.detail_status(item, palette, cx))
                     .children(self.detail_synopsis(item, cx))
-                    .children(Self::detail_facts(item, palette))
+                    .children(self.detail_facts(item, palette))
                     .when(item.media_kind == MediaKind::Show, |body| {
                         body.child(self.seasons_section(item, palette, cx))
                     })
@@ -215,13 +215,18 @@ impl Shell {
         )
     }
 
-    fn detail_facts(item: &items::Item, palette: &Palette) -> Option<AnyElement> {
+    fn detail_facts(&self, item: &items::Item, palette: &Palette) -> Option<AnyElement> {
         let details = item.details()?;
-        let today = log::timestamp(SystemTime::now());
-        let released = item
-            .release_date
-            .as_deref()
-            .and_then(|date| details::release(date, &today[..10]));
+        let today = self.today.as_str();
+        let next_season = details
+            .next_season
+            .as_ref()
+            .filter(|season| season.date.as_str() >= today)
+            .and_then(|season| {
+                let date = dates::short(&season.date)?;
+                Some(format!("Season {} on {date}", season.number))
+            });
+        let released = upcoming::release_label(item, today);
         let joined = |values: &[String]| (!values.is_empty()).then(|| values.join(", "));
         let facts: Vec<(&'static str, &'static str, String)> = [
             ("length", "Length", details.length(item.media_kind)),
@@ -232,6 +237,7 @@ impl Shell {
             ),
             ("genres", "Genres", joined(&details.genres)),
             ("released", "Released", released),
+            ("next-season", "Coming", next_season),
         ]
         .into_iter()
         .filter_map(|(key, label, value)| Some((key, label, value?)))

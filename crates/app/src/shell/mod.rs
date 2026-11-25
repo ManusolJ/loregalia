@@ -29,7 +29,7 @@ use gpui_kit::{
 };
 use loregalia_core::library::{self, Shelf};
 use loregalia_core::{
-    Database, Result as CoreResult, items, keys, list_items, lists, log, media::MediaKind,
+    Database, Result as CoreResult, dates, items, keys, list_items, lists, log, media::MediaKind,
     providers::tvmaze, seasons, settings, statuses, tags,
 };
 
@@ -127,6 +127,7 @@ pub struct Shell {
     editing: bool,
     pick: PickState,
     window_width: f32,
+    today: String,
     columns: usize,
     followed: Option<String>,
     reloads: Reloads,
@@ -265,6 +266,7 @@ impl Shell {
             editing: false,
             pick: PickState::default(),
             window_width: 0.0,
+            today: dates::today(),
             columns: 0,
             followed: None,
             reloads: Reloads::default(),
@@ -335,6 +337,7 @@ impl Shell {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.today = dates::today();
         self.screen = screen;
         self.selected = None;
         self.detail = None;
@@ -380,6 +383,7 @@ impl Shell {
     }
 
     fn index_items(&mut self, cx: &mut Context<Self>) {
+        self.today = dates::today();
         self.item_index = self
             .items
             .iter()
@@ -579,14 +583,20 @@ impl Shell {
     }
 
     fn shelved(&self, shelf: Shelf) -> Vec<&items::Item> {
-        let mut shelved = library::shelve(&self.items, &self.statuses, shelf, self.kind_filter);
+        let mut shelved = library::shelve(
+            &self.items,
+            &self.statuses,
+            shelf,
+            self.kind_filter,
+            &self.today,
+        );
         self.find.filter.keep(&mut shelved, &self.item_tags);
         library::sort_items(&mut shelved, self.find.sort);
         shelved
     }
 
     fn shelf_count(&self, shelf: Shelf) -> usize {
-        library::shelve(&self.items, &self.statuses, shelf, None).len()
+        library::shelve(&self.items, &self.statuses, shelf, None, &self.today).len()
     }
 
     fn list_count(&self, list_id: &str) -> usize {
@@ -713,6 +723,11 @@ impl Shell {
                 IconName::CirclePlay,
                 self.shelf.empty_message().to_owned(),
                 "Set something to In progress or On hold and it waits for you here.",
+            ),
+            (None, Shelf::ComingSoon) => (
+                IconName::CalendarClock,
+                self.shelf.empty_message().to_owned(),
+                "What is not out yet waits here with its date, and so do new seasons.",
             ),
             (None, Shelf::Finished) => (
                 IconName::CircleCheck,
@@ -959,6 +974,7 @@ impl Shell {
                 let icon = match shelf {
                     Shelf::All => IconName::Library,
                     Shelf::UpNext => IconName::ArrowRight,
+                    Shelf::ComingSoon => IconName::CalendarClock,
                     Shelf::Finished => IconName::Check,
                 };
                 Self::nav_row(

@@ -87,3 +87,5 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Overlapping changes never show an older result
 - [x] Back up the library, and export it as JSON or CSV (D-40)
 - [x] Pick for me: three suggestions from your own library, with reasons (D-41)
+- [x] Coming soon: unreleased items and new seasons, with dates (D-42)
+- [ ] Deploy the relay that keeps unreleased titles for 3 days

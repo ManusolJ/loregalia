@@ -146,6 +146,8 @@ impl ApiGame {
                 .and_then(|seconds| u64::try_from(seconds).ok())
                 .map(|seconds| log::timestamp(UNIX_EPOCH + Duration::from_secs(seconds)))
                 .and_then(|date| full_date(Some(&date))),
+            next_season: None,
+            ended: None,
         }
     }
 

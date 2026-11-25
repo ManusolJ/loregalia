@@ -2,6 +2,7 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::get;
 use axum::{Json, Router};
+use loregalia_core::log;
 use loregalia_core::providers::relay::SearchResponse;
 use loregalia_core::providers::{Candidate, igdb};
 use serde::de::DeserializeOwned;
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use crate::cache::Cache;
 use crate::coalesce::Coalescer;
@@ -25,6 +26,7 @@ const CLIENT_WINDOW_SECONDS: i64 = 60;
 const DAY_SECONDS: i64 = 24 * 60 * 60;
 const SEARCH_TTL_SECONDS: i64 = 7 * DAY_SECONDS;
 const DETAILS_TTL_SECONDS: i64 = 30 * DAY_SECONDS;
+const UNRELEASED_TTL_SECONDS: i64 = 3 * DAY_SECONDS;
 const DETAILS_VERSION: &str = "v2";
 const SEARCH_VERSION: &str = "v2";
 const MAX_CACHE_ENTRIES: usize = 20_000;
@@ -148,7 +150,7 @@ async fn search_movies(
         &state,
         format!("tmdb:search:{query}"),
         now,
-        SEARCH_TTL_SECONDS,
+        |_| SEARCH_TTL_SECONDS,
         async move {
             let upstream = upstream.ok_or(RelayError::NotConfigured)?;
             let results = throttle
@@ -172,6 +174,7 @@ async fn movie_details(
         return Err(RelayError::BadRequest);
     }
     let now = admit(&state, peer, &headers)?;
+    let today = date_of(now);
     let upstream = state.tmdb.clone();
     let throttle = state.tmdb_throttle.clone();
 
@@ -179,7 +182,7 @@ async fn movie_details(
         &state,
         format!("tmdb:movie:{DETAILS_VERSION}:{id}"),
         now,
-        DETAILS_TTL_SECONDS,
+        |candidate| details_ttl(candidate, &today),
         async move {
             let upstream = upstream.ok_or(RelayError::NotConfigured)?;
             throttle
@@ -207,7 +210,7 @@ async fn search_games(
         &state,
         format!("igdb:search:{SEARCH_VERSION}:{query}"),
         now,
-        SEARCH_TTL_SECONDS,
+        |_| SEARCH_TTL_SECONDS,
         async move {
             let upstream = upstream.ok_or(RelayError::NotConfigured)?;
             let results = throttle
@@ -231,6 +234,7 @@ async fn game_details(
         return Err(RelayError::BadRequest);
     }
     let now = admit(&state, peer, &headers)?;
+    let today = date_of(now);
     let upstream = state.igdb.clone();
     let throttle = state.igdb_throttle.clone();
 
@@ -238,7 +242,7 @@ async fn game_details(
         &state,
         format!("igdb:game:{DETAILS_VERSION}:{id}"),
         now,
-        DETAILS_TTL_SECONDS,
+        |candidate| details_ttl(candidate, &today),
         async move {
             let upstream = upstream.ok_or(RelayError::NotConfigured)?;
             let game = throttle
@@ -256,11 +260,36 @@ async fn game_details(
     .map(Json)
 }
 
+fn date_of(now: i64) -> String {
+    let seconds = u64::try_from(now).unwrap_or_default();
+
+    log::timestamp(UNIX_EPOCH + Duration::from_secs(seconds))[..10].to_owned()
+}
+
+fn details_ttl(candidate: &Candidate, today: &str) -> i64 {
+    let released = candidate
+        .details
+        .as_ref()
+        .and_then(|details| details.release_date.as_deref());
+    let unreleased = match released {
+        Some(date) => date > today,
+        None => candidate
+            .release_year
+            .is_none_or(|year| format!("{year:04}").as_str() > &today[..4]),
+    };
+
+    if unreleased {
+        UNRELEASED_TTL_SECONDS
+    } else {
+        DETAILS_TTL_SECONDS
+    }
+}
+
 async fn cached<T>(
     state: &AppState,
     key: String,
     now: i64,
-    ttl_seconds: i64,
+    ttl_seconds: impl Fn(&T) -> i64,
     fetch: impl Future<Output = Result<T, RelayError>>,
 ) -> Result<T, RelayError>
 where
@@ -278,7 +307,7 @@ where
         .run(&key, async {
             let value = fetch.await?;
             let body = serde_json::to_string(&value).map_err(|_| RelayError::Internal)?;
-            cache_put(&cache, &key, &body, now + ttl_seconds, now).await?;
+            cache_put(&cache, &key, &body, now + ttl_seconds(&value), now).await?;
             Ok(body)
         })
         .await?;
@@ -921,5 +950,26 @@ mod tests {
         let found = game_search(state, "outer wilds").await.unwrap();
         assert_eq!(found.results, vec![game_candidate()]);
         assert_eq!(*fake.searches.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn unreleased_titles_are_kept_for_a_shorter_time() {
+        let candidate = |date: Option<&str>, year| Candidate {
+            release_year: year,
+            details: Some(loregalia_core::details::Details {
+                release_date: date.map(str::to_owned),
+                ..Default::default()
+            }),
+            ..candidate()
+        };
+        let ttl = |date, year| super::details_ttl(&candidate(date, year), "2026-11-25");
+
+        assert_eq!(ttl(Some("2027-07-09"), Some(2027)), 3 * 86_400);
+        assert_eq!(ttl(None, None), 3 * 86_400);
+        assert_eq!(ttl(None, Some(2027)), 3 * 86_400);
+        assert_eq!(ttl(None, Some(2026)), 30 * 86_400);
+        assert_eq!(ttl(Some("2021-09-15"), Some(2021)), 30 * 86_400);
+        assert_eq!(ttl(None, Some(2021)), 30 * 86_400);
+        assert_eq!(super::date_of(1_795_564_800), "2026-11-25");
     }
 }
