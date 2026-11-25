@@ -36,6 +36,7 @@ const DELETE_ITEM: Confirmation = Confirmation {
     id: "item-delete-confirmation",
     cancel_id: "cancel-item-delete",
     confirm_id: "confirm-item-delete",
+    confirm_label: "Delete",
     consequence: "It is removed from every list too. This cannot be undone.",
 };
 

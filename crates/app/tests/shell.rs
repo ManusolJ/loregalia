@@ -12,7 +12,7 @@ use loregalia_app::theme;
 use loregalia_core::{
     Database, Error, Result as CoreResult,
     details::{Details, NextSeason},
-    items, keys, list_items, lists,
+    export, items, keys, list_items, lists,
     media::MediaKind,
     providers::{Candidate, Source},
     seasons, settings, tags,
@@ -6422,6 +6422,254 @@ fn choosing_the_library_itself_is_refused(cx: &mut TestAppContext) {
         items::all(&Database::open(&path).unwrap()).unwrap().len(),
         1
     );
+}
+
+fn seed_backup(library: &Path, backup: &Path) -> CoreResult<()> {
+    let database = Database::open(library)?;
+    let dune = items::create(&database, MediaKind::Movie, "Dune", Some(2021))?;
+    items::create(&database, MediaKind::Book, "Piranesi", None)?;
+    lists::create(&database, "Autumn")?;
+    export::save(library, export::Format::Backup, backup)?;
+    items::delete(&database, &dune.id)?;
+    Ok(())
+}
+
+fn choose_backup(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    chosen: Option<PathBuf>,
+) -> Result<bool> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("restore-backup", cx);
+    })?;
+    cx.run_until_parked();
+    let asked = cx.did_prompt_for_paths();
+    cx.simulate_path_prompt_response(move |_| chosen.map(|path| vec![path]));
+    cx.run_until_parked();
+    Ok(asked)
+}
+
+fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> Result<()> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(id, cx);
+    })?;
+    cx.run_until_parked();
+    Ok(())
+}
+
+fn label_of(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> Option<String> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.try_find(id)?.label().map(str::to_owned)
+    })
+    .ok()
+    .flatten()
+}
+
+fn stored_titles(path: &Path) -> CoreResult<Vec<String>> {
+    let mut titles: Vec<String> = items::all(&Database::open(path)?)?
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    titles.sort();
+    Ok(titles)
+}
+
+#[gpui_kit::test]
+fn a_backup_is_restored_only_after_saying_what_it_replaces(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let backup = temporary.path().join("copy.db");
+    seed_backup(&path, &backup).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    assert!(choose_backup(cx, handle, Some(backup)).unwrap());
+
+    assert_eq!(
+        label_of(cx, handle, "restore-confirmation").unwrap(),
+        "Replace your 1 item and 1 list with the 2 items and 1 list in \"copy.db\"?"
+    );
+    assert_eq!(stored_titles(&path).unwrap(), ["Piranesi"]);
+
+    click(cx, handle, "confirm-restore").unwrap();
+
+    let (role, message) = export_message(cx, handle).unwrap();
+    assert_eq!(role, Role::Status);
+    assert!(message.starts_with("Restored 2 items and 1 list. The library you had is kept as "));
+    assert!(message.contains("loregalia-before-restore-"));
+    assert_eq!(stored_titles(&path).unwrap(), ["Dune", "Piranesi"]);
+    let kept = PathBuf::from(message.split(" is kept as ").last().unwrap());
+    assert_eq!(stored_titles(&kept).unwrap(), ["Piranesi"]);
+
+    click(cx, handle, "all-items").unwrap();
+    assert_eq!(label_of(cx, handle, "page-count").unwrap(), "2");
+}
+
+#[gpui_kit::test]
+fn cancelling_a_restore_changes_nothing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let backup = temporary.path().join("copy.db");
+    seed_backup(&path, &backup).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    choose_backup(cx, handle, None).unwrap();
+    assert_eq!(label_of(cx, handle, "restore-confirmation"), None);
+    assert_eq!(export_message(cx, handle), None);
+
+    choose_backup(cx, handle, Some(backup.clone())).unwrap();
+    click(cx, handle, "cancel-restore").unwrap();
+    assert_eq!(label_of(cx, handle, "restore-confirmation"), None);
+
+    choose_backup(cx, handle, Some(backup.clone())).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("escape", cx);
+    })
+    .unwrap();
+    assert_eq!(label_of(cx, handle, "restore-confirmation"), None);
+
+    choose_backup(cx, handle, Some(backup)).unwrap();
+    click(cx, handle, "all-items").unwrap();
+    click(cx, handle, "settings-button").unwrap();
+    assert_eq!(label_of(cx, handle, "restore-confirmation"), None);
+
+    assert_eq!(stored_titles(&path).unwrap(), ["Piranesi"]);
+    assert_eq!(std::fs::read_dir(temporary.path()).unwrap().count(), 2);
+}
+
+#[gpui_kit::test]
+fn a_backup_chosen_after_leaving_settings_asks_nothing(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let backup = temporary.path().join("copy.db");
+    seed_backup(&path, &backup).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    click(cx, handle, "restore-backup").unwrap();
+    click(cx, handle, "all-items").unwrap();
+    cx.simulate_path_prompt_response(move |_| Some(vec![backup]));
+    cx.run_until_parked();
+
+    assert_eq!(label_of(cx, handle, "page-count").unwrap(), "1");
+    click(cx, handle, "settings-button").unwrap();
+    assert_eq!(label_of(cx, handle, "restore-confirmation"), None);
+}
+
+#[gpui_kit::test]
+fn only_one_library_action_runs_at_a_time(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    seed_item(&path, MediaKind::Movie, "Dune", Some(2021)).unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    click(cx, handle, "restore-backup").unwrap();
+
+    assert_eq!(
+        export_message(cx, handle).unwrap(),
+        (Role::Status, "Choose a backup".to_owned())
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("export-backup").disabled(), Some(true));
+        assert_eq!(window.find("restore-backup").disabled(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_file_that_is_not_a_backup_is_refused_with_the_reason(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let backup = temporary.path().join("copy.db");
+    seed_backup(&path, &backup).unwrap();
+    let text = temporary.path().join("export.csv");
+    std::fs::write(&text, "Type,Title").unwrap();
+    let handle = open_settings(cx, &path).unwrap();
+
+    choose_backup(cx, handle, Some(text)).unwrap();
+
+    assert_eq!(label_of(cx, handle, "restore-confirmation"), None);
+    let (role, message) = export_message(cx, handle).unwrap();
+    assert_eq!(role, Role::Alert);
+    assert!(message.contains("not a Loregalia backup"));
+
+    choose_backup(cx, handle, Some(backup.clone())).unwrap();
+    std::fs::write(&backup, "changed since").unwrap();
+    click(cx, handle, "confirm-restore").unwrap();
+
+    let (role, message) = export_message(cx, handle).unwrap();
+    assert_eq!(role, Role::Alert);
+    assert!(message.contains("Your library was not changed"));
+    assert_eq!(stored_titles(&path).unwrap(), ["Piranesi"]);
+}
+
+fn open_damaged(
+    cx: &mut TestAppContext,
+    damaged_library: Option<PathBuf>,
+) -> Result<AnyWindowHandle> {
+    open_window(
+        cx,
+        size(px(1280.0), px(800.0)),
+        settings::Theme::Dark,
+        None,
+        |cx| {
+            let mut shell = offline(Shell::new(
+                StorageState::Failed("the file is damaged".to_owned()),
+                None,
+                settings::Theme::Dark,
+                memory_secrets(),
+                cx,
+            ));
+            shell.offer_restore(damaged_library);
+            shell
+        },
+    )
+}
+
+#[gpui_kit::test]
+fn a_damaged_library_can_be_replaced_by_a_backup(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let backup = temporary.path().join("copy.db");
+    seed_backup(&path, &backup).unwrap();
+    std::fs::write(&path, "ruined").unwrap();
+    let handle = open_damaged(cx, Some(path.clone())).unwrap();
+
+    choose_backup(cx, handle, Some(backup)).unwrap();
+    assert_eq!(
+        label_of(cx, handle, "restore-confirmation").unwrap(),
+        "Restore 2 items and 1 list from \"copy.db\"?"
+    );
+    click(cx, handle, "confirm-restore").unwrap();
+
+    let (role, message) = export_message(cx, handle).unwrap();
+    assert_eq!(role, Role::Status);
+    assert!(message.contains("start it again"));
+    assert_eq!(stored_titles(&path).unwrap(), ["Dune", "Piranesi"]);
+    let kept = PathBuf::from(message.split(" is kept as ").last().unwrap());
+    assert_eq!(std::fs::read(kept).unwrap(), b"ruined");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("storage-error").is_none());
+        assert!(window.try_find("restore-backup").is_none());
+        assert!(window.find("close-app").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_library_that_is_not_damaged_offers_no_backup(cx: &mut TestAppContext) {
+    let handle = open_damaged(cx, None).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("storage-error").visible());
+        assert!(window.try_find("restore-backup").is_none());
+    })
+    .unwrap();
 }
 
 fn seed_timed(

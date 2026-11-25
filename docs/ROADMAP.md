@@ -90,3 +90,4 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Coming soon: unreleased items and new seasons, with dates (D-42)
 - [x] Deploy the relay that keeps unreleased titles for 3 days
 - [x] Say when a newer version exists (D-43)
+- [x] Restore a backup from Settings, and when the library is damaged (D-44)

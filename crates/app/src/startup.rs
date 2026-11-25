@@ -20,6 +20,7 @@ pub struct Startup {
     pub storage: StorageState,
     pub log_path: Option<PathBuf>,
     pub theme: Theme,
+    pub damaged_library: Option<PathBuf>,
 }
 
 pub fn prepare() -> Startup {
@@ -64,11 +65,12 @@ fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
         &format!("Loregalia {} starting", env!("CARGO_PKG_VERSION")),
     );
 
-    let (storage, theme) = match directory {
+    let (storage, theme, damaged_library) = match directory {
         Ok(directory) => open_at_with_theme(storage::database_in(&directory)),
         Err(error) => (
             StorageState::Failed(format!("Could not find the app data folder: {error}")),
             Theme::Dark,
+            None,
         ),
     };
 
@@ -83,6 +85,7 @@ fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
         storage,
         log_path,
         theme,
+        damaged_library,
     }
 }
 
@@ -91,15 +94,16 @@ fn open_at(path: PathBuf) -> StorageState {
     open_at_with_theme(path).0
 }
 
-fn open_at_with_theme(path: PathBuf) -> (StorageState, Theme) {
+fn open_at_with_theme(path: PathBuf) -> (StorageState, Theme, Option<PathBuf>) {
     match Database::open(&path) {
         Ok(database) => {
             let theme = settings::theme(&database).unwrap_or_default();
-            (StorageState::Ready(path), theme)
+            (StorageState::Ready(path), theme, None)
         }
         Err(error) => (
             StorageState::Failed(storage::open_failure_message(&error, &path)),
             Theme::Dark,
+            error.is_damage().then_some(path),
         ),
     }
 }
@@ -240,6 +244,7 @@ mod tests {
 
         assert!(matches!(&startup.storage, StorageState::Failed(_)));
         assert!(startup.log_path.is_none());
+        assert!(startup.damaged_library.is_none());
         assert_eq!(startup.theme, Theme::Dark);
     }
 
@@ -266,6 +271,20 @@ mod tests {
         let startup = prepare_with(Ok(temporary.path().to_path_buf()));
 
         assert_eq!(startup.theme, Theme::Dark);
+    }
+
+    #[test]
+    fn only_a_damaged_library_can_be_replaced_by_a_backup() {
+        let temporary = TempDir::new().unwrap();
+        let path = storage::database_in(temporary.path());
+        let opened = || prepare_with(Ok(temporary.path().to_path_buf())).damaged_library;
+
+        assert_eq!(opened(), None);
+        std::fs::write(&path, b"this is not a database").unwrap();
+        assert_eq!(opened(), Some(path.clone()));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        assert_eq!(opened(), None);
     }
 
     #[test]

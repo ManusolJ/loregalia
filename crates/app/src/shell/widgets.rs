@@ -18,6 +18,7 @@ pub(super) struct Confirmation {
     pub(super) id: &'static str,
     pub(super) cancel_id: &'static str,
     pub(super) confirm_id: &'static str,
+    pub(super) confirm_label: &'static str,
     pub(super) consequence: &'static str,
 }
 
@@ -96,7 +97,7 @@ impl Shell {
                     )
                     .child(
                         Button::new(confirmation.confirm_id)
-                            .label("Delete")
+                            .label(confirmation.confirm_label)
                             .danger()
                             .on_click(cx.listener(move |this, _, _, cx| confirm(this, cx))),
                     ),

@@ -1,3 +1,5 @@
+use rusqlite::ErrorCode;
+
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
@@ -23,11 +25,23 @@ pub enum Error {
     BlockedAddress,
     WouldReplaceLibrary,
     DamagedCopy,
+    NotALibrary,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
+    pub fn is_damage(&self) -> bool {
+        match self {
+            Self::DamagedCopy => true,
+            Self::Sqlite(error) => matches!(
+                error.sqlite_error_code(),
+                Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt)
+            ),
+            _ => false,
+        }
+    }
+
     pub fn is_temporary(&self) -> bool {
         matches!(
             self,
@@ -84,6 +98,7 @@ impl std::fmt::Display for Error {
                 formatter.write_str("that file is the library Loregalia is using")
             }
             Self::DamagedCopy => formatter.write_str("the copy could not be verified"),
+            Self::NotALibrary => formatter.write_str("that file is not a Loregalia library"),
             Self::BlockedAddress => {
                 formatter.write_str("the cover is not on a metadata source's image server")
             }
@@ -116,7 +131,8 @@ impl std::error::Error for Error {
             | Self::SecretStore(_)
             | Self::BlockedAddress
             | Self::WouldReplaceLibrary
-            | Self::DamagedCopy => None,
+            | Self::DamagedCopy
+            | Self::NotALibrary => None,
         }
     }
 }
@@ -142,6 +158,32 @@ impl From<serde_json::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::Error;
+
+    #[test]
+    fn only_unreadable_data_counts_as_damage() {
+        let sqlite = |code| {
+            Error::Sqlite(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                None,
+            ))
+        };
+
+        for error in [
+            Error::DamagedCopy,
+            sqlite(rusqlite::ffi::SQLITE_NOTADB),
+            sqlite(rusqlite::ffi::SQLITE_CORRUPT),
+        ] {
+            assert!(error.is_damage(), "{error}");
+        }
+        for error in [
+            Error::NotALibrary,
+            Error::Io(std::io::Error::other("disk unplugged")),
+            sqlite(rusqlite::ffi::SQLITE_BUSY),
+            sqlite(rusqlite::ffi::SQLITE_FULL),
+        ] {
+            assert!(!error.is_damage(), "{error}");
+        }
+    }
 
     #[test]
     fn only_failures_that_can_pass_are_temporary() {

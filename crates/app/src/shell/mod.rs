@@ -6,6 +6,7 @@ mod items_view;
 mod lists_view;
 mod metadata_view;
 mod pick_view;
+mod restore_view;
 mod seasons_view;
 mod settings_view;
 mod tags_view;
@@ -38,13 +39,14 @@ use crate::startup::StorageState;
 use crate::theme::{DISPLAY_FONT, Palette};
 
 use detail_view::DOCKED_FROM;
-use export_view::ExportStatus;
+use export_view::TransferStatus;
 use find_view::FindState;
 use items_view::ItemEditor;
 use lists_view::{AddPicker, Editor};
 pub use metadata_view::{MetadataDetails, MetadataSearch, MetadataSeasons, REFRESH_PACE};
 use metadata_view::{RefreshState, default_details, default_search};
 use pick_view::PickState;
+use restore_view::PendingRestore;
 use seasons_view::{SeasonEditor, SeasonFetch};
 use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
@@ -126,7 +128,9 @@ pub struct Shell {
     items: Vec<items::Item>,
     item_index: HashMap<String, usize>,
     viewport: Viewport,
-    export: Option<ExportStatus>,
+    transfer: Option<TransferStatus>,
+    pending_restore: Option<PendingRestore>,
+    damaged_library: Option<PathBuf>,
     editing: bool,
     pick: PickState,
     window_width: f32,
@@ -266,7 +270,9 @@ impl Shell {
             items: Vec::new(),
             item_index: HashMap::new(),
             viewport: Viewport::default(),
-            export: None,
+            transfer: None,
+            pending_restore: None,
+            damaged_library: None,
             editing: false,
             pick: PickState::default(),
             window_width: 0.0,
@@ -366,6 +372,7 @@ impl Shell {
             || self.confirm_delete.is_some()
             || self.item_editor.is_some()
             || self.confirm_delete_item.is_some()
+            || self.pending_restore.is_some()
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
@@ -469,6 +476,7 @@ impl Shell {
         self.confirm_delete = None;
         self.item_editor = None;
         self.confirm_delete_item = None;
+        self.pending_restore = None;
         self.close_inline_panels();
     }
 
@@ -613,15 +621,7 @@ impl Shell {
 
     fn main_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match (&self.storage, &self.error) {
-            (StorageState::Failed(message), _) => div()
-                .id("storage-error")
-                .role(Role::Alert)
-                .test_support()
-                .aria_label(message.clone())
-                .text_color(rgb(palette.danger))
-                .text_xs()
-                .child(message.clone())
-                .into_any_element(),
+            (StorageState::Failed(message), _) => self.storage_failed_element(message, palette, cx),
             (StorageState::Ready(_), _) if self.loading => Self::loading_element(palette),
             (StorageState::Ready(_), Some(message)) => div()
                 .id("lists-error")
@@ -643,7 +643,10 @@ impl Shell {
                 .into_any_element(),
             (StorageState::Ready(_), None) => match self.screen {
                 Screen::About => self.about_element(palette),
-                Screen::Settings => self.settings_element(palette, cx),
+                Screen::Settings => match &self.pending_restore {
+                    Some(pending) => self.confirm_restore_element(pending, palette, cx),
+                    None => self.settings_element(palette, cx),
+                },
                 Screen::Pick if !self.has_editor() => self.pick_element(palette, cx),
                 Screen::Library | Screen::Pick => self.library_element(palette, cx),
             },

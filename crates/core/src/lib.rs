@@ -13,6 +13,7 @@ pub mod log;
 pub mod media;
 pub mod pick;
 pub mod providers;
+pub mod restore;
 pub mod seasons;
 pub mod settings;
 pub mod statuses;
