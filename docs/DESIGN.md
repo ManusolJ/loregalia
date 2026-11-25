@@ -82,7 +82,8 @@ detail.
 
 - **Sidebar:** the app name, then Library (All items, Up next, Coming soon, Finished,
   Pick for me) and Lists, each row with
-  its count, and Settings and About at the bottom.
+  its count, and Settings and About at the bottom. When a newer version exists, a row above Settings
+  says so and opens the download page (D-43). It is a plain row, never a dialog.
 - **Main:** a page header with the title in the Display face, its count, a search box (Ctrl+F), list
   actions as icon buttons and one primary Add item button, then a toolbar (kind filter on library
   views, sort and Add existing item on lists, and Filter and the List or Grid switch on both). Header and content share one column,

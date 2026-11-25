@@ -17,6 +17,7 @@ which episode or page you stopped at.
 - **Export and backup:** save a complete copy of the library, or the user's own data as JSON or CSV.
 - **Coming soon:** unreleased items and new seasons of the user's own shows, with their dates. No
   notifications and no calendar of things outside the library.
+- **Update check:** say when a newer version exists and link to it, with a switch to turn it off.
 - **Pick for me:** suggest three items from the user's own library for the time they have, with the
   reasons.
 - **Metadata lookup:** search public APIs to add an item with its title, cover and details filled

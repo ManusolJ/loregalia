@@ -4,7 +4,9 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Context, Pixels, Point, Result, Role, Size,
     TestAppContext, Window, WindowBounds, WindowOptions, px, size,
 };
-use loregalia_app::shell::{MetadataDetails, MetadataSearch, MetadataSeasons, REFRESH_PACE, Shell};
+use loregalia_app::shell::{
+    MetadataDetails, MetadataSearch, MetadataSeasons, REFRESH_PACE, Shell, UpdateCheck,
+};
 use loregalia_app::startup::StorageState;
 use loregalia_app::theme;
 use loregalia_core::{
@@ -14,9 +16,11 @@ use loregalia_core::{
     media::MediaKind,
     providers::{Candidate, Source},
     seasons, settings, tags,
+    updates::{self, Version},
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 
 fn open_window(
@@ -7055,4 +7059,310 @@ fn a_game_with_only_a_year_never_shows_a_made_up_day(cx: &mut TestAppContext) {
         }
     })
     .unwrap();
+}
+
+fn open_with_updates(
+    cx: &mut TestAppContext,
+    path: &Path,
+    log_path: Option<PathBuf>,
+    check: UpdateCheck,
+) -> Result<AnyWindowHandle> {
+    let storage = StorageState::Ready(path.to_path_buf());
+    let handle = open_window(
+        cx,
+        size(px(1280.0), px(1200.0)),
+        settings::Theme::Dark,
+        None,
+        |cx| {
+            let mut shell = offline(Shell::new(
+                storage,
+                log_path,
+                settings::Theme::Dark,
+                memory_secrets(),
+                cx,
+            ));
+            shell.check_for_updates(check, cx);
+            shell
+        },
+    )?;
+    cx.run_until_parked();
+    Ok(handle)
+}
+
+fn offers(version: &str, asked: &Arc<AtomicUsize>) -> UpdateCheck {
+    let version = Version::parse(version);
+    let asked = asked.clone();
+    Arc::new(move || {
+        asked.fetch_add(1, Ordering::SeqCst);
+        Ok(version)
+    })
+}
+
+fn remembered(path: &Path, version: &str) -> CoreResult<()> {
+    let database = Database::open(path)?;
+    updates::remember(
+        &database,
+        Version::parse(version),
+        std::time::SystemTime::now(),
+    )
+}
+
+#[gpui_kit::test]
+fn a_newer_version_is_offered_and_opens_the_download_page(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let asked = Arc::new(AtomicUsize::new(0));
+    let handle = open_with_updates(cx, &path, None, offers("99.1.0", &asked)).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("update-available").label(),
+            Some("Version 99.1.0 is available")
+        );
+        window.click("update-available", cx);
+    })
+    .unwrap();
+
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    let database = Database::open(&path).unwrap();
+    let known = updates::known(&database, std::time::SystemTime::now()).unwrap();
+    assert!(!known.due);
+    assert_eq!(known.latest, Version::parse("99.1.0"));
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://github.com/ManusolJ/loregalia/releases/latest")
+    );
+}
+
+#[gpui_kit::test]
+fn this_version_or_an_older_one_is_not_offered(cx: &mut TestAppContext) {
+    let asked = Arc::new(AtomicUsize::new(0));
+    for version in [env!("CARGO_PKG_VERSION"), "0.0.1"] {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("loregalia.db");
+        let handle = open_with_updates(cx, &path, None, offers(version, &asked)).unwrap();
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("update-available").is_none(), "{version}");
+        })
+        .unwrap();
+    }
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
+#[gpui_kit::test]
+fn a_recent_answer_is_shown_without_asking_again(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    remembered(&path, "99.1.0").unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let handle = open_with_updates(cx, &path, None, offers("99.2.0", &asked)).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("update-available").label(),
+            Some("Version 99.1.0 is available")
+        );
+    })
+    .unwrap();
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
+}
+
+#[gpui_kit::test]
+fn the_offer_is_reachable_in_the_rail(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let asked = Arc::new(AtomicUsize::new(0));
+    let storage = StorageState::Ready(path);
+    let handle = open_window(
+        cx,
+        size(px(960.0), px(600.0)),
+        settings::Theme::Dark,
+        None,
+        |cx| {
+            let mut shell = offline(Shell::new(
+                storage,
+                None,
+                settings::Theme::Dark,
+                memory_secrets(),
+                cx,
+            ));
+            shell.check_for_updates(offers("99.1.0", &asked), cx);
+            shell
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("update-available").visible());
+        assert!(window.find("about-button").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn turned_off_nothing_is_asked_and_nothing_is_offered(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    settings::set_update_checks(&Database::open(&path).unwrap(), false).unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let handle = open_with_updates(cx, &path, None, offers("99.1.0", &asked)).unwrap();
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("update-available").is_none());
+        window.click("settings-button", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("update-message").is_none());
+        window.click("check-updates", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("update-message").label(),
+            Some("Version 99.1.0 is available")
+        );
+        assert!(window.try_find("update-available").is_none());
+        window.click("get-update", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://github.com/ManusolJ/loregalia/releases/latest")
+    );
+}
+
+#[gpui_kit::test]
+fn the_switch_hides_the_offer_and_is_remembered(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let asked = Arc::new(AtomicUsize::new(0));
+    let handle = open_with_updates(cx, &path, None, offers("99.1.0", &asked)).unwrap();
+
+    for enabled in [false, true] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("settings-button", cx);
+            window.render_frame(cx);
+            window.click("update-checks", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.try_find("update-available").is_some(), enabled);
+        })
+        .unwrap();
+        let database = Database::open(&path).unwrap();
+        assert_eq!(settings::update_checks(&database).unwrap(), enabled);
+    }
+}
+
+#[gpui_kit::test]
+fn a_failed_check_is_silent_until_asked_for(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let log_path = temporary.path().join("loregalia.log");
+    let handle = open_with_updates(
+        cx,
+        &path,
+        Some(log_path.clone()),
+        Arc::new(|| Err(Error::ConnectionFailed)),
+    )
+    .unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("update-available").is_none());
+        window.click("settings-button", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("update-message").is_none());
+        window.click("check-updates", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let message = window.find("update-message");
+        assert_eq!(message.role(), Some(Role::Alert));
+        assert_eq!(
+            message.label(),
+            Some("Could not check for updates. Try again later.")
+        );
+    })
+    .unwrap();
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    assert!(log.contains("Could not check for updates"));
+    let database = Database::open(&path).unwrap();
+    assert!(
+        updates::known(&database, std::time::SystemTime::now())
+            .unwrap()
+            .due
+    );
+}
+
+#[gpui_kit::test]
+fn checking_by_hand_says_when_nothing_is_newer(cx: &mut TestAppContext) {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("loregalia.db");
+    let asked = Arc::new(AtomicUsize::new(0));
+    let handle = open_with_updates(cx, &path, None, offers("0.0.1", &asked)).unwrap();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-button", cx);
+        window.render_frame(cx);
+        window.click("check-updates", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("update-message").label(),
+            Some("You have the newest version.")
+        );
+        assert!(window.try_find("get-update").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn without_a_working_database_nothing_is_asked(cx: &mut TestAppContext) {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let check = offers("99.1.0", &asked);
+    open_window(
+        cx,
+        size(px(1280.0), px(800.0)),
+        settings::Theme::Dark,
+        None,
+        |cx| {
+            let mut shell = offline(Shell::new(
+                StorageState::Failed("broken".to_owned()),
+                None,
+                settings::Theme::Dark,
+                memory_secrets(),
+                cx,
+            ));
+            shell.check_for_updates(check, cx);
+            shell
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
 }

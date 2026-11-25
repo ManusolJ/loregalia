@@ -37,8 +37,8 @@ pub(super) const PRIVACY_NOTES: [(IconName, &str); 3] = [
     ),
     (
         IconName::Globe,
-        "Searches and details ask TVmaze and Open Library directly, and covers load from each \
-         source. They see your IP address.",
+        "TVmaze, Open Library, the cover servers and GitHub (for new versions) are asked \
+         directly. They see your IP address.",
     ),
     (
         IconName::Server,

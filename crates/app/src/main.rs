@@ -7,6 +7,8 @@ use loregalia_app::single_instance::{self, Instance};
 use loregalia_app::startup::{
     Startup, StorageState, install_panic_hook, open_secrets, prepare, record, window_open_failure,
 };
+use loregalia_core::updates;
+use std::sync::Arc;
 
 fn main() {
     let instance = single_instance::claim(&single_instance::current_instance_name());
@@ -53,7 +55,11 @@ fn main() {
 
             let options = loregalia_app::window_options(cx);
             match gpui_kit::open_window(options, cx, |_, cx| {
-                cx.new(|cx| Shell::new(storage, log_path, theme, secrets, cx))
+                cx.new(|cx| {
+                    let mut shell = Shell::new(storage, log_path, theme, secrets, cx);
+                    shell.check_for_updates(Arc::new(updates::latest), cx);
+                    shell
+                })
             }) {
                 Ok((window, _)) => {
                     if let Some(listener) = listener {

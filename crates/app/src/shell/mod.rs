@@ -9,6 +9,7 @@ mod pick_view;
 mod seasons_view;
 mod settings_view;
 mod tags_view;
+mod updates_view;
 mod viewport;
 mod widgets;
 
@@ -47,6 +48,8 @@ use pick_view::PickState;
 use seasons_view::{SeasonEditor, SeasonFetch};
 use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
+pub use updates_view::UpdateCheck;
+use updates_view::UpdateState;
 use viewport::{Arrival, Reloads, Viewport};
 use widgets::EmptyPanel;
 
@@ -128,6 +131,7 @@ pub struct Shell {
     pick: PickState,
     window_width: f32,
     today: String,
+    updates: UpdateState,
     columns: usize,
     followed: Option<String>,
     reloads: Reloads,
@@ -267,6 +271,7 @@ impl Shell {
             pick: PickState::default(),
             window_width: 0.0,
             today: dates::today(),
+            updates: UpdateState::default(),
             columns: 0,
             followed: None,
             reloads: Reloads::default(),
@@ -1051,7 +1056,7 @@ impl Shell {
             .disabled(self.loading)
             .on_click(cx.listener(|this, _, window, cx| this.begin_create(window, cx)));
 
-        let footer: Vec<AnyElement> = vec![
+        let mut footer: Vec<AnyElement> = vec![
             Self::nav_row(
                 NavRow {
                     id: "settings-button".to_owned(),
@@ -1079,6 +1084,9 @@ impl Shell {
                 cx,
             ),
         ];
+        if let Some(update) = self.update_row(shows_labels, palette, cx) {
+            footer.insert(0, update);
+        }
 
         div()
             .id("sidebar")

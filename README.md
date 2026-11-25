@@ -111,6 +111,9 @@ you like. Tag lists and items with your own labels, then filter by them.
 - **Movies and games** go through a small Loregalia server that holds the API keys. It keeps no logs
   and nothing that identifies you. You can add your own TMDB or IGDB keys in Settings to skip it;
   they are stored in Windows Credential Manager, not in a file.
+- **Updates:** at most once a day, when it starts, Loregalia asks GitHub for the newest version and
+  shows a link if yours is older. GitHub sees your IP address and the version you have. Nothing is
+  installed for you, and a switch in Settings turns it off.
 
 ## Download
 

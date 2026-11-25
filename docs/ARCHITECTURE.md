@@ -96,8 +96,9 @@ them.
 
 ## Network
 
-- Only metadata lookups use the network, from `core` providers. TVmaze and Open Library are called
-  directly. TMDB and IGDB go through the Loregalia relay, unless the user entered their own TMDB
+- Only metadata lookups, covers and the update check use the network, all from `core`. The update
+  check (D-43, `core::updates`) reads GitHub's latest release over HTTPS and opens a fixed address.
+  TVmaze and Open Library are called directly. TMDB and IGDB go through the Loregalia relay, unless the user entered their own TMDB
   key, which calls TMDB directly.
 - One trait, with one implementation per source, chosen by `MediaKind`. No API's field names travel
   beyond its provider module.
