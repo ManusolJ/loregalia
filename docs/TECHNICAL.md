@@ -87,6 +87,27 @@ runs the gate, builds the installer and the portable zip with the relay address,
 already installed notice a published release within a day of starting; drafts and pre-releases are not
 offered.
 
+### Publish on winget
+
+After the GitHub release is published, write the manifest and let winget check it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\winget-manifest.ps1 -Version 1.5.0
+```
+
+It lands in `target/winget/<version>`. Submit it with Microsoft's
+[wingetcreate](https://github.com/microsoft/winget-create), which opens the pull request from your
+GitHub account:
+
+```powershell
+winget install Microsoft.WingetCreate
+wingetcreate submit target\winget\1.5.0
+```
+
+The first submission asks you to sign Microsoft's contributor agreement, and a moderator reviews it.
+Submit 1.5.0 or later: up to 1.4.0 the app needs a Visual C++ runtime that a clean Windows does not
+have (D-45).
+
 ## Project layout
 
 ```text
