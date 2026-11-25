@@ -15,6 +15,8 @@ which episode or page you stopped at.
 - **Statuses:** move an item between states such as To watch, Watched, In progress, Dropped and On
   hold. The set is data, so it can grow.
 - **Export and backup:** save a complete copy of the library, or the user's own data as JSON or CSV.
+- **Pick for me:** suggest three items from the user's own library for the time they have, with the
+  reasons.
 - **Metadata lookup:** search public APIs to add an item with its title, cover and details filled
   in, instead of typing them by hand.
 

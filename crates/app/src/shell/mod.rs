@@ -5,6 +5,7 @@ mod find_view;
 mod items_view;
 mod lists_view;
 mod metadata_view;
+mod pick_view;
 mod seasons_view;
 mod settings_view;
 mod tags_view;
@@ -42,6 +43,7 @@ use items_view::ItemEditor;
 use lists_view::{AddPicker, Editor};
 pub use metadata_view::{MetadataDetails, MetadataSearch, MetadataSeasons, REFRESH_PACE};
 use metadata_view::{RefreshState, default_details, default_search};
+use pick_view::PickState;
 use seasons_view::{SeasonEditor, SeasonFetch};
 use settings_view::KeyInputs;
 use tags_view::{TagEditor, TagRename};
@@ -81,6 +83,7 @@ pub fn detail_docks(window_width: Pixels) -> bool {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Screen {
     Library,
+    Pick,
     About,
     Settings,
 }
@@ -121,6 +124,8 @@ pub struct Shell {
     item_index: HashMap<String, usize>,
     viewport: Viewport,
     export: Option<ExportStatus>,
+    editing: bool,
+    pick: PickState,
     window_width: f32,
     columns: usize,
     followed: Option<String>,
@@ -257,6 +262,8 @@ impl Shell {
             item_index: HashMap::new(),
             viewport: Viewport::default(),
             export: None,
+            editing: false,
+            pick: PickState::default(),
             window_width: 0.0,
             columns: 0,
             followed: None,
@@ -622,7 +629,8 @@ impl Shell {
             (StorageState::Ready(_), None) => match self.screen {
                 Screen::About => self.about_element(palette),
                 Screen::Settings => self.settings_element(palette, cx),
-                Screen::Library => self.library_element(palette, cx),
+                Screen::Pick if !self.has_editor() => self.pick_element(palette, cx),
+                Screen::Library | Screen::Pick => self.library_element(palette, cx),
             },
         }
     }
@@ -940,7 +948,7 @@ impl Shell {
         let can_create = matches!(&self.storage, StorageState::Ready(_));
         let in_library = self.screen == Screen::Library && self.selected.is_none();
 
-        let shelves: Vec<AnyElement> = Shelf::ALL
+        let mut shelves: Vec<AnyElement> = Shelf::ALL
             .into_iter()
             .map(|shelf| {
                 let id = if shelf == Shelf::All {
@@ -968,6 +976,20 @@ impl Shell {
                 )
             })
             .collect();
+
+        shelves.push(Self::nav_row(
+            NavRow {
+                id: "pick-button".to_owned(),
+                icon: IconName::Dices,
+                label: "Pick for me".to_owned(),
+                count: None,
+                selected: self.screen == Screen::Pick,
+            },
+            shows_labels,
+            palette,
+            |this, _window, cx| this.begin_pick(cx),
+            cx,
+        ));
 
         let list_rows: Vec<AnyElement> = self
             .lists
@@ -1135,7 +1157,9 @@ impl Render for Shell {
         self.window_width = f32::from(window.viewport_size().width);
         self.keep_place();
         self.follow_focus(window);
-        if window.focused(cx).is_none() {
+        let editing = self.has_editor();
+        let left_form = std::mem::replace(&mut self.editing, editing) && !editing;
+        if left_form || window.focused(cx).is_none() {
             self.focus_handle.focus(window, cx);
         }
         let palette = *cx.global::<Palette>();
@@ -1155,7 +1179,7 @@ impl Render for Shell {
         let sidebar = self.sidebar_element(width, shows_labels, &palette, cx);
         let header = show_header.then(|| self.header_element(&palette, cx));
         let main_element = self.main_element(&palette, cx);
-        let detail = (self.screen == Screen::Library)
+        let detail = matches!(self.screen, Screen::Library | Screen::Pick)
             .then(|| self.detail_item())
             .flatten()
             .map(|item| self.detail_element(item, docked, &palette, cx));

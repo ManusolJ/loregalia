@@ -86,3 +86,4 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Large libraries: draw only what is visible, and keep your place in the list (D-39)
 - [x] Overlapping changes never show an older result
 - [x] Back up the library, and export it as JSON or CSV (D-40)
+- [x] Pick for me: three suggestions from your own library, with reasons (D-41)

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-pub(crate) const COLUMNS: &str = "items.id, items.title, items.media_kind, items.release_year, items.release_date, items.finished_at, items.status_id, items.source, items.external_id, items.cover_url, items.source_data, items.source_refreshed_at, date(items.finished_at, 'localtime')";
+pub(crate) const COLUMNS: &str = "items.id, items.title, items.media_kind, items.release_year, items.release_date, items.finished_at, items.status_id, items.source, items.external_id, items.cover_url, items.source_data, items.source_refreshed_at, date(items.finished_at, 'localtime'), date(items.created_at, 'localtime')";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceData {
@@ -45,6 +45,7 @@ pub struct Item {
     pub source_data: Option<SourceData>,
     pub source_refreshed_at: Option<String>,
     pub finished_on: Option<String>,
+    pub added_on: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,6 +75,7 @@ impl Item {
             source_data: source_data(row, 10)?,
             source_refreshed_at: row.get(11)?,
             finished_on: row.get(12)?,
+            added_on: row.get(13)?,
         })
     }
 }
