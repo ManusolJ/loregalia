@@ -83,7 +83,9 @@ built, or to `http://127.0.0.1:8080` if it was not set. To run the relay, see
 
 The [release workflow](../.github/workflows/release.yml) checks that the tag matches the version,
 runs the gate, builds the installer and the portable zip with the relay address, and creates a
-**draft** release with both files and their checksums. Read it over on GitHub, then publish it.
+**draft** release with both files and their checksums. Read it over on GitHub, then publish it. Copies
+already installed notice a published release within a day of starting; drafts and pre-releases are not
+offered.
 
 ## Project layout
 

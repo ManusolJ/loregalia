@@ -20,6 +20,7 @@ pub mod storage;
 pub mod tags;
 pub mod text;
 pub mod upcoming;
+pub mod updates;
 
 pub use error::{Error, Result};
 pub use storage::Database;

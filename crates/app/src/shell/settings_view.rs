@@ -30,6 +30,7 @@ impl Shell {
     pub(super) fn begin_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show(Screen::Settings);
         self.settings_error = None;
+        self.forget_update_status();
         if !matches!(self.export, Some(super::ExportStatus::Working)) {
             self.export = None;
         }
@@ -207,61 +208,24 @@ impl Shell {
     }
 
     pub(super) fn settings_element(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let mut panel =
-            div()
-                .id("settings-screen")
-                .role(Role::Region)
-                .test_support()
-                .aria_label(format!("Settings, {} theme", self.theme.label()))
-                .flex()
-                .flex_col()
-                .gap_6()
-                .w_full()
-                .h_full()
-                .max_w(px(640.0))
-                .child(
-                    div()
-                        .text_2xl()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Settings"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_lg()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Theme"),
-                        )
-                        .child(
-                            div()
-                                .max_w(px(520.0))
-                                .text_sm()
-                                .text_color(rgb(palette.muted))
-                                .child("Follow the system theme, or keep a fixed one."),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap_2()
-                                .children(settings::Theme::ALL.map(|theme| {
-                                    Button::new(format!("theme-{}", theme.key()))
-                                        .label(theme.label())
-                                        .selected(self.theme == theme)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_theme(theme, cx)
-                                        }))
-                                })),
-                        ),
-                )
-                .child(self.export_section(palette, cx))
-                .child(self.keys_section(palette, cx));
-
-        if let Some(message) = &self.settings_error {
-            panel = panel.child(
+        div()
+            .id("settings-screen")
+            .role(Role::Region)
+            .test_support()
+            .aria_label(format!("Settings, {} theme", self.theme.label()))
+            .flex()
+            .flex_col()
+            .gap_6()
+            .w_full()
+            .h_full()
+            .max_w(px(640.0))
+            .child(
+                div()
+                    .text_2xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Settings"),
+            )
+            .children(self.settings_error.as_ref().map(|message| {
                 div()
                     .id("settings-error")
                     .role(Role::Alert)
@@ -269,10 +233,45 @@ impl Shell {
                     .aria_label(message.clone())
                     .text_color(rgb(palette.danger))
                     .text_xs()
-                    .child(message.clone()),
-            );
-        }
-
-        panel.into_any_element()
+                    .child(message.clone())
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Theme"),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(520.0))
+                            .text_sm()
+                            .text_color(rgb(palette.muted))
+                            .child("Follow the system theme, or keep a fixed one."),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .children(settings::Theme::ALL.map(|theme| {
+                                Button::new(format!("theme-{}", theme.key()))
+                                    .label(theme.label())
+                                    .selected(self.theme == theme)
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.set_theme(theme, cx)
+                                        }),
+                                    )
+                            })),
+                    ),
+            )
+            .child(self.export_section(palette, cx))
+            .child(self.keys_section(palette, cx))
+            .child(self.updates_section(palette, cx))
+            .into_any_element()
     }
 }

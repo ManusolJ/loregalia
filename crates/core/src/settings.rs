@@ -3,6 +3,9 @@ use rusqlite::OptionalExtension;
 
 const THEME_KEY: &str = "theme";
 const LAYOUT_KEY: &str = "layout";
+const UPDATE_CHECKS_KEY: &str = "update_checks";
+const OFF: &str = "off";
+const ON: &str = "on";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Theme {
@@ -103,6 +106,14 @@ pub fn layout(database: &Database) -> Result<Layout> {
 
 pub fn set_layout(database: &Database, layout: Layout) -> Result<()> {
     set(database, LAYOUT_KEY, layout.key())
+}
+
+pub fn update_checks(database: &Database) -> Result<bool> {
+    Ok(get(database, UPDATE_CHECKS_KEY)?.as_deref() != Some(OFF))
+}
+
+pub fn set_update_checks(database: &Database, enabled: bool) -> Result<()> {
+    set(database, UPDATE_CHECKS_KEY, if enabled { ON } else { OFF })
 }
 
 #[cfg(test)]
