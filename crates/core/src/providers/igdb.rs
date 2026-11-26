@@ -118,15 +118,16 @@ impl ApiGame {
             })
     }
 
-    fn rank(&self, wanted: &str) -> (u8, Reverse<i64>) {
-        let exact = self
-            .name
-            .as_deref()
-            .is_some_and(|name| comparable(name) == wanted);
-        match (self.is_secondary(), exact) {
-            (false, true) => (0, Reverse(self.total_rating_count.unwrap_or(0))),
-            (false, false) => (1, Reverse(0)),
-            (true, _) => (2, Reverse(0)),
+    fn title(&self) -> String {
+        self.name.as_deref().map(comparable).unwrap_or_default()
+    }
+
+    fn rank(&self, wanted: &str, first_with_title: usize) -> (u8, usize, Reverse<i64>) {
+        let known = Reverse(self.total_rating_count.unwrap_or(0));
+        match (self.is_secondary(), self.title() == wanted) {
+            (false, true) => (0, 0, known),
+            (false, false) => (1, first_with_title, known),
+            (true, _) => (2, 0, Reverse(0)),
         }
     }
 
@@ -454,12 +455,26 @@ pub fn parse_token(body: &str) -> Result<IgdbToken> {
 }
 
 pub fn parse_search(body: &str, query: &str) -> Result<Vec<Candidate>> {
-    let mut games: Vec<ApiGame> = serde_json::from_str(body)?;
+    let games: Vec<ApiGame> = serde_json::from_str(body)?;
     let wanted = comparable(query);
-    games.sort_by_key(|game| game.rank(&wanted));
-
-    Ok(games
+    let titles: Vec<String> = games.iter().map(ApiGame::title).collect();
+    let mut ranked: Vec<_> = games
         .into_iter()
+        .zip(&titles)
+        .map(|(game, title)| {
+            let first_with_title = titles
+                .iter()
+                .position(|other| other == title)
+                .unwrap_or_default();
+            let rank = game.rank(&wanted, first_with_title);
+            (rank, game)
+        })
+        .collect();
+    ranked.sort_by_key(|(rank, _)| *rank);
+
+    Ok(ranked
+        .into_iter()
+        .map(|(_, game)| game)
         .take(MAX_RESULTS)
         .filter_map(ApiGame::into_candidate)
         .collect())
@@ -913,6 +928,30 @@ mod tests {
             .collect();
 
         assert_eq!(names, ["Zelda B", "Zelda A", "Zelda C"]);
+    }
+
+    #[test]
+    fn the_best_known_of_two_same_titles_comes_first_when_neither_is_exact() {
+        let body = r#"[
+            {"id":1,"name":"Hollow Knight Silksong","first_release_date":1627430400,"total_rating_count":2},
+            {"id":2,"name":"Zelda Silksong","first_release_date":1500000000},
+            {"id":3,"name":"Hollow Knight: Silksong","first_release_date":1757000000,"total_rating_count":450},
+            {"id":4,"name":"Hollow Knight: Silksong - Sea of Sorrow","game_type":{"id":14,"type":"Update"}}
+        ]"#;
+        let found: Vec<(String, Option<i32>)> = titles(body, "silksong")
+            .into_iter()
+            .map(|game| (game.0, game.1))
+            .collect();
+
+        assert_eq!(
+            found,
+            [
+                ("Hollow Knight: Silksong".to_owned(), Some(2025)),
+                ("Hollow Knight Silksong".to_owned(), Some(2021)),
+                ("Zelda Silksong".to_owned(), Some(2017)),
+                ("Hollow Knight: Silksong - Sea of Sorrow".to_owned(), None),
+            ]
+        );
     }
 
     #[test]

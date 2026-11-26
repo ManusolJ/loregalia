@@ -51,7 +51,9 @@ commercial license, and IGDB needs a partnership.
 - **IGDB search lists ports and editions with the original's exact title.** The search asks for
   `game_type`, `version_parent` and `total_rating_count`, puts exact titles of main games first with the
   most rated on top, and puts ports, mods, packs, bundles and editions last, with a label. Two
-  Hollow Knights and two Disco Elysiums showed this on 2026-11-24.
+  Hollow Knights and two Disco Elysiums showed this on 2026-11-24. Other results keep IGDB's order,
+  except that results with the same title, punctuation aside, are grouped with the most rated first:
+  a fan game called "Hollow Knight Silksong" came before "Hollow Knight: Silksong" on 2026-11-26.
 - **IGDB uses 31 December** for a game whose year is known and day is not, so an unreleased game with
   that date shows as "Expected in 2028".
 - **New seasons come from** TVmaze's `?embed=nextepisode`, kept only when it is the first episode of
