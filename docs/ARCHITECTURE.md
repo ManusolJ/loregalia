@@ -88,7 +88,8 @@ them.
 - **Source data (D-12):** store each item's source and external ID, and keep the user's own fields,
   such as status and notes, separate from what a source provided. Refresh TMDB data in the
   background before it is six months old.
-- **Settings (D-14):** a `settings` table holds preferences such as the theme. API keys a user
+- **Settings (D-14):** a `settings` table holds preferences such as the theme and where the window
+  was closed. API keys a user
   enters never go in the database or a file; they live in Windows Credential Manager (D-32). An
   older `api-keys.json` is moved there at startup and deleted.
 - **Units in names:** `runtime_minutes`, `page_count`, `season_number`. Never a bare `length` or

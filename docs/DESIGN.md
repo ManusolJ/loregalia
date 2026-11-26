@@ -71,7 +71,7 @@ Nothing clickable is smaller than 24 x 24 px.
 
 ## Window and layout
 
-The window opens at 1280 x 800, with a 960 x 600 minimum. There are three regions: sidebar, main and
+The window first opens at 1280 x 800, with a 960 x 600 minimum, and then reopens where it was closed (D-47). There are three regions: sidebar, main and
 detail.
 
 | Window width | Sidebar             | Detail                    |
