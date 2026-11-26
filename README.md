@@ -8,6 +8,8 @@
 <p align="center">
   <a href="https://github.com/ManusolJ/loregalia/releases/latest"><strong>Download for Windows</strong></a>
   ·
+  <a href="https://loregalia.app">Website</a>
+  ·
   <a href="#features">Features</a>
   ·
   <a href="#privacy">Privacy</a>

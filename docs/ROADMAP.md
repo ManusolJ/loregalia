@@ -93,3 +93,4 @@ Build each one as described in `ARCHITECTURE.md`, as a separate `agent/*` branch
 - [x] Restore a backup from Settings, and when the library is damaged (D-44)
 - [x] Run on a clean Windows, without the Visual C++ runtime (D-45)
 - [ ] Publish on winget: the manifest script is ready; the owner submits it after a release (D-45)
+- [x] Website at loregalia.app (D-46)

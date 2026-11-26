@@ -95,12 +95,19 @@ jobs:
             throw "loregalia.exe needs $($Matches[0]), which a clean Windows does not have."
           }
 
+      - name: Add copies with fixed names for the website
+        shell: pwsh
+        run: |
+          Set-Location target/installer
+          Copy-Item "loregalia_${env:VERSION}_x64-setup.exe" loregalia-setup.exe
+          Copy-Item "loregalia_${env:VERSION}_x64-portable.zip" loregalia-portable.zip
+
       - name: Write checksums
         shell: pwsh
         run: |
           Set-Location target/installer
           $files = Get-ChildItem -File | Where-Object { $_.Name -like "*.exe" -or $_.Name -like "*.zip" }
-          if ($files.Count -lt 2) { throw "Expected the installer and the portable zip." }
+          if ($files.Count -lt 4) { throw "Expected the installer and the portable zip, each with its copy." }
           $files | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Out-File -FilePath SHA256SUMS.txt -Encoding ascii

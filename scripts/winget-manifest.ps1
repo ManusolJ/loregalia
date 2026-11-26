@@ -61,7 +61,7 @@ Publisher: ManusolJ
 PublisherUrl: https://github.com/ManusolJ
 PublisherSupportUrl: $repository/issues
 PackageName: Loregalia
-PackageUrl: $repository
+PackageUrl: https://loregalia.app
 License: MIT
 LicenseUrl: $repository/blob/main/LICENSE
 ShortDescription: Plan what to watch, read and play next
