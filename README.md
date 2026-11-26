@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Plan what to watch, read and play next.</strong><br>
-  Movies, shows, books and games in one calm library that lives on your computer.
+  Movies, shows, books and games in one library that lives on your computer.
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ Your watchlist is in one app, your reading list in another, and the games you me
 note somewhere. Loregalia puts them in one place, so when you have an evening free you can see
 everything you wanted to get to and pick the next thing.
 
-It is a **planner**, not a tracker. It helps you decide what to start, keeps what is in progress in
+It helps you decide what to start, keeps what is in progress in
 front of you, and remembers what you finished. It does not count episodes or pages, and it never asks
 you to rate, review or share anything.
 
