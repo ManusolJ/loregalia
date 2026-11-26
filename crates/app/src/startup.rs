@@ -4,6 +4,7 @@ use loregalia_core::{
     log,
     settings::{self, Theme},
     storage,
+    window::{self, Placement},
 };
 use std::any::Any;
 use std::fmt::Display;
@@ -20,6 +21,7 @@ pub struct Startup {
     pub storage: StorageState,
     pub log_path: Option<PathBuf>,
     pub theme: Theme,
+    pub window: Option<Placement>,
     pub damaged_library: Option<PathBuf>,
 }
 
@@ -65,11 +67,12 @@ fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
         &format!("Loregalia {} starting", env!("CARGO_PKG_VERSION")),
     );
 
-    let (storage, theme, damaged_library) = match directory {
-        Ok(directory) => open_at_with_theme(storage::database_in(&directory)),
+    let (storage, theme, window, damaged_library) = match directory {
+        Ok(directory) => open_at_with_settings(storage::database_in(&directory)),
         Err(error) => (
             StorageState::Failed(format!("Could not find the app data folder: {error}")),
             Theme::Dark,
+            None,
             None,
         ),
     };
@@ -85,24 +88,29 @@ fn prepare_with(directory: CoreResult<PathBuf>) -> Startup {
         storage,
         log_path,
         theme,
+        window,
         damaged_library,
     }
 }
 
 #[cfg(test)]
 fn open_at(path: PathBuf) -> StorageState {
-    open_at_with_theme(path).0
+    open_at_with_settings(path).0
 }
 
-fn open_at_with_theme(path: PathBuf) -> (StorageState, Theme, Option<PathBuf>) {
+fn open_at_with_settings(
+    path: PathBuf,
+) -> (StorageState, Theme, Option<Placement>, Option<PathBuf>) {
     match Database::open(&path) {
         Ok(database) => {
             let theme = settings::theme(&database).unwrap_or_default();
-            (StorageState::Ready(path), theme, None)
+            let window = window::placement(&database).ok().flatten();
+            (StorageState::Ready(path), theme, window, None)
         }
         Err(error) => (
             StorageState::Failed(storage::open_failure_message(&error, &path)),
             Theme::Dark,
+            None,
             error.is_damage().then_some(path),
         ),
     }
@@ -158,6 +166,7 @@ mod tests {
         Database, Error,
         settings::{self, Theme},
         storage,
+        window::{self, Area, Placement},
     };
     use tempfile::TempDir;
 
@@ -246,6 +255,28 @@ mod tests {
         assert!(startup.log_path.is_none());
         assert!(startup.damaged_library.is_none());
         assert_eq!(startup.theme, Theme::Dark);
+        assert_eq!(startup.window, None);
+    }
+
+    #[test]
+    fn startup_reopens_the_window_where_it_was_closed() {
+        let temporary = TempDir::new().unwrap();
+        let database = Database::open(storage::database_in(temporary.path())).unwrap();
+        let closed = Placement {
+            area: Area {
+                x: 40.0,
+                y: 30.0,
+                width: 1500.0,
+                height: 950.0,
+            },
+            maximized: true,
+        };
+        window::set_placement(&database, closed).unwrap();
+        drop(database);
+
+        let startup = prepare_with(Ok(temporary.path().to_path_buf()));
+
+        assert_eq!(startup.window, Some(closed));
     }
 
     #[test]

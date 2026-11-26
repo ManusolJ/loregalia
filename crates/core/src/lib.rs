@@ -22,6 +22,7 @@ pub mod tags;
 pub mod text;
 pub mod upcoming;
 pub mod updates;
+pub mod window;
 
 pub use error::{Error, Result};
 pub use storage::Database;

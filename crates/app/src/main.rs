@@ -20,6 +20,7 @@ fn main() {
         storage,
         log_path,
         theme,
+        window,
         damaged_library,
     } = prepare();
     if let StorageState::Failed(message) = &storage {
@@ -54,8 +55,9 @@ fn main() {
             })
             .detach();
 
-            let options = loregalia_app::window_options(cx);
-            match gpui_kit::open_window(options, cx, |_, cx| {
+            let options = loregalia_app::window_options(window, cx);
+            match gpui_kit::open_window(options, cx, |window, cx| {
+                loregalia_app::save_placement_on_close(&storage, log_path.clone(), window, cx);
                 cx.new(|cx| {
                     let mut shell = Shell::new(storage, log_path, theme, secrets, cx);
                     shell.offer_restore(damaged_library);
